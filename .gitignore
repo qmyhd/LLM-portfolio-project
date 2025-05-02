@@ -1,0 +1,5 @@
+.env
+__pycache__/
+.pytest_cache/
+data/database/price_history.db
+*.egg-info/
