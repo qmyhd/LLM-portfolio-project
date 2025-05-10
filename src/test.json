@@ -1,0 +1,55 @@
+{
+    "symbol": {
+        "symbol": {
+            "id": "5563d000-af45-47ba-a2ec-7be565340077",
+            "symbol": "MSFT",
+            "description": "Microsoft Corporation",
+            "currency": {
+                "code": "USD",
+                "name": "US Dollar",
+                "id": "57f81c53-bdda-45a7-a51f-032afd1ae41b"
+            },
+            "exchange": {
+                "id": "ff4b2ffc-5a0e-4471-9cf5-95c0c30cdedd",
+                "code": "NASDAQ",
+                "mic_code": "XNAS",
+                "name": "NASDAQ",
+                "suffix": "None",
+                "timezone": "America/New_York",
+                "start_time": "09:30:00",
+                "close_time": "16:00:00"
+            },
+            "currencies": [],
+            "type": {
+                "id": "515c27d1-8471-4dec-a234-af12184c51d4",
+                "code": "cs",
+                "description": "Common Stock",
+                "is_supported": "True"
+            },
+            "raw_symbol": "MSFT",
+            "logo_url": "https://storage.googleapis.com/iexcloud-hl37opg/api/logos/MSFT.png",
+            "figi_code": "BBG000BPHFS9",
+            "figi_instrument": {
+                "figi_code": "BBG000BPHFS9",
+                "figi_share_class": "BBG001S5TD05"
+            }
+        },
+        "id": "a18a8a18-8245-46de-a7fa-6374c93581bc",
+        "description": "",
+        "local_id": "",
+        "security_type": {},
+        "listing_exchange": {},
+        "is_quotable": "True",
+        "is_tradable": "True"
+    },
+    "price": 438.85,
+    "open_pnl": 41.3904,
+    "fractional_units": 1.896901,
+    "currency": {
+        "code": "USD",
+        "name": "US Dollar",
+        "id": "57f81c53-bdda-45a7-a51f-032afd1ae41b"
+    },
+    "units": 1.896901,
+    "average_purchase_price": 417.03
+}

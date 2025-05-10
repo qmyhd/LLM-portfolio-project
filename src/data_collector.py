@@ -1,3 +1,4 @@
+
 import os
 import pandas as pd
 import yfinance as yf
@@ -60,10 +61,10 @@ def initialize_snaptrade():
         consumer_key=consumer_key
     )
 
-def initialize_price_database():
-    """Initialize the SQLite database for storing price history
+def initialize_database():
+    """Initialize the SQLite database
     
-    Creates tables for daily prices and real-time prices if they don't exist
+    Creates tables if they don't exist
     """
     conn = sqlite3.connect(PRICE_DB)
     cursor = conn.cursor()
@@ -113,10 +114,54 @@ def initialize_price_database():
         UNIQUE(symbol, date)
     )
     ''')
+
+    # Create table for positions
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS positions (
+        id INTEGER PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        quantity REAL,
+        equity REAL,
+        price REAL,
+        average_buy_price REAL,
+        type TEXT,
+        currency TEXT,
+        UNIQUE(symbol)
+    )
+    ''')
+
+    # Create table for orders
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS orders (
+        brokerage_order_id TEXT,
+        status TEXT,
+        symbol TEXT,
+        universal_symbol TEXT,
+        quote_universal_symbol TEXT,
+        quote_currency TEXT,
+        option_symbol TEXT,
+        action TEXT,
+        total_quantity INTEGER,
+        open_quantity INTEGER,
+        canceled_quantity INTEGER,
+        filled_quantity INTEGER,
+        execution_price DECIMAL(18, 6),
+        limit_price DECIMAL(18, 6),
+        stop_price DECIMAL(18, 6),
+        order_type TEXT,
+        time_in_force TEXT,
+        time_placed TIMESTAMP,
+        time_updated TIMESTAMP,
+        time_executed TIMESTAMP,
+        expiry_date DATE,
+        child_brokerage_order_ids TEXT,
+        extracted_symbol TEXT
+    )
+    ''')
     
     conn.commit()
     conn.close()
-    logger.info("✅ Price database initialized")
+    logger.info("✅ Database initialized")
     
 def extract_symbol_from_data(symbol_data):
     """
@@ -200,7 +245,6 @@ def get_account_positions(account_id=None, user_id=None, user_secret=None):
         user_id=user_id,
         user_secret=user_secret
     )
-    
     if not response.body:
         logger.warning("No positions found")
         return pd.DataFrame()
@@ -226,16 +270,14 @@ def get_account_positions(account_id=None, user_id=None, user_secret=None):
             quantity = float(position.get('units', 0) or 0)
             price = float(position.get('price', 0) or 0)
             equity = quantity * price
-            
-            # Calculate average buy price safely
-            book_value = float(position.get('book_value', 0) or 0)
-            avg_buy_price = book_value / quantity if quantity and quantity != 0 else 0
+            average_purchase_price = position.get('average_purchase_price', 0)
+
         except (ValueError, TypeError) as e:
             logger.error(f"Error converting position values: {e}")
             quantity = 0
             price = 0
             equity = 0
-            avg_buy_price = 0
+            average_purchase_price = 0
         
         # If we have price and quantity but no symbol, try to look it up
         if price > 0 and quantity > 0 and (not symbol or symbol == "Unknown"):
@@ -249,8 +291,8 @@ def get_account_positions(account_id=None, user_id=None, user_secret=None):
             'quantity': quantity,
             'equity': equity,
             'price': price,
-            'average_buy_price': avg_buy_price,
-            'security_type': position.get('security_type', 'Unknown'),
+            'average_buy_price': average_purchase_price,
+            'type': position['symbol']['symbol']['type']['description'] if not None else 'Unknown',
             'currency': 'USD',  # Simplify currency to just the code
         }
         positions.append(data)
@@ -364,6 +406,15 @@ def get_recent_orders(account_id=None, user_id=None, user_secret=None, state="al
             order['extracted_symbol'] = symbol.strip()
         else:
             order['extracted_symbol'] = 'Unknown'
+
+        # # Stringify 'option_symbol' if it's a dict
+        # if 'option_symbol' in order and isinstance(order['option_symbol'], dict):
+        #     try:
+        #         print(f"Stringifying option_symbol: {order['option_symbol']}")
+        #         order['option_symbol'] = json.dumps(order['option_symbol'])
+        #     except Exception as e:
+        #         logger.warning(f"Failed to stringify option_symbol: {e}")
+        #         order['option_symbol'] = str(order['option_symbol'])
             
         # Add order to processed list
         processed_orders.append(order)
@@ -371,74 +422,74 @@ def get_recent_orders(account_id=None, user_id=None, user_secret=None, state="al
     # Return just the first 'limit' processed orders
     return processed_orders[:limit] if limit else processed_orders
 
-def save_positions_to_csv(output_path=None):
-    """Get positions and save to CSV
-    
-    Args:
-        output_path: Path to save the CSV file (default: data/raw/positions.csv)
-    
-    Returns:
-        Path to the saved CSV file
+def save_positions_to_db():
+    """Saves positions to the SQLite database
     """
-    output_path = output_path or POSITIONS_CSV
-    
-    # Ensure directory exists
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
     positions_df = get_account_positions()
-    
+
     if not positions_df.empty:
-        positions_df.to_csv(output_path, index=False)
-        logger.info(f"✅ Saved {len(positions_df)} positions to {output_path}")
-        return output_path
+        try:
+            conn = sqlite3.connect(PRICE_DB)
+            
+            # Insert into realtime_prices table
+            positions_df.to_sql('positions', conn, if_exists='replace', index=False)
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"✅ Saved {len(positions_df)} positions to database")
+        except Exception as e:
+            logger.error(f"Error saving positions to database: {e}")
     else:
         logger.warning("❌ No positions to save")
         return None
+    
+    
 
-def save_orders_to_csv(output_path=None, days=30):
-    """Get recent orders and save to CSV
+def save_orders_to_db(days=30):
+    """Save recent orders to the SQLite database
     
     Args:
-        output_path: Path to save the CSV file (default: data/raw/orders.csv)
+        orders_df: DataFrame containing order data
         days: Number of days to look back for orders
-    
-    Returns:
-        Path to the saved CSV file
     """
-    output_path = output_path or ORDERS_CSV
-    
-    # Ensure directory exists
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    
     orders = get_recent_orders(days=days)
-    
     if orders:
         # Convert to DataFrame - this will include our extracted_symbol field
         orders_df = pd.DataFrame(orders)
+
+        if 'option_symbol' in orders_df.columns:
+            orders_df['option_symbol'] = orders_df['option_symbol'].apply(
+                lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
+            )
+
+        if 'universal_symbol' in orders_df.columns:
+            orders_df['universal_symbol'] = orders_df['universal_symbol'].apply(
+                lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
+            )
+
+        if 'child_brokerage_order_ids' in orders_df.columns:
+            orders_df['child_brokerage_order_ids'] = orders_df['child_brokerage_order_ids'].apply(
+                lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
+            )
+
+        # print(orders_df['option_symbol'].head())
+        # print(type(orders_df['option_symbol'].iloc[0])) 
+
+        if orders_df.empty:
+            return
         
-        # If the dataframe has nested dictionaries in any columns, flatten them
-        # This is particularly important for symbol column which might be a dictionary
-        for col in orders_df.columns:
-            if orders_df[col].apply(lambda x: isinstance(x, dict)).any():
-                # For dictionary columns, extract key values and create new columns
-                for key in set().union(*[d.keys() for d in orders_df[col] if isinstance(d, dict)]):
-                    orders_df[f"{col}_{key}"] = orders_df[col].apply(
-                        lambda x: x.get(key) if isinstance(x, dict) else None
-                    )
-                
-                # Drop the original dictionary column if we created new columns from it
-                if any(col + '_' in c for c in orders_df.columns):
-                    orders_df = orders_df.drop(columns=[col])
-        
-        # Make sure we use the extracted symbol field that we added
-        if 'extracted_symbol' in orders_df.columns:
-            # Rename it to be clearer
-            orders_df = orders_df.rename(columns={'extracted_symbol': 'symbol'})
-        
-        # Save to CSV
-        orders_df.to_csv(output_path, index=False)
-        logger.info(f"✅ Saved {len(orders_df)} orders to {output_path}")
-        return output_path
+        try:
+            conn = sqlite3.connect(PRICE_DB)
+            
+            # Insert into realtime_prices table
+            orders_df.to_sql('orders', conn, if_exists='append', index=False)
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"✅ Saved {len(orders_df)} orders to database")
+        except Exception as e:
+            logger.error(f"Error saving orders to database: {e}")
+
     else:
         logger.warning("❌ No orders to save")
         return None
@@ -526,9 +577,6 @@ def fetch_realtime_prices(symbols=None):
     
     # Save to CSV
     if not df.empty:
-        df.to_csv(PRICES_CSV, index=False)
-        logger.info(f"✅ Saved real-time prices to {PRICES_CSV}")
-        
         # Also save to database
         save_realtime_prices_to_db(df)
     
@@ -778,11 +826,11 @@ def save_stock_metrics_to_db(metrics_df):
 def update_all_data():
     """Update all data: positions, orders, real-time prices, historical prices, and metrics"""
     # Initialize database if it doesn't exist
-    initialize_price_database()
+    initialize_database()
     
     # Save positions and orders
-    positions_path = save_positions_to_csv()
-    save_orders_to_csv(days=180)  # Get the last 6 months of orders
+    positions_path = save_positions_to_db()
+    save_orders_to_db(days=180)  # Get the last 6 months of orders
     
     # Fetch active position symbols
     positions_df = pd.read_csv(positions_path) if positions_path else pd.DataFrame()
@@ -799,7 +847,7 @@ def update_all_data():
         fetch_stock_metrics(symbols)
     
     logger.info("✅ All data updated successfully")
-
+    
 def append_discord_message_to_csv(message_text, tickers=None, output_path=None):
     """Append a discord message to the discord_msgs.csv file
     
@@ -887,7 +935,7 @@ def extract_ticker_symbols(text):
 # Example usage when running this file directly
 if __name__ == "__main__":
     # Initialize the price database
-    initialize_price_database()
+    initialize_database()
     
     # Get account summary for display
     balance = get_account_balance()

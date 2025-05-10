@@ -1,0 +1,65 @@
+{
+    "brokerage_order_id": "67f6d127-050b-42bb-8809-61d0e2f04d32",
+    "status": "CANCELED",
+    "symbol": "7b9e214a-1072-476f-b537-42f0a0f44798",
+    "universal_symbol": "None",
+    "quote_universal_symbol": "None",
+    "quote_currency": "None",
+    "option_symbol": {
+        "id": "63b6b411-76f0-4c67-ab8b-b9f1e54ed2b0",
+        "ticker": "SMCI  250417C00053000",
+        "strike_price": 53,
+        "expiration_date": "2025-04-17",
+        "is_mini_option": "False",
+        "underlying_symbol": {
+            "id": "7d46c148-73d7-498a-bee3-8c7092b492bf",
+            "sym                                                                                                                                                                                                   mbol": "SMCI",
+            "description": "Super Micro Computer Inc",
+            "currency": {
+                "code": "USD",
+                "name": "US Dollar",
+                "id": "57f81c53-bdda-45a7-a51f-032afd1ae41b"
+            },
+            "exchange": {
+                "id": "ff4b2ffc-5a0e-4471-9cf5-95c0c30cdedd",
+                "code": "NASDAQ",
+                "mic                                                                                                                                                                                                   c_code": "XNAS",
+                "name": "NASDAQ",
+                "suffix": "None",
+                "timezone": "America/New_York",
+                "start_time": "09:30:00",
+                "close_time": "16:00:00"
+            },
+            "currencies": [],
+            "type": {
+                "id": "515c27d1-8471-4dec-a234-af12184c51d4",
+                "code": "cs",
+                "description                                                                                                                                                                                                   n": "Common Stock",
+                "is_supported": "True"
+            },
+            "raw_symbol": "SMCI",
+            "logo_url": "https://storage.googleapis.com/iexcloud-hl37opg/api/logos/SMCI.png",
+            "figi_code": "BBG000MZ0VH0",
+            "figi_instrument": {
+                "figi_code": "BBG000MZ0VH0",
+                "figi_shar                                                                                                                                                                                                   re_class": "BBG001SQGH95"
+            }
+        },
+        "option_type": "CALL"
+    },
+    "action": "BUY_OPEN",
+    "total_quantity": "1.000000000",
+    "open_quantity": "0.00",
+    "canceled_quantity": "1.00",
+    "filled_quantity": "0.000000000",
+    "execution_price": "None",
+    "limit_price": ": '0.0300'",
+    "stop_price": "None",
+    "order_type": "Limit",
+    "time_in_force": "Day",
+    "time_placed": "2025-04-09T19:57:27.414077Z",
+    "time_updated": "2025-04-09T20:30:01.933932Z",
+    "time_executed": "None",
+    "expiry_date": "None",
+    "child_brokerage_or                                                                                                                                                                                                   rder_ids": "None"
+}

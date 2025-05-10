@@ -6,9 +6,15 @@ import textwrap
 import logging
 import functools
 import time
+import argparse
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
+import functools
+
+#############################################################
+# CONFIGURATION
+#############################################################
 
 # Configure logging
 logging.basicConfig(
@@ -32,6 +38,10 @@ DISCORD_CSV = RAW_DIR / "discord_msgs.csv"
 POSITIONS_CSV = RAW_DIR / "positions.csv"
 ORDERS_CSV = RAW_DIR / "orders.csv"
 PRICES_CSV = RAW_DIR / "prices.csv"
+
+#############################################################
+# UTILITY FUNCTIONS
+#############################################################
 
 def retry_decorator(max_retries=3, delay=1):
     """Decorator to retry API calls in case of transient failures
@@ -75,6 +85,10 @@ def get_api_key():
         raise ValueError("Missing API key in environment variables")
     
     return api_key
+
+#############################################################
+# DATA LOADING FUNCTIONS
+#############################################################
 
 def load_positions(file_path=None):
     """Load position data from CSV file
@@ -138,6 +152,10 @@ def load_prices(file_path=None):
         logger.warning(f"⚠️ {file_path} not found")
         return pd.DataFrame()
 
+#############################################################
+# DATA FORMATTING FUNCTIONS
+#############################################################
+
 def format_holdings_as_json(positions_df):
     """Format holdings data as JSON for better LLM parsing
     
@@ -191,8 +209,15 @@ def format_prices_as_json(prices_df):
     
     return json.dumps({"prices": price_data}, indent=2)
 
+#############################################################
+# TEXT ANALYSIS FUNCTIONS
+#############################################################
+
 def extract_ticker_and_text_pairs(thread_text):
     """Extract ticker and text pairs from a thread containing multiple ticker analyses
+    
+    This function splits a multi-ticker post into individual ticker-text pairs,
+    allowing us to process each ticker analysis separately.
     
     Args:
         thread_text: Text containing multiple ticker analyses
@@ -225,9 +250,82 @@ def extract_ticker_and_text_pairs(thread_text):
     
     return pairs
 
+#############################################################
+# LLM INTEGRATION FUNCTIONS
+#############################################################
+
 @retry_decorator(max_retries=3, delay=2)
 def generate_journal_entry(prompt, max_tokens=160):
     """Generate journal entry using LLM API with retry capability
+    
+    This function handles the actual API call to Google's Gemini API,
+    applying retries for resilience against transient errors.
+    
+    Args:
+        prompt: The prompt to send to the LLM
+        max_tokens: Maximum number of tokens to generate (default: 160)
+        
+    Returns:
+        Generated journal entry text
+    """
+    try:
+        # Try to use Google's Gemini API first (free tier)
+        import google.generativeai as genai
+        
+        # Set API key
+        api_key = os.getenv("GEMINI_API_KEY")
+        
+        if not api_key:
+            logger.warning("No GEMINI_API_KEY found in environment variables. Falling back to OpenAI.")
+            return generate_with_openai(prompt, max_tokens)
+        
+        genai.configure(api_key=api_key)
+        
+        logger.info("🔄 Generating journal entry with Gemini...")
+        
+        # Configure the model
+        generation_config = {
+            "temperature": 0.2,
+            "top_p": 0.95,
+            "top_k": 0,
+            "max_output_tokens": max_tokens,
+        }
+        
+        # Get default (latest) text model
+        model = genai.GenerativeModel(
+            model_name="gemini-1.5-flash",
+            generation_config=generation_config
+        )
+        
+        # Create the system instruction + user prompt format
+        system_instruction = "You are a financial writing assistant."
+        formatted_prompt = f"{system_instruction}\n\n{prompt}"
+        
+        # Generate content
+        response = model.generate_content(formatted_prompt)
+        
+        # Check if the response has text
+        if hasattr(response, 'text'):
+            return response.text
+        else:
+            # Different response structure - try to get the content
+            try:
+                return response.candidates[0].content.parts[0].text
+            except (AttributeError, IndexError):
+                logger.error("Unexpected response structure from Gemini API")
+                return "Error generating journal entry. Please try again."
+    
+    except ImportError:
+        logger.warning("Google GenerativeAI module not installed. Trying OpenAI instead.")
+        return generate_with_openai(prompt, max_tokens)
+    except Exception as e:
+        logger.error(f"Error generating journal entry with Gemini: {e}")
+        # Fall back to OpenAI if Gemini fails
+        logger.info("Falling back to OpenAI...")
+        return generate_with_openai(prompt, max_tokens)
+
+def generate_with_openai(prompt, max_tokens=160):
+    """Fallback function to use OpenAI if Gemini is not available
     
     Args:
         prompt: The prompt to send to the LLM
@@ -239,13 +337,18 @@ def generate_journal_entry(prompt, max_tokens=160):
     try:
         import openai
         # Set API key
-        api_key = get_api_key()
+        api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not api_key:
+            logger.error("No API key found for either Gemini or OpenAI in environment variables")
+            return "Error: No API key available for LLM services."
+        
         openai.api_key = api_key
         
-        logger.info("🔄 Generating journal entry...")
+        logger.info("🔄 Generating journal entry with OpenAI...")
         
         resp = openai.ChatCompletion.create(
-            model="gpt-4o-mini",
+            model="gpt-4o-mini",  # Using gpt-4o-mini for cost-effective yet high-quality output
             messages=[
                 {"role": "system", "content": "You are a financial writing assistant."},
                 {"role": "user", "content": prompt}
@@ -255,14 +358,21 @@ def generate_journal_entry(prompt, max_tokens=160):
         
         return resp.choices[0].message.content
     except ImportError:
-        logger.error("OpenAI module not installed. Install with: pip install openai")
-        raise
+        logger.error("Neither Google GenerativeAI nor OpenAI modules are installed.")
+        return "Error: LLM libraries not installed. Install with: pip install openai google-generativeai"
     except Exception as e:
-        logger.error(f"Error generating journal entry: {e}")
-        raise
+        logger.error(f"Error generating journal entry with OpenAI: {e}")
+        return f"Error generating journal entry: {str(e)}"
+
+#############################################################
+# PROMPT CREATION FUNCTIONS
+#############################################################
 
 def create_journal_prompt(positions_df, messages_df, prices_df):
     """Create a prompt for the LLM to generate a journal entry
+    
+    This is the basic prompt builder - we also have an enhanced version below
+    that includes more structured data for better results.
     
     Args:
         positions_df: DataFrame containing position data
@@ -331,8 +441,15 @@ def save_journal_entry(journal_entry, output_dir=None):
     logger.info(f"✅ Journal saved to {output_path}")
     return output_path
 
+#############################################################
+# PORTFOLIO ANALYSIS FUNCTIONS
+#############################################################
+
 def analyze_position_data(positions_df, prices_df):
     """Analyze position data to extract insights about the portfolio
+    
+    This function processes the raw position and price data to extract
+    meaningful insights like top positions, gainers, and losers.
     
     Args:
         positions_df: DataFrame containing position data
@@ -422,8 +539,15 @@ def analyze_position_data(positions_df, prices_df):
         "losers": losers
     }
 
+#############################################################
+# SENTIMENT ANALYSIS FUNCTIONS
+#############################################################
+
 def extract_sentiment_from_messages(messages_df, ticker=None):
     """Extract sentiment information from Discord messages
+    
+    This function analyzes the Discord messages to determine overall
+    sentiment and ticker-specific insights.
     
     Args:
         messages_df: DataFrame containing Discord messages
@@ -511,6 +635,9 @@ def extract_sentiment_from_messages(messages_df, ticker=None):
 
 def create_enhanced_journal_prompt(positions_df, messages_df, prices_df):
     """Create an enhanced prompt for the LLM to generate a journal entry
+    
+    This function creates a more structured and detailed prompt than the basic version,
+    incorporating portfolio analysis and sentiment insights.
     
     Args:
         positions_df: DataFrame containing position data
@@ -604,8 +731,15 @@ The entry should be insightful, analytical, and provide context for the current 
     
     return prompt
 
+#############################################################
+# MAIN JOURNAL GENERATION FUNCTION
+#############################################################
+
 def generate_portfolio_journal(positions_path=None, discord_path=None, prices_path=None, output_dir=None):
     """Generate portfolio journal entry and save to file
+    
+    This is the main function that orchestrates the entire journal generation process,
+    from data loading to LLM generation to saving outputs.
     
     Args:
         positions_path: Path to positions CSV file
@@ -670,8 +804,15 @@ def generate_portfolio_journal(positions_path=None, discord_path=None, prices_pa
         logger.error(f"❌ Error generating journal entry: {e}")
         return None
 
+#############################################################
+# MARKDOWN OUTPUT GENERATION
+#############################################################
+
 def create_markdown_journal(journal_entry, positions_df, messages_df, prices_df, output_dir=None):
     """Create a markdown version of the journal with additional details
+    
+    This function creates a rich markdown output with tables and detailed sections,
+    providing more context than the simple text journal entry.
     
     Args:
         journal_entry: The generated journal entry text
@@ -738,7 +879,7 @@ def create_markdown_journal(journal_entry, positions_df, messages_df, prices_df,
 | ------ | ----: | -----: |
 """
         for pos in portfolio_analysis.get('losers'):
-            md_content += f"| {pos.get('symbol')} | ${pos.get('price', 0):.2f} | {pos.get('change_percent', 0):.2f}% |\n"
+            md_content += f"| {pos.get('symbol')} | ${pos.get('price', 0)::.2f} | {pos.get('change_percent', 0):.2f}% |\n"
     else:
         md_content += "No significant losers today.\n"
     
@@ -768,6 +909,51 @@ def create_markdown_journal(journal_entry, positions_df, messages_df, prices_df,
     logger.info(f"✅ Markdown journal saved to {output_path}")
     return output_path
 
+#############################################################
+# COMMAND-LINE INTERFACE
+#############################################################
+
 if __name__ == "__main__":
-    # Run standalone to generate journal
-    generate_portfolio_journal()
+    # Create a command-line interface for more flexible usage
+    parser = argparse.ArgumentParser(description="Generate portfolio journal entries based on trading data and Discord sentiment")
+    parser.add_argument("--positions", "-p", type=str, help="Path to positions CSV file (default: data/raw/positions.csv)")
+    parser.add_argument("--discord", "-d", type=str, help="Path to Discord messages CSV file (default: data/raw/discord_msgs.csv)")
+    parser.add_argument("--prices", "-pr", type=str, help="Path to prices CSV file (default: data/raw/prices.csv)")
+    parser.add_argument("--output", "-o", type=str, help="Directory to save journal entries (default: data/processed)")
+    
+    args = parser.parse_args()
+    
+    # Set paths based on arguments or use defaults
+    positions_path = args.positions if args.positions else POSITIONS_CSV
+    discord_path = args.discord if args.discord else DISCORD_CSV
+    prices_path = args.prices if args.prices else PRICES_CSV
+    output_dir = Path(args.output) if args.output else PROCESSED_DIR
+    
+    # Generate the journal
+    journal_entry = generate_portfolio_journal(
+        positions_path=positions_path,
+        discord_path=discord_path,
+        prices_path=prices_path,
+        output_dir=output_dir
+    )
+    
+    if journal_entry:
+        logger.info("✅ Journal generation completed successfully")
+    else:
+        logger.error("❌ Journal generation failed")
+
+# CLI Usage Examples:
+# 1. Standard usage with default file paths:
+#    python -m src.journal_generator
+#
+# 2. Custom positions file:
+#    python -m src.journal_generator --positions my_positions.csv
+#
+# 3. Custom output directory:
+#    python -m src.journal_generator --output ./custom_journals
+#
+# 4. All custom paths:
+#    python -m src.journal_generator -p custom_positions.csv -d custom_discord.csv -pr custom_prices.csv -o ./journals
+#
+# 5. Mix of short and long argument forms:
+#    python -m src.journal_generator -p my_positions.csv --discord my_discord.csv
