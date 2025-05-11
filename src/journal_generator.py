@@ -12,6 +12,9 @@ from datetime import datetime
 from dotenv import load_dotenv
 import functools
 
+# Import from data_collector for auto-updating data
+from .data_collector import update_all_data
+
 #############################################################
 # CONFIGURATION
 #############################################################
@@ -910,6 +913,67 @@ def create_markdown_journal(journal_entry, positions_df, messages_df, prices_df,
     return output_path
 
 #############################################################
+# MAIN EXECUTION FUNCTION
+#############################################################
+
+def main(force_update=False, output_dir=None):
+    """Run the automated journal generation process
+    
+    Args:
+        force_update: Force update of all data even if it was updated recently
+        output_dir: Directory to save the journal (default: data/processed)
+    """
+    # Configure output directory
+    output_dir = output_dir or PROCESSED_DIR
+    
+    # Create output directory if it doesn't exist
+    output_dir.mkdir(parents=True, exist_ok=True)
+    
+    logger.info("🔄 Starting automated portfolio journal generation")
+    
+    # Check if data needs updating
+    prices_csv = RAW_DIR / "prices.csv"
+    positions_csv = RAW_DIR / "positions.csv"
+    
+    update_needed = force_update
+    
+    if not update_needed:
+        # Check if prices were updated today
+        if not prices_csv.exists() or not positions_csv.exists():
+            update_needed = True
+        else:
+            # Check if files were updated today
+            today = datetime.now().date()
+            prices_last_modified = datetime.fromtimestamp(prices_csv.stat().st_mtime).date()
+            positions_last_modified = datetime.fromtimestamp(positions_csv.stat().st_mtime).date()
+            
+            if prices_last_modified < today or positions_last_modified < today:
+                update_needed = True
+    
+    # Update data if needed
+    if update_needed:
+        logger.info("🔄 Updating portfolio data")
+        update_all_data()
+    else:
+        logger.info("✅ Using existing portfolio data from today")
+    
+    # Generate journal
+    logger.info("🔄 Generating portfolio journal")
+    journal_entry = generate_portfolio_journal(
+        positions_path=positions_csv,
+        discord_path=RAW_DIR / "discord_msgs.csv",
+        prices_path=prices_csv,
+        output_dir=output_dir
+    )
+    
+    if journal_entry:
+        logger.info("✅ Journal generation complete")
+        return True
+    else:
+        logger.error("❌ Journal generation failed")
+        return False
+
+#############################################################
 # COMMAND-LINE INTERFACE
 #############################################################
 
@@ -920,40 +984,54 @@ if __name__ == "__main__":
     parser.add_argument("--discord", "-d", type=str, help="Path to Discord messages CSV file (default: data/raw/discord_msgs.csv)")
     parser.add_argument("--prices", "-pr", type=str, help="Path to prices CSV file (default: data/raw/prices.csv)")
     parser.add_argument("--output", "-o", type=str, help="Directory to save journal entries (default: data/processed)")
+    parser.add_argument("--force", "-f", action="store_true", help="Force update of all data even if it was updated recently")
     
     args = parser.parse_args()
     
-    # Set paths based on arguments or use defaults
-    positions_path = args.positions if args.positions else POSITIONS_CSV
-    discord_path = args.discord if args.discord else DISCORD_CSV
-    prices_path = args.prices if args.prices else PRICES_CSV
-    output_dir = Path(args.output) if args.output else PROCESSED_DIR
-    
-    # Generate the journal
-    journal_entry = generate_portfolio_journal(
-        positions_path=positions_path,
-        discord_path=discord_path,
-        prices_path=prices_path,
-        output_dir=output_dir
-    )
-    
-    if journal_entry:
-        logger.info("✅ Journal generation completed successfully")
+    # Check if we should use the main() function or direct generate_portfolio_journal()
+    if args.force or args.positions is None and args.discord is None and args.prices is None:
+        # Use the main function for auto-updating
+        output_dir = Path(args.output) if args.output else None
+        result = main(force_update=args.force, output_dir=output_dir)
+        if result:
+            logger.info("✅ Journal generation completed successfully")
+        else:
+            logger.error("❌ Journal generation failed")
     else:
-        logger.error("❌ Journal generation failed")
+        # Use direct portfolio journal generation with specific file paths
+        positions_path = args.positions if args.positions else POSITIONS_CSV
+        discord_path = args.discord if args.discord else DISCORD_CSV
+        prices_path = args.prices if args.prices else PRICES_CSV
+        output_dir = Path(args.output) if args.output else PROCESSED_DIR
+        
+        # Generate the journal
+        journal_entry = generate_portfolio_journal(
+            positions_path=positions_path,
+            discord_path=discord_path,
+            prices_path=prices_path,
+            output_dir=output_dir
+        )
+        
+        if journal_entry:
+            logger.info("✅ Journal generation completed successfully")
+        else:
+            logger.error("❌ Journal generation failed")
 
 # CLI Usage Examples:
-# 1. Standard usage with default file paths:
+# 1. Standard usage with auto-update:
 #    python -m src.journal_generator
 #
-# 2. Custom positions file:
+# 2. Standard usage with forced data update:
+#    python -m src.journal_generator --force
+#
+# 3. Custom positions file:
 #    python -m src.journal_generator --positions my_positions.csv
 #
-# 3. Custom output directory:
+# 4. Custom output directory:
 #    python -m src.journal_generator --output ./custom_journals
 #
-# 4. All custom paths:
+# 5. All custom paths:
 #    python -m src.journal_generator -p custom_positions.csv -d custom_discord.csv -pr custom_prices.csv -o ./journals
 #
-# 5. Mix of short and long argument forms:
-#    python -m src.journal_generator -p my_positions.csv --discord my_discord.csv
+# 6. Mix of short and long argument forms:
+#    python -m src.journal_generator -p my_positions.csv --discord my_discord.csv -f

@@ -341,7 +341,7 @@ def get_account_balance(account_id=None, user_id=None, user_secret=None):
     
     return response.body
 
-def get_recent_orders(account_id=None, user_id=None, user_secret=None, state="all", days=30, limit=20):
+def get_recent_orders(account_id=None, user_id=None, user_secret=None, state="all", days=365, limit=None):
     """Get recent orders using SnapTrade
     
     Args:
@@ -445,7 +445,7 @@ def save_positions_to_db():
     
     
 
-def save_orders_to_db(days=30):
+def save_orders_to_db(days=365):
     """Save recent orders to the SQLite database
     
     Args:
