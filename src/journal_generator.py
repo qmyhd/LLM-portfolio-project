@@ -13,7 +13,7 @@ from dotenv import load_dotenv
 import functools
 
 # Import from data_collector for auto-updating data
-from .data_collector import update_all_data
+from src.data_collector import update_all_data
 
 #############################################################
 # CONFIGURATION
