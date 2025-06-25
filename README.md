@@ -52,8 +52,16 @@ llm_portfolio_project/
 │  └─ 02_clean_discord.ipynb     # Discord data cleaning and preprocessing
 ├─ src/                 # Core modules
 │  ├─ data_collector.py      # SnapTrade + price ETL, historical data storage
-│  ├─ discord_logger_bot.py  # Discord fetcher & listener with Twitter integration
-│  └─ journal_generator.py   # LLM prompt & rendering with markdown output
+│  ├─ bot/
+│  │  ├─ bot.py                # Discord bot entry point
+│  │  ├─ events.py             # Event handlers
+│  │  └─ commands/             # Individual command modules
+│  ├─ twitter_analysis.py      # Tweet detection and sentiment
+│  ├─ logging_utils.py         # Discord message logging
+│  ├─ database.py              # SQLite connection helpers
+│  ├─ portfolio.py             # Portfolio queries
+│  ├─ trades.py                # Trade history helpers
+│  └─ journal_generator.py     # LLM prompt & rendering with markdown output
 ├─ data/
 │  ├─ raw/               # CSV exports (discord_msgs.csv, orders.csv, positions.csv, prices.csv, x_posts_log.csv)
 │  ├─ processed/         # Cleaned artifacts (discord_msgs_clean.parquet) and generated journals
@@ -130,7 +138,7 @@ python generate_journal.py --output path/to/output
 
 Run Discord logger to collect messages:
 ```bash
-python -m src.discord_logger_bot
+python -m bot.bot
 ```
 
 Inspect your portfolio positions:
@@ -150,7 +158,7 @@ python -c "from src.data_collector import get_account_positions; print(get_accou
     - All data is persisted in both CSV files and a SQLite database
 
 2. **Discord Data Processing**
-    - `discord_logger_bot.py` collects messages in real-time or via history command
+    - `bot/bot.py` runs the Discord bot, logging messages in real-time or via the history command
     - Messages are stored with ticker detection and sentiment analysis
     - Integrated Twitter/X link detection extracts tweet data from shared links
     - `02_clean_discord.ipynb` standardizes timestamps, cleans data, adds features
@@ -188,6 +196,8 @@ async def fetch_history(ctx, limit: int = 100):
 ## Robinhood / SnapTrade Integration
 
 SnapTrade provides a secure API layer to access Robinhood data without directly storing credentials.
+If the SnapTrade Python SDK is unavailable (e.g., unsupported Python version), the
+data collection functions will raise `ImportError` and the bot will continue without brokerage updates.
 
 Key features:
 - **Robust symbol extraction** from nested and complex API responses
