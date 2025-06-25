@@ -8,8 +8,12 @@ import sqlite3
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
-from snaptrade_client import SnapTrade
 import logging
+try:
+    from snaptrade_client import SnapTrade
+except Exception as e:  # pragma: no cover - optional dependency
+    SnapTrade = None
+    logging.warning(f"SnapTrade SDK import failed: {e}")
 import json
 import re
 
@@ -49,13 +53,16 @@ user_secret = os.getenv("SNAPTRADE_USER_SECRET") or os.getenv("userSecret")
 account_id = os.getenv("ROBINHOOD_ACCOUNT_ID")
 
 def initialize_snaptrade():
-    """Initialize the SnapTrade client with credentials from environment variables"""
+    """Initialize the SnapTrade client with credentials from environment variables."""
+    if SnapTrade is None:
+        raise ImportError("SnapTrade SDK is not available")
+
     client_id = os.getenv("SNAPTRADE_CLIENT_ID")
     consumer_key = os.getenv("SNAPTRADE_CONSUMER_KEY")
-    
+
     if not client_id or not consumer_key:
         raise ValueError("Missing SnapTrade credentials in environment variables")
-    
+
     return SnapTrade(
         client_id=client_id,
         consumer_key=consumer_key
