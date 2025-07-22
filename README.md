@@ -92,32 +92,37 @@ llm_portfolio_project/
 
 ### Configuration
 
-1. Copy .env.example to .env and fill in:
+1. Copy `.env.example` to `.env` and fill in your actual credentials:
+```bash
+cp .env.example .env
+```
+
+2. Edit `.env` with your actual API keys and credentials (never commit this file!):
 ```ini
 # Discord Bot credentials
-DISCORD_BOT_TOKEN=your_discord_bot_token
-LOG_CHANNEL_IDS=channel_id1,channel_id2
+DISCORD_BOT_TOKEN=your_actual_discord_bot_token
+LOG_CHANNEL_IDS=123456789,987654321
 
-# Brokerage (SnapTrade/Robinhood) credentials
-SNAPTRADE_CLIENT_ID=your_client_id
-SNAPTRADE_CONSUMER_KEY=your_consumer_key
-SNAPTRADE_USER_ID=your_user_id
-SNAPTRADE_USER_SECRET=your_user_secret
-ROBINHOOD_ACCOUNT_ID=your_account_id
+# Brokerage (SnapTrade/Robinhood) credentials  
+SNAPTRADE_CLIENT_ID=your_actual_client_id
+SNAPTRADE_CONSUMER_KEY=your_actual_consumer_key
+SNAPTRADE_USER_ID=your_actual_user_id
+SNAPTRADE_USER_SECRET=your_actual_user_secret
+ROBINHOOD_ACCOUNT_ID=your_actual_account_id
 
 # Social media API keys
-TWITTER_API_KEY=your_twitter_key
-TWITTER_API_SECRET_KEY=your_twitter_secret
-TWITTER_ACCESS_TOKEN=your_twitter_token
-TWITTER_ACCESS_TOKEN_SECRET=your_token_secret
-TWITTER_BEARER_TOKEN=your_bearer_token
+TWITTER_API_KEY=your_actual_twitter_key
+TWITTER_API_SECRET_KEY=your_actual_twitter_secret
+TWITTER_ACCESS_TOKEN=your_actual_twitter_token
+TWITTER_ACCESS_TOKEN_SECRET=your_actual_token_secret
+TWITTER_BEARER_TOKEN=your_actual_bearer_token
 
-# LLM API keys
-OPENAI_API_KEY=your_openai_key
-# Alternative LLM API (optional)
-GEMINI_API_KEY=your_gemini_key
+# LLM API keys (Gemini is primary, OpenAI is fallback)
+GEMINI_API_KEY=your_actual_gemini_key
+OPENAI_API_KEY=your_actual_openai_key
 ```
-2. Ensure your .gitignore excludes .env, raw data, caches, and DB files.
+
+3. **Security Note**: The `.env` file is automatically ignored by git and will never be pushed to GitHub.
 
 ## Usage
 

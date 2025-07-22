@@ -10,7 +10,17 @@ import argparse
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
-import functools
+
+# Import LLM libraries with error handling
+try:
+    import google.generativeai as genai
+except ImportError:
+    genai = None
+
+try:
+    import openai
+except ImportError:
+    openai = None
 
 # Import from data_collector for auto-updating data
 from src.data_collector import update_all_data
@@ -76,15 +86,16 @@ def retry_decorator(max_retries=3, delay=1):
     return decorator
 
 def get_api_key():
-    """Get API key from environment variables, trying multiple options
+    """Get API key from environment variables, prioritizing Gemini as primary LLM
     
     Returns:
-        API key from environment variables, prioritizing OPENAI_API_KEY, then GEMINI_API_KEY
+        API key from environment variables, prioritizing GEMINI_API_KEY, then OPENAI_API_KEY
     """
-    api_key = os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY")
+    # Prioritize Gemini as the primary LLM (free tier, reliable)
+    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
     
     if not api_key:
-        logger.error("No API key found. Please set OPENAI_API_KEY or GEMINI_API_KEY in .env file")
+        logger.error("No API key found. Please set GEMINI_API_KEY or OPENAI_API_KEY in .env file")
         raise ValueError("Missing API key in environment variables")
     
     return api_key
@@ -273,7 +284,7 @@ def generate_journal_entry(prompt, max_tokens=160):
     """
     try:
         # Try to use Google's Gemini API first (free tier)
-        import google.generativeai as genai
+        import google.generativeai as genai  # type: ignore
         
         # Set API key
         api_key = os.getenv("GEMINI_API_KEY")
@@ -282,22 +293,33 @@ def generate_journal_entry(prompt, max_tokens=160):
             logger.warning("No GEMINI_API_KEY found in environment variables. Falling back to OpenAI.")
             return generate_with_openai(prompt, max_tokens)
         
-        genai.configure(api_key=api_key)
+        genai.configure(api_key=api_key)  # type: ignore
         
         logger.info("🔄 Generating journal entry with Gemini...")
         
-        # Configure the model
-        generation_config = {
-            "temperature": 0.2,
-            "top_p": 0.95,
-            "top_k": 0,
-            "max_output_tokens": max_tokens,
-        }
+        # Configure the model with proper types
+        try:
+            from google.generativeai.types import GenerationConfig  # type: ignore
+            
+            generation_config = GenerationConfig(
+                temperature=0.2,
+                top_p=0.95,
+                top_k=40,  # top_k should be > 0
+                max_output_tokens=max_tokens,
+            )
+        except ImportError:
+            # Fallback to dict if types not available
+            generation_config = {
+                "temperature": 0.2,
+                "top_p": 0.95,
+                "top_k": 40,
+                "max_output_tokens": max_tokens,
+            }
         
         # Get default (latest) text model
-        model = genai.GenerativeModel(
+        model = genai.GenerativeModel(  # type: ignore
             model_name="gemini-1.5-flash",
-            generation_config=generation_config
+            generation_config=generation_config  # type: ignore
         )
         
         # Create the system instruction + user prompt format
@@ -308,7 +330,7 @@ def generate_journal_entry(prompt, max_tokens=160):
         response = model.generate_content(formatted_prompt)
         
         # Check if the response has text
-        if hasattr(response, 'text'):
+        if hasattr(response, 'text') and response.text:
             return response.text
         else:
             # Different response structure - try to get the content
@@ -346,11 +368,12 @@ def generate_with_openai(prompt, max_tokens=160):
             logger.error("No API key found for either Gemini or OpenAI in environment variables")
             return "Error: No API key available for LLM services."
         
-        openai.api_key = api_key
-        
         logger.info("🔄 Generating journal entry with OpenAI...")
         
-        resp = openai.ChatCompletion.create(
+        # Use the new OpenAI client interface
+        client = openai.OpenAI(api_key=api_key)
+        
+        response = client.chat.completions.create(
             model="gpt-4o-mini",  # Using gpt-4o-mini for cost-effective yet high-quality output
             messages=[
                 {"role": "system", "content": "You are a financial writing assistant."},
@@ -359,7 +382,7 @@ def generate_with_openai(prompt, max_tokens=160):
             max_tokens=max_tokens  # Limit output to approximately 120 words
         )
         
-        return resp.choices[0].message.content
+        return response.choices[0].message.content
     except ImportError:
         logger.error("Neither Google GenerativeAI nor OpenAI modules are installed.")
         return "Error: LLM libraries not installed. Install with: pip install openai google-generativeai"
@@ -782,27 +805,31 @@ def generate_portfolio_journal(positions_path=None, discord_path=None, prices_pa
     try:
         journal_entry = generate_journal_entry(prompt, max_tokens=200)
         
-        # Format entry for display
-        formatted_entry = textwrap.fill(journal_entry, 90)
-        
-        print("\n✅ Journal Entry Generated:")
-        print("=" * 90)
-        print(formatted_entry)
-        print("=" * 90)
-        
-        # Save to file
-        output_path = save_journal_entry(journal_entry, output_dir)
-        
-        # Also create a markdown version with additional details
-        create_markdown_journal(
-            journal_entry, 
-            positions_df, 
-            messages_df, 
-            prices_df, 
-            output_dir
-        )
-        
-        return journal_entry
+        if journal_entry:
+            # Format entry for display
+            formatted_entry = textwrap.fill(journal_entry, 90)
+            
+            print("\n✅ Journal Entry Generated:")
+            print("=" * 90)
+            print(formatted_entry)
+            print("=" * 90)
+            
+            # Save to file
+            output_path = save_journal_entry(journal_entry, output_dir)
+            
+            # Also create a markdown version with additional details
+            create_markdown_journal(
+                journal_entry, 
+                positions_df, 
+                messages_df, 
+                prices_df, 
+                output_dir
+            )
+            
+            return journal_entry
+        else:
+            logger.error("❌ Journal entry generation returned empty result")
+            return None
     except Exception as e:
         logger.error(f"❌ Error generating journal entry: {e}")
         return None
@@ -852,12 +879,13 @@ def create_markdown_journal(journal_entry, positions_df, messages_df, prices_df,
 """
     
     # Add top positions table
-    if portfolio_analysis.get('top_positions'):
+    top_positions = portfolio_analysis.get('top_positions') or []
+    if top_positions:
         md_content += """
 | Symbol | Quantity | Price | Equity | Change |
 | ------ | -------: | ----: | -----: | -----: |
 """
-        for pos in portfolio_analysis.get('top_positions'):
+        for pos in top_positions:
             change = f"{pos.get('change_percent', 0):.2f}%" if pos.get('change_percent') is not None else "N/A"
             md_content += f"| {pos.get('symbol')} | {pos.get('quantity', 0):.2f} | ${pos.get('price', 0):.2f} | ${pos.get('equity', 0):.2f} | {change} |\n"
     else:
@@ -865,24 +893,26 @@ def create_markdown_journal(journal_entry, positions_df, messages_df, prices_df,
     
     # Add gainers and losers
     md_content += "\n### Today's Movers\n\n#### Gainers\n"
-    if portfolio_analysis.get('gainers'):
+    gainers = portfolio_analysis.get('gainers') or []
+    if gainers:
         md_content += """
 | Symbol | Price | Change |
 | ------ | ----: | -----: |
 """
-        for pos in portfolio_analysis.get('gainers'):
+        for pos in gainers:
             md_content += f"| {pos.get('symbol')} | ${pos.get('price', 0):.2f} | +{pos.get('change_percent', 0):.2f}% |\n"
     else:
         md_content += "No significant gainers today.\n"
     
     md_content += "\n#### Losers\n"
-    if portfolio_analysis.get('losers'):
+    losers = portfolio_analysis.get('losers') or []
+    if losers:
         md_content += """
 | Symbol | Price | Change |
 | ------ | ----: | -----: |
 """
-        for pos in portfolio_analysis.get('losers'):
-            md_content += f"| {pos.get('symbol')} | ${pos.get('price', 0)::.2f} | {pos.get('change_percent', 0):.2f}% |\n"
+        for pos in losers:
+            md_content += f"| {pos.get('symbol')} | ${pos.get('price', 0):.2f} | {pos.get('change_percent', 0):.2f}% |\n"
     else:
         md_content += "No significant losers today.\n"
     

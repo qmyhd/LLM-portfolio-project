@@ -1,0 +1,15 @@
+README.md
+setup.py
+src/bot/__init__.py
+src/bot/bot.py
+src/bot/events.py
+src/bot/commands/__init__.py
+src/bot/commands/chart.py
+src/bot/commands/compare.py
+src/bot/commands/eod.py
+src/bot/commands/history.py
+src/trading_discord_bot.egg-info/PKG-INFO
+src/trading_discord_bot.egg-info/SOURCES.txt
+src/trading_discord_bot.egg-info/dependency_links.txt
+src/trading_discord_bot.egg-info/top_level.txt
+tests/test_core_functions.py

@@ -2,8 +2,8 @@ import csv
 import logging
 from pathlib import Path
 
-from data_collector import extract_ticker_symbols
-from twitter_analysis import (
+from .data_collector import extract_ticker_symbols
+from .twitter_analysis import (
     detect_twitter_links,
     extract_tweet_id,
     analyze_sentiment,

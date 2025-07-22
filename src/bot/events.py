@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from discord.ext import commands
 
-from logging_utils import log_message_to_file
+from ..logging_utils import log_message_to_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 RAW_DIR = BASE_DIR / "data" / "raw"
