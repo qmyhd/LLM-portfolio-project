@@ -1,17 +1,19 @@
-import unittest
-import sys
-import os
-from pathlib import Path
-import pandas as pd
 import json
-import tempfile
 import shutil
+import tempfile
+import unittest
+from pathlib import Path
 
-# Add the parent directory to sys.path to import from src
-sys.path.append(str(Path(__file__).resolve().parent.parent))
+import pandas as pd
 
-from src.data_collector import extract_ticker_symbols, append_discord_message_to_csv
-from src.journal_generator import create_journal_prompt, format_holdings_as_json, format_prices_as_json
+# Use absolute imports instead of sys.path manipulation
+from src.data_collector import append_discord_message_to_csv, extract_ticker_symbols
+from src.journal_generator import (
+    create_journal_prompt,
+    format_holdings_as_json,
+    format_prices_as_json,
+)
+
 
 class TestTickerExtraction(unittest.TestCase):
     """Test cases for ticker extraction function"""
@@ -90,7 +92,7 @@ class TestMessageAppend(unittest.TestCase):
         """Test appending a message with ticker symbols"""
         message = "I like $AAPL and $MSFT stocks."
         tickers = ["$AAPL", "$MSFT"]
-        result = append_discord_message_to_csv(message, tickers=tickers, output_path=self.csv_path)
+        append_discord_message_to_csv(message, tickers=tickers, output_path=self.csv_path)
         
         # Read the file and check the content
         df = pd.read_csv(self.csv_path)

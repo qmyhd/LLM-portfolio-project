@@ -1,8 +1,9 @@
-import os
 from pathlib import Path
+
 from discord.ext import commands
 
-from ..logging_utils import log_message_to_file
+from src.config import settings
+from src.logging_utils import log_message_to_file
 
 BASE_DIR = Path(__file__).resolve().parents[2]
 RAW_DIR = BASE_DIR / "data" / "raw"
@@ -20,6 +21,8 @@ def register_events(bot: commands.Bot, twitter_client=None):
     async def on_message(message):
         if message.author == bot.user:
             return
-        if str(message.channel.id) in os.getenv("LOG_CHANNEL_IDS", "").split(","):
+        
+        config = settings()
+        if str(message.channel.id) in config.log_channel_ids_list:
             log_message_to_file(message, DISCORD_CSV, TWEET_CSV, twitter_client)
         await bot.process_commands(message)

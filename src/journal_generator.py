@@ -1,15 +1,17 @@
-import os
-import pandas as pd
+import argparse
+import functools
 import json
+import logging
 import re
 import textwrap
-import logging
-import functools
 import time
-import argparse
-from pathlib import Path
 from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
 from dotenv import load_dotenv
+
+from src.config import settings
 
 # Import LLM libraries with error handling
 try:
@@ -92,7 +94,8 @@ def get_api_key():
         API key from environment variables, prioritizing GEMINI_API_KEY, then OPENAI_API_KEY
     """
     # Prioritize Gemini as the primary LLM (free tier, reliable)
-    api_key = os.getenv("GEMINI_API_KEY") or os.getenv("OPENAI_API_KEY")
+    config = settings()
+    api_key = config.get_primary_llm_key()
     
     if not api_key:
         logger.error("No API key found. Please set GEMINI_API_KEY or OPENAI_API_KEY in .env file")
@@ -286,8 +289,9 @@ def generate_journal_entry(prompt, max_tokens=160):
         # Try to use Google's Gemini API first (free tier)
         import google.generativeai as genai  # type: ignore
         
-        # Set API key
-        api_key = os.getenv("GEMINI_API_KEY")
+        # Set API key from centralized settings
+        config = settings()
+        api_key = getattr(config, 'GEMINI_API_KEY', '') or getattr(config, 'gemini_api_key', '')
         
         if not api_key:
             logger.warning("No GEMINI_API_KEY found in environment variables. Falling back to OpenAI.")
@@ -361,8 +365,9 @@ def generate_with_openai(prompt, max_tokens=160):
     """
     try:
         import openai
-        # Set API key
-        api_key = os.getenv("OPENAI_API_KEY")
+        # Set API key from centralized settings
+        config = settings()
+        api_key = getattr(config, 'OPENAI_API_KEY', '') or getattr(config, 'openai_api_key', '')
         
         if not api_key:
             logger.error("No API key found for either Gemini or OpenAI in environment variables")
@@ -501,8 +506,8 @@ def analyze_position_data(positions_df, prices_df):
                 price_lookup[symbol] = {
                     'price': row.get('price', 0),
                     'previous_close': row.get('previous_close', 0),
-                    'change': row.get('change', 0),
-                    'change_percent': row.get('change_percent', 0)
+                    'abs_change': row.get('abs_change', 0),
+                    'percent_change': row.get('percent_change', 0)
                 }
     
     # Calculate total portfolio value
@@ -521,7 +526,7 @@ def analyze_position_data(positions_df, prices_df):
             # Get price change if available
             change_pct = None
             if symbol in price_lookup:
-                change_pct = price_lookup[symbol].get('change_percent')
+                change_pct = price_lookup[symbol].get('percent_change')
             
             top_positions.append({
                 'symbol': symbol,
@@ -540,7 +545,7 @@ def analyze_position_data(positions_df, prices_df):
         for _, row in positions_df.iterrows():
             symbol = row.get('symbol', 'Unknown')
             if symbol in price_lookup:
-                change_pct = price_lookup[symbol].get('change_percent', 0)
+                change_pct = price_lookup[symbol].get('percent_change', 0)
                 
                 position_data = {
                     'symbol': symbol,
@@ -815,7 +820,7 @@ def generate_portfolio_journal(positions_path=None, discord_path=None, prices_pa
             print("=" * 90)
             
             # Save to file
-            output_path = save_journal_entry(journal_entry, output_dir)
+            save_journal_entry(journal_entry, output_dir)
             
             # Also create a markdown version with additional details
             create_markdown_journal(

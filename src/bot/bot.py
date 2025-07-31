@@ -1,6 +1,8 @@
-import os
 import logging
+
 from dotenv import load_dotenv
+
+from src.config import settings
 
 from . import create_bot
 
@@ -10,7 +12,9 @@ logger = logging.getLogger(__name__)
 
 def main():
     load_dotenv()
-    token = os.getenv("DISCORD_BOT_TOKEN")
+    config = settings()
+    
+    token = config.DISCORD_BOT_TOKEN
     if not token:
         raise RuntimeError("DISCORD_BOT_TOKEN not set")
 
@@ -19,7 +23,7 @@ def main():
     try:
         import tweepy
 
-        bearer = os.getenv("TWITTER_BEARER_TOKEN")
+        bearer = config.TWITTER_BEARER_TOKEN
         if bearer:
             twitter_client = tweepy.Client(bearer_token=bearer, wait_on_rate_limit=True)
     except Exception as e:

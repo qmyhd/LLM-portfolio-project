@@ -4,10 +4,9 @@ Comprehensive API and environment variable testing script.
 Tests all APIs and services used in the LLM Portfolio Project.
 """
 
-import os
 import logging
 import sys
-from dotenv import load_dotenv
+from src.config import settings
 
 # Setup logging
 logging.basicConfig(
@@ -20,52 +19,26 @@ def test_environment_variables():
     """Test that all required environment variables are present"""
     logger.info("🔍 Testing Environment Variables...")
     
-    # Load environment variables
-    load_dotenv()
+    # Use centralized settings instead of direct os.getenv()
+    config = settings()
     
     required_vars = {
-        'Discord Bot': [
-            'DISCORD_CLIENT_ID',
-            'DISCORD_CLIENT_SECRET', 
-            'DISCORD_BOT_TOKEN',
-            'LOG_CHANNEL_IDS'
+        'Database': [
+            ('DATABASE_URL', config.DATABASE_URL),
+            ('SUPABASE_SERVICE_ROLE_KEY', config.SUPABASE_SERVICE_ROLE_KEY),
+            ('SUPABASE_URL', config.SUPABASE_URL),
+            ('SUPABASE_ANON_KEY', config.SUPABASE_ANON_KEY),
         ],
-        'SnapTrade/Robinhood': [
-            'SNAPTRADE_CLIENT_ID',
-            'SNAPTRADE_CONSUMER_KEY',
-            'SNAPTRADE_USER_ID',
-            'SNAPTRADE_USER_SECRET',
-            'ROBINHOOD_ACCOUNT_ID',
-            'ROBINHOOD_USERNAME'
-        ],
-        'Twitter/X API': [
-            'TWITTER_API_KEY',
-            'TWITTER_API_SECRET_KEY',
-            'TWITTER_ACCESS_TOKEN',
-            'TWITTER_ACCESS_TOKEN_SECRET',
-            'TWITTER_Client_ID',
-            'TWITTER_Client_Secret',
-            'TWITTER_BEARER_TOKEN'
-        ],
-        'LLM APIs': [
-            'GEMINI_API_KEY',
-            'OPENAI_API_KEY'
-        ],
-        'Optional': [
-            'Github_Personal_Access_Token',
-            'Polygon_API_KEY'
-        ]
     }
     
     results = {}
     for category, vars_list in required_vars.items():
         results[category] = {}
-        for var in vars_list:
-            value = os.getenv(var)
-            if value and value != f"your_{var.lower()}":
-                results[category][var] = "✅ Set"
+        for var_name, var_value in vars_list:
+            if var_value and not var_value.startswith("your_"):
+                results[category][var_name] = "✅ Set"
             else:
-                results[category][var] = "❌ Missing/Default"
+                results[category][var_name] = "❌ Missing/Default"
     
     # Print results
     for category, vars_dict in results.items():
@@ -82,7 +55,8 @@ def test_twitter_api():
     try:
         import tweepy
         
-        bearer = os.getenv("TWITTER_BEARER_TOKEN")
+        config = settings()
+        bearer = getattr(config, 'TWITTER_BEARER_TOKEN', '') or getattr(config, 'twitter_bearer_token', '')
         if not bearer:
             logger.error("❌ TWITTER_BEARER_TOKEN not found")
             return False
@@ -111,7 +85,8 @@ def test_openai_api():
     try:
         import openai
         
-        api_key = os.getenv("OPENAI_API_KEY")
+        config = settings()
+        api_key = getattr(config, 'OPENAI_API_KEY', '') or getattr(config, 'openai_api_key', '')
         if not api_key or api_key.strip() == "" or api_key == "your_openai_api_key":
             logger.warning("⚠️ OPENAI_API_KEY not configured - skipping test")
             return False
@@ -143,7 +118,8 @@ def test_gemini_api():
     logger.info("\n🔮 Testing Google Gemini API...")
     
     try:
-        api_key = os.getenv("GEMINI_API_KEY")
+        config = settings()
+        api_key = getattr(config, 'GEMINI_API_KEY', '') or getattr(config, 'gemini_api_key', '')
         if not api_key:
             logger.error("❌ GEMINI_API_KEY not found")
             return False
@@ -184,10 +160,11 @@ def test_snaptrade_api():
     try:
         from snaptrade_client import SnapTrade
         
-        client_id = os.getenv("SNAPTRADE_CLIENT_ID")
-        consumer_key = os.getenv("SNAPTRADE_CONSUMER_KEY")
-        user_id = os.getenv("SNAPTRADE_USER_ID")
-        user_secret = os.getenv("SNAPTRADE_USER_SECRET")
+        config = settings()
+        client_id = getattr(config, 'SNAPTRADE_CLIENT_ID', '') or getattr(config, 'snaptrade_client_id', '')
+        consumer_key = getattr(config, 'SNAPTRADE_CONSUMER_KEY', '') or getattr(config, 'snaptrade_consumer_key', '')
+        user_id = getattr(config, 'SNAPTRADE_USER_ID', '') or getattr(config, 'snaptrade_user_id', '')
+        user_secret = getattr(config, 'SNAPTRADE_USER_SECRET', '') or getattr(config, 'snaptrade_user_secret', '')
         
         if not all([client_id, consumer_key, user_id, user_secret]):
             logger.error("❌ SnapTrade credentials missing")
@@ -222,9 +199,10 @@ def test_discord_bot_config():
     try:
         import discord
         
-        token = os.getenv("DISCORD_BOT_TOKEN")
-        client_id = os.getenv("DISCORD_CLIENT_ID")
-        channel_ids = os.getenv("LOG_CHANNEL_IDS")
+        config = settings()
+        token = getattr(config, 'DISCORD_BOT_TOKEN', '') or getattr(config, 'discord_bot_token', '')
+        client_id = getattr(config, 'DISCORD_CLIENT_ID', '') or getattr(config, 'discord_client_id', '')
+        channel_ids = getattr(config, 'LOG_CHANNEL_IDS', '') or getattr(config, 'log_channel_ids', '')
         
         if not token:
             logger.error("❌ DISCORD_BOT_TOKEN missing")

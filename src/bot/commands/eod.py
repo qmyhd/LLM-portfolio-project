@@ -1,5 +1,5 @@
-from discord.ext import commands
 import yfinance as yf
+from discord.ext import commands
 
 
 def register(bot: commands.Bot):

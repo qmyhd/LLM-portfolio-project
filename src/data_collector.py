@@ -1,14 +1,15 @@
 
-import os
+import csv
+import logging
+import sqlite3
+from datetime import datetime
+from pathlib import Path
+
 import pandas as pd
 import yfinance as yf
-from pprint import pprint
-import csv
-import sqlite3
-from datetime import datetime, timedelta
-from pathlib import Path
-from dotenv import load_dotenv
-import logging
+
+from src.config import settings
+
 try:
     from snaptrade_client import SnapTrade
 except Exception as e:  # pragma: no cover - optional dependency
@@ -23,9 +24,6 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
 logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
 
 # Define directories
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -45,20 +43,14 @@ ORDERS_CSV = RAW_DIR / "orders.csv"
 PRICES_CSV = RAW_DIR / "prices.csv"
 PRICE_DB = DB_DIR / "price_history.db"
 
-# SnapTrade credentials
-client_id = os.getenv("SNAPTRADE_CLIENT_ID")
-consumer_key = os.getenv("SNAPTRADE_CONSUMER_KEY")
-user_id = os.getenv("SNAPTRADE_USER_ID") or os.getenv("userId")
-user_secret = os.getenv("SNAPTRADE_USER_SECRET") or os.getenv("userSecret")
-account_id = os.getenv("ROBINHOOD_ACCOUNT_ID")
-
 def initialize_snaptrade():
     """Initialize the SnapTrade client with credentials from environment variables."""
     if SnapTrade is None:
         raise ImportError("SnapTrade SDK is not available")
 
-    client_id = os.getenv("SNAPTRADE_CLIENT_ID")
-    consumer_key = os.getenv("SNAPTRADE_CONSUMER_KEY")
+    config = settings()
+    client_id = getattr(config, 'SNAPTRADE_CLIENT_ID', '') or getattr(config, 'snaptrade_client_id', '')
+    consumer_key = getattr(config, 'SNAPTRADE_CONSUMER_KEY', '') or getattr(config, 'snaptrade_consumer_key', '')
 
     if not client_id or not consumer_key:
         raise ValueError("Missing SnapTrade credentials in environment variables")
@@ -68,107 +60,8 @@ def initialize_snaptrade():
         consumer_key=consumer_key
     )
 
-def initialize_database():
-    """Initialize the SQLite database
-    
-    Creates tables if they don't exist
-    """
-    conn = sqlite3.connect(PRICE_DB)
-    cursor = conn.cursor()
-    
-    # Create daily price history table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS daily_prices (
-        id INTEGER PRIMARY KEY,
-        symbol TEXT NOT NULL,
-        date TEXT NOT NULL,
-        open REAL,
-        high REAL,
-        low REAL,
-        close REAL,
-        volume INTEGER,
-        dividends REAL,
-        stock_splits REAL,
-        UNIQUE(symbol, date)
-    )
-    ''')
-    
-    # Create real-time price table
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS realtime_prices (
-        id INTEGER PRIMARY KEY,
-        symbol TEXT NOT NULL,
-        timestamp TEXT NOT NULL,
-        price REAL,
-        previous_close REAL,
-        change REAL,
-        change_percent REAL,
-        UNIQUE(symbol, timestamp)
-    )
-    ''')
-    
-    # Create table for stock metrics
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS stock_metrics (
-        id INTEGER PRIMARY KEY,
-        symbol TEXT NOT NULL,
-        date TEXT NOT NULL,
-        pe_ratio REAL,
-        market_cap REAL,
-        dividend_yield REAL,
-        fifty_day_avg REAL,
-        two_hundred_day_avg REAL,
-        UNIQUE(symbol, date)
-    )
-    ''')
-
-    # Create table for positions
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS positions (
-        id INTEGER PRIMARY KEY,
-        symbol TEXT NOT NULL,
-        quantity REAL,
-        equity REAL,
-        price REAL,
-        average_buy_price REAL,
-        type TEXT,
-        currency TEXT,
-        UNIQUE(symbol)
-    )
-    ''')
-
-    # Create table for orders
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS orders (
-        brokerage_order_id TEXT,
-        status TEXT,
-        symbol TEXT,
-        universal_symbol TEXT,
-        quote_universal_symbol TEXT,
-        quote_currency TEXT,
-        option_symbol TEXT,
-        action TEXT,
-        total_quantity INTEGER,
-        open_quantity INTEGER,
-        canceled_quantity INTEGER,
-        filled_quantity INTEGER,
-        execution_price DECIMAL(18, 6),
-        limit_price DECIMAL(18, 6),
-        stop_price DECIMAL(18, 6),
-        order_type TEXT,
-        time_in_force TEXT,
-        time_placed TIMESTAMP,
-        time_updated TIMESTAMP,
-        time_executed TIMESTAMP,
-        expiry_date DATE,
-        child_brokerage_order_ids TEXT,
-        extracted_symbol TEXT
-    )
-    ''')
-    
-    conn.commit()
-    conn.close()
-    logger.info("✅ Database initialized")
+# Database initialization is now handled by src.database.initialize_database()
+# This consolidates both social and financial data table creation
     
 def extract_symbol_from_data(symbol_data):
     """
@@ -194,7 +87,7 @@ def extract_symbol_from_data(symbol_data):
 
     # search priority (don’t touch 'id' until last)
     KEYS = ['raw_symbol', 'symbol', 'SYMBOL', 'ticker',
-            'Ticker', 'universal_symbol_symbol']
+            'Ticker', 'universal_symbol_symbol', 'instrument_symbol']
 
     def _search(d: dict):
         # 1️⃣  look at the preferred keys
@@ -226,6 +119,29 @@ def extract_symbol_from_data(symbol_data):
 
     return None
 
+def extract_symbol_from_data_enhanced(symbol_data):
+    """
+    Enhanced version of extract_symbol_from_data with instrument_symbol fallback.
+    
+    Args:
+        symbol_data: A string or nested dictionary containing symbol information.
+        
+    Returns:
+        A cleaned ticker string if found, otherwise None.
+    """
+    # First try the original function
+    result = extract_symbol_from_data(symbol_data)
+    if result:
+        return result
+    
+    # If the original function failed and we have a dict, try instrument_symbol fallback
+    if isinstance(symbol_data, dict):
+        instrument_symbol = symbol_data.get('instrument_symbol')
+        if isinstance(instrument_symbol, str) and instrument_symbol.strip() and '-' not in instrument_symbol:
+            return instrument_symbol.strip()
+    
+    return None
+
 def get_account_positions(account_id=None, user_id=None, user_secret=None):
     """Get positions for a specific account using SnapTrade
     
@@ -238,9 +154,10 @@ def get_account_positions(account_id=None, user_id=None, user_secret=None):
         DataFrame containing position data
     """
     # Use environment variables as defaults if not provided
-    account_id = account_id or os.getenv("ROBINHOOD_ACCOUNT_ID")
-    user_id = user_id or os.getenv("SNAPTRADE_USER_ID") or os.getenv("userId")
-    user_secret = user_secret or os.getenv("SNAPTRADE_USER_SECRET") or os.getenv("userSecret")
+    config = settings()
+    account_id = account_id or getattr(config, 'ROBINHOOD_ACCOUNT_ID', '') or getattr(config, 'robinhood_account_id', '')
+    user_id = user_id or getattr(config, 'SNAPTRADE_USER_ID', '') or getattr(config, 'snaptrade_user_id', '') or getattr(config, 'userid', '')
+    user_secret = user_secret or getattr(config, 'SNAPTRADE_USER_SECRET', '') or getattr(config, 'snaptrade_user_secret', '') or getattr(config, 'usersecret', '')
     
     if not all([account_id, user_id, user_secret]):
         raise ValueError("Missing required parameters: account_id, user_id, or user_secret")
@@ -257,52 +174,75 @@ def get_account_positions(account_id=None, user_id=None, user_secret=None):
         return pd.DataFrame()
     
     # Log raw response data for debugging
-    logger.info(f"Raw SnapTrade response: {response.body[:2]}")  # Log first 2 positions to avoid large output
+    try:
+        body = getattr(response, 'body', None)
+        if body and hasattr(body, '__len__') and hasattr(body, '__getitem__'):
+            logger.info(f"Raw SnapTrade response: {body[:2]}")  # Log first 2 positions to avoid large output
+    except (TypeError, AttributeError, Exception):
+        logger.info(f"Raw SnapTrade response: {type(getattr(response, 'body', None))}")
     
     # Convert response to DataFrame
     positions = []
-    for position in response.body:
-        # Extract ticker symbol properly from nested dictionary
-        symbol_data = position.get('symbol', {})
-        symbol = extract_symbol_from_data(symbol_data)
-        
-        # If we couldn't extract a valid symbol, try to identify it from other data
-        if not symbol:
-            # Try to extract from security_type or other fields
-            symbol = position.get('symbol_id') or position.get('id') or "Unknown"
-            logger.warning(f"Using fallback symbol identification: {symbol}")
-        
-        # Calculate values correctly - ensure they're floating point numbers
-        try:
-            quantity = float(position.get('units', 0) or 0)
-            price = float(position.get('price', 0) or 0)
-            equity = quantity * price
-            average_purchase_price = position.get('average_purchase_price', 0)
+    try:
+        body = getattr(response, 'body', None)
+        if body and hasattr(body, '__iter__'):
+            for position in body:
+                # Extract ticker symbol properly from nested dictionary with enhanced fallback
+                symbol_data = position.get('symbol', {})
+                symbol = extract_symbol_from_data_enhanced(symbol_data)
+                
+                # If we couldn't extract a valid symbol, try to identify it from other data
+                if not symbol:
+                    # Try to extract from security_type or other fields
+                    symbol = position.get('symbol_id') or position.get('id') or "Unknown"
+                    logger.warning(f"Using fallback symbol identification: {symbol}")
+                
+                # Calculate values correctly - ensure they're floating point numbers
+                try:
+                    quantity = float(position.get('units', 0) or 0)
+                    price = float(position.get('price', 0) or 0)
+                    equity = quantity * price
+                    average_purchase_price = position.get('average_purchase_price', 0)
 
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error converting position values: {e}")
-            quantity = 0
-            price = 0
-            equity = 0
-            average_purchase_price = 0
-        
-        # If we have price and quantity but no symbol, try to look it up
-        if price > 0 and quantity > 0 and (not symbol or symbol == "Unknown"):
-            # This is where we would implement a price-based lookup
-            # For now, use "Symbol-" + truncated price as placeholder
-            symbol = f"Symbol-{price:.2f}"
-            logger.warning(f"Using price-based symbol identification: {symbol}")
-        
-        data = {
-            'symbol': symbol,
-            'quantity': quantity,
-            'equity': equity,
-            'price': price,
-            'average_buy_price': average_purchase_price,
-            'type': position['symbol']['symbol']['type']['description'] if not None else 'Unknown',
-            'currency': 'USD',  # Simplify currency to just the code
-        }
-        positions.append(data)
+                except (ValueError, TypeError) as e:
+                    logger.error(f"Error converting position values: {e}")
+                    quantity = 0
+                    price = 0
+                    equity = 0
+                    average_purchase_price = 0
+                
+                # If we have price and quantity but no symbol, try to look it up
+                if price > 0 and quantity > 0 and (not symbol or symbol == "Unknown"):
+                    # This is where we would implement a price-based lookup
+                    # For now, use "Symbol-" + truncated price as placeholder
+                    symbol = f"Symbol-{price:.2f}"
+                    logger.warning(f"Using price-based symbol identification: {symbol}")
+                
+                # Safely extract type information with fallback
+                position_type = "Unknown"
+                try:
+                    if 'symbol' in position and isinstance(position['symbol'], dict):
+                        symbol_obj = position['symbol']
+                        if 'symbol' in symbol_obj and isinstance(symbol_obj['symbol'], dict):
+                            symbol_inner = symbol_obj['symbol']
+                            if 'type' in symbol_inner and isinstance(symbol_inner['type'], dict):
+                                position_type = symbol_inner['type'].get('description', 'Unknown')
+                except (KeyError, TypeError, AttributeError):
+                    position_type = "Unknown"
+                
+                data = {
+                    'symbol': symbol,
+                    'quantity': quantity,
+                    'equity': equity,
+                    'price': price,
+                    'average_buy_price': average_purchase_price,
+                    'type': position_type,
+                    'currency': 'USD',  # Simplify currency to just the code
+                }
+                positions.append(data)
+    except (TypeError, AttributeError) as e:
+        logger.error(f"Error processing positions from SnapTrade response: {e}")
+        return pd.DataFrame()
     
     # Create DataFrame and sort by equity (descending)
     positions_df = pd.DataFrame(positions)
@@ -327,9 +267,11 @@ def get_account_balance(account_id=None, user_id=None, user_secret=None):
     Returns:
         Dictionary containing account balance information
     """
-    account_id = account_id or os.getenv("ROBINHOOD_ACCOUNT_ID")
-    user_id = user_id or os.getenv("SNAPTRADE_USER_ID") or os.getenv("userId")
-    user_secret = user_secret or os.getenv("SNAPTRADE_USER_SECRET") or os.getenv("userSecret")
+    # Use environment variables as defaults if not provided
+    config = settings()
+    account_id = account_id or getattr(config, 'ROBINHOOD_ACCOUNT_ID', '') or getattr(config, 'robinhood_account_id', '')
+    user_id = user_id or getattr(config, 'SNAPTRADE_USER_ID', '') or getattr(config, 'snaptrade_user_id', '') or getattr(config, 'userid', '')
+    user_secret = user_secret or getattr(config, 'SNAPTRADE_USER_SECRET', '') or getattr(config, 'snaptrade_user_secret', '') or getattr(config, 'usersecret', '')
     
     if not all([account_id, user_id, user_secret]):
         raise ValueError("Missing required parameters: account_id, user_id, or user_secret")
@@ -362,9 +304,11 @@ def get_recent_orders(account_id=None, user_id=None, user_secret=None, state="al
     Returns:
         List containing order information
     """
-    account_id = account_id or os.getenv("ROBINHOOD_ACCOUNT_ID")
-    user_id = user_id or os.getenv("SNAPTRADE_USER_ID") or os.getenv("userId")
-    user_secret = user_secret or os.getenv("SNAPTRADE_USER_SECRET") or os.getenv("userSecret")
+    # Use environment variables as defaults if not provided
+    config = settings()
+    account_id = account_id or getattr(config, 'ROBINHOOD_ACCOUNT_ID', '') or getattr(config, 'robinhood_account_id', '')
+    user_id = user_id or getattr(config, 'SNAPTRADE_USER_ID', '') or getattr(config, 'snaptrade_user_id', '') or getattr(config, 'userid', '')
+    user_secret = user_secret or getattr(config, 'SNAPTRADE_USER_SECRET', '') or getattr(config, 'snaptrade_user_secret', '') or getattr(config, 'usersecret', '')
     
     if not all([account_id, user_id, user_secret]):
         raise ValueError("Missing required parameters: account_id, user_id, or user_secret")
@@ -408,42 +352,66 @@ def get_recent_orders(account_id=None, user_id=None, user_secret=None, state="al
         elif isinstance(symbol_data, str):
             symbol = symbol_data
         
-        # Add the extracted symbol to the order data
+        # Add the extracted symbol to the order data (create a copy to avoid TypedDict issues)
+        order_dict = dict(order)  # Convert to regular dict
         if symbol and isinstance(symbol, str) and symbol.lower() != 'unknown':
-            order['extracted_symbol'] = symbol.strip()
+            order_dict['extracted_symbol'] = symbol.strip()
         else:
-            order['extracted_symbol'] = 'Unknown'
+            order_dict['extracted_symbol'] = 'Unknown'
 
         # # Stringify 'option_symbol' if it's a dict
-        # if 'option_symbol' in order and isinstance(order['option_symbol'], dict):
+        # if 'option_symbol' in order_dict and isinstance(order_dict['option_symbol'], dict):
         #     try:
-        #         print(f"Stringifying option_symbol: {order['option_symbol']}")
-        #         order['option_symbol'] = json.dumps(order['option_symbol'])
+        #         print(f"Stringifying option_symbol: {order_dict['option_symbol']}")
+        #         order_dict['option_symbol'] = json.dumps(order_dict['option_symbol'])
         #     except Exception as e:
         #         logger.warning(f"Failed to stringify option_symbol: {e}")
-        #         order['option_symbol'] = str(order['option_symbol'])
+        #         order_dict['option_symbol'] = str(order_dict['option_symbol'])
             
         # Add order to processed list
-        processed_orders.append(order)
+        processed_orders.append(order_dict)
     
     # Return just the first 'limit' processed orders
     return processed_orders[:limit] if limit else processed_orders
 
 def save_positions_to_db():
-    """Saves positions to the SQLite database
+    """Saves positions to the database using unified database layer
     """
     positions_df = get_account_positions()
 
     if not positions_df.empty:
         try:
-            conn = sqlite3.connect(PRICE_DB)
+            from src.database import execute_sql, use_postgres
             
-            # Insert into realtime_prices table
-            positions_df.to_sql('positions', conn, if_exists='replace', index=False)
+            # Add sync timestamp to track when this position snapshot was taken
+            current_timestamp = datetime.now().isoformat()
+            positions_df['sync_timestamp'] = current_timestamp
             
-            conn.commit()
-            conn.close()
-            logger.info(f"✅ Saved {len(positions_df)} positions to database")
+            # Add equity verification column: calculated_equity = quantity × price
+            positions_df['calculated_equity'] = positions_df['quantity'] * positions_df['price']
+            
+            # Use unified database layer instead of direct sqlite3
+            if use_postgres():
+                # For PostgreSQL, insert each row individually to handle conflicts
+                for _, row in positions_df.iterrows():
+                    execute_sql('''
+                    INSERT INTO positions 
+                    (symbol, quantity, equity, price, average_buy_price, type, currency, sync_timestamp, calculated_equity)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, sync_timestamp) DO NOTHING
+                    ''', (
+                        row['symbol'], row['quantity'], row['equity'], row['price'],
+                        row['average_buy_price'], row['type'], row['currency'],
+                        row['sync_timestamp'], row['calculated_equity']
+                    ))
+            else:
+                # For SQLite, use DataFrame to_sql with existing connection
+                conn = sqlite3.connect(PRICE_DB)
+                positions_df.to_sql('positions', conn, if_exists='append', index=False)
+                conn.commit()
+                conn.close()
+            
+            logger.info(f"✅ Saved {len(positions_df)} positions to database with timestamp {current_timestamp}")
         except Exception as e:
             logger.error(f"Error saving positions to database: {e}")
     else:
@@ -453,10 +421,9 @@ def save_positions_to_db():
     
 
 def save_orders_to_db(days=365):
-    """Save recent orders to the SQLite database
+    """Save recent orders to the database using unified database layer
     
     Args:
-        orders_df: DataFrame containing order data
         days: Number of days to look back for orders
     """
     orders = get_recent_orders(days=days)
@@ -479,20 +446,38 @@ def save_orders_to_db(days=365):
                 lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
             )
 
-        # print(orders_df['option_symbol'].head())
-        # print(type(orders_df['option_symbol'].iloc[0])) 
-
         if orders_df.empty:
             return
         
         try:
-            conn = sqlite3.connect(PRICE_DB)
+            from src.database import execute_sql, use_postgres
             
-            # Insert into realtime_prices table
-            orders_df.to_sql('orders', conn, if_exists='append', index=False)
+            # Use unified database layer instead of direct sqlite3
+            if use_postgres():
+                # For PostgreSQL, insert each row individually
+                for _, row in orders_df.iterrows():
+                    # Convert row to dict and handle NaN values
+                    row_dict = row.to_dict()
+                    for key, value in row_dict.items():
+                        if pd.isna(value):
+                            row_dict[key] = None
+                    
+                    # Build dynamic INSERT query based on available columns
+                    columns = list(row_dict.keys())
+                    values = [row_dict[col] for col in columns]
+                    placeholders = ', '.join(['%s'] * len(columns))
+                    
+                    execute_sql(f'''
+                    INSERT INTO orders ({', '.join(columns)})
+                    VALUES ({placeholders})
+                    ''', values)
+            else:
+                # For SQLite, use DataFrame to_sql with existing connection
+                conn = sqlite3.connect(PRICE_DB)
+                orders_df.to_sql('orders', conn, if_exists='append', index=False)
+                conn.commit()
+                conn.close()
             
-            conn.commit()
-            conn.close()
             logger.info(f"✅ Saved {len(orders_df)} orders to database")
         except Exception as e:
             logger.error(f"Error saving orders to database: {e}")
@@ -564,16 +549,18 @@ def fetch_realtime_prices(symbols=None):
             previous_close = info.get('previousClose', 0)
             current_price = info.get('regularMarketPrice', 0)
             
-            # Calculate change
-            change = current_price - previous_close
-            change_percent = (change / previous_close * 100) if previous_close > 0 else 0
+            # Calculate change (abs_change and %change from regularMarketPrice vs previousClose)
+            current_price = info.get('regularMarketPrice', 0)
+            previous_close = info.get('previousClose', 0)
+            abs_change = current_price - previous_close
+            change_percent = (abs_change / previous_close * 100) if previous_close > 0 else 0
             
             price_data.append({
                 'symbol': symbol,
                 'price': current_price,
                 'previous_close': previous_close,
-                'change': change,
-                'change_percent': change_percent,
+                'abs_change': abs_change,  # This is the absolute change
+                'percent_change': change_percent,  # This is the percentage change
                 'timestamp': datetime.now().isoformat()
             })
             
@@ -590,7 +577,7 @@ def fetch_realtime_prices(symbols=None):
     return df
 
 def save_realtime_prices_to_db(prices_df):
-    """Save real-time prices to the SQLite database
+    """Save real-time prices to the database using unified database layer
     
     Args:
         prices_df: DataFrame containing real-time price data
@@ -599,13 +586,26 @@ def save_realtime_prices_to_db(prices_df):
         return
     
     try:
-        conn = sqlite3.connect(PRICE_DB)
+        from src.database import execute_sql, use_postgres
         
-        # Insert into realtime_prices table
-        prices_df.to_sql('realtime_prices', conn, if_exists='append', index=False)
+        if use_postgres():
+            # For PostgreSQL, insert each row individually with conflict handling
+            for _, row in prices_df.iterrows():
+                execute_sql('''
+                INSERT INTO realtime_prices (symbol, timestamp, price, previous_close, abs_change, percent_change)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol, timestamp) DO NOTHING
+                ''', (
+                    row['symbol'], row['timestamp'], row['price'], 
+                    row['previous_close'], row['abs_change'], row['percent_change']
+                ))
+        else:
+            # For SQLite, use DataFrame to_sql with existing connection
+            conn = sqlite3.connect(PRICE_DB)
+            prices_df.to_sql('realtime_prices', conn, if_exists='append', index=False)
+            conn.commit()
+            conn.close()
         
-        conn.commit()
-        conn.close()
         logger.info(f"✅ Saved {len(prices_df)} real-time prices to database")
     except Exception as e:
         logger.error(f"Error saving prices to database: {e}")
@@ -693,7 +693,7 @@ def fetch_historical_prices(symbols=None, period="1y", interval="1d"):
     return price_history
 
 def save_historical_prices_to_db(symbol, history_df):
-    """Save historical prices to the SQLite database
+    """Save historical prices to the SQLite database using append-only writes
     
     Args:
         symbol: Ticker symbol
@@ -703,13 +703,12 @@ def save_historical_prices_to_db(symbol, history_df):
         return
     
     try:
-        conn = sqlite3.connect(PRICE_DB)
-        cursor = conn.cursor()
+        from src.database import execute_sql
         
-        # Insert each row into the daily_prices table
+        # Insert each row into the daily_prices table using INSERT OR IGNORE to respect UNIQUE constraints
         for _, row in history_df.iterrows():
-            cursor.execute('''
-            INSERT OR REPLACE INTO daily_prices 
+            execute_sql('''
+            INSERT OR IGNORE INTO daily_prices 
             (symbol, date, open, high, low, close, volume, dividends, stock_splits)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ''', (
@@ -724,9 +723,7 @@ def save_historical_prices_to_db(symbol, history_df):
                 row['Stock Splits']
             ))
         
-        conn.commit()
-        conn.close()
-        logger.info(f"✅ Saved historical prices for {symbol} to database")
+        logger.info(f"✅ Saved historical prices for {symbol} to database using append-only writes")
     except Exception as e:
         logger.error(f"Error saving historical prices to database for {symbol}: {e}")
 
@@ -788,12 +785,13 @@ def fetch_stock_metrics(symbols=None):
                 logger.warning(f"No info data found for symbol: {symbol}")
                 continue
                 
+            dividend_yield = info.get('dividendYield')
             metrics_data.append({
                 'symbol': symbol,
                 'date': datetime.now().strftime('%Y-%m-%d'),
                 'pe_ratio': info.get('trailingPE', None),
                 'market_cap': info.get('marketCap', None),
-                'dividend_yield': info.get('dividendYield', None) * 100 if info.get('dividendYield') else None,
+                'dividend_yield': (dividend_yield * 100) if dividend_yield and isinstance(dividend_yield, (int, float)) else None,
                 'fifty_day_avg': info.get('fiftyDayAverage', None),
                 'two_hundred_day_avg': info.get('twoHundredDayAverage', None)
             })
@@ -810,7 +808,7 @@ def fetch_stock_metrics(symbols=None):
     return df
 
 def save_stock_metrics_to_db(metrics_df):
-    """Save stock metrics to the SQLite database
+    """Save stock metrics to the database using unified database layer
     
     Args:
         metrics_df: DataFrame containing stock metrics
@@ -819,13 +817,27 @@ def save_stock_metrics_to_db(metrics_df):
         return
     
     try:
-        conn = sqlite3.connect(PRICE_DB)
+        from src.database import execute_sql, use_postgres
         
-        # Insert into stock_metrics table
-        metrics_df.to_sql('stock_metrics', conn, if_exists='append', index=False)
+        if use_postgres():
+            # For PostgreSQL, insert each row individually with conflict handling
+            for _, row in metrics_df.iterrows():
+                execute_sql('''
+                INSERT INTO stock_metrics 
+                (symbol, date, pe_ratio, market_cap, dividend_yield, fifty_day_avg, two_hundred_day_avg)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (symbol, date) DO NOTHING
+                ''', (
+                    row['symbol'], row['date'], row['pe_ratio'], row['market_cap'],
+                    row['dividend_yield'], row['fifty_day_avg'], row['two_hundred_day_avg']
+                ))
+        else:
+            # For SQLite, use DataFrame to_sql with existing connection
+            conn = sqlite3.connect(PRICE_DB)
+            metrics_df.to_sql('stock_metrics', conn, if_exists='append', index=False)
+            conn.commit()
+            conn.close()
         
-        conn.commit()
-        conn.close()
         logger.info(f"✅ Saved metrics for {len(metrics_df)} stocks to database")
     except Exception as e:
         logger.error(f"Error saving stock metrics to database: {e}")
@@ -833,15 +845,24 @@ def save_stock_metrics_to_db(metrics_df):
 def update_all_data():
     """Update all data: positions, orders, real-time prices, historical prices, and metrics"""
     # Initialize database if it doesn't exist
+    from src.database import initialize_database
     initialize_database()
     
     # Save positions and orders
-    positions_path = save_positions_to_db()
+    save_positions_to_db()
     save_orders_to_db(days=180)  # Get the last 6 months of orders
     
-    # Fetch active position symbols
-    positions_df = pd.read_csv(positions_path) if positions_path else pd.DataFrame()
-    symbols = positions_df['symbol'].tolist() if not positions_df.empty else []
+    # Fetch active position symbols from the database
+    try:
+        from src.database import execute_sql
+        result = execute_sql(
+            "SELECT DISTINCT symbol FROM positions WHERE sync_timestamp = (SELECT MAX(sync_timestamp) FROM positions)", 
+            fetch_results=True
+        )
+        symbols = [row[0] for row in result] if result else []
+    except Exception as e:
+        logger.error(f"Error fetching symbols from database: {e}")
+        symbols = []
     
     if symbols:
         # Fetch and save real-time prices
@@ -941,7 +962,8 @@ def extract_ticker_symbols(text):
 
 # Example usage when running this file directly
 if __name__ == "__main__":
-    # Initialize the price database
+    # Initialize the database
+    from src.database import initialize_database
     initialize_database()
     
     # Get account summary for display
@@ -961,17 +983,26 @@ if __name__ == "__main__":
             first_balance = balance[0]
             if isinstance(first_balance, dict):
                 # Calculate total from available fields
-                cash = first_balance.get('cash', 0)
-                buying_power = first_balance.get('buying_power', 0)
+                cash = first_balance.get('cash', 0) or 0
+                buying_power = first_balance.get('buying_power', 0) or 0
+                
+                # Ensure numeric values
+                if not isinstance(cash, (int, float)):
+                    cash = 0
+                if not isinstance(buying_power, (int, float)):
+                    buying_power = 0
                 
                 # In many brokerage APIs, the total balance is derived from these values
                 # Buying power often represents cash + margin available
                 if 'total' in first_balance:
-                    total_balance = first_balance.get('total', 0)
+                    total_balance = first_balance.get('total', 0) or 0
                 else:
                     # For Robinhood/SnapTrade, buying power is typically 2x cash for margin accounts
                     # So we'll use a reasonable formula to estimate total equity
-                    equity_value = buying_power - cash if buying_power > cash else buying_power/2
+                    if buying_power > cash:
+                        equity_value = buying_power - cash
+                    else:
+                        equity_value = buying_power / 2
                     total_balance = equity_value + cash
                 
                 logger.info(f"Cash: ${cash:.2f}, Buying Power: ${buying_power:.2f}")
@@ -980,7 +1011,7 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Error processing balance data: {e}")
     
-    logger.info(f"\n📊 Portfolio Summary")
+    logger.info("\n📊 Portfolio Summary")
     logger.info(f"Total Balance: ${total_balance:.2f}")
     
     # Update all data
