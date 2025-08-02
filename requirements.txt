@@ -24,3 +24,4 @@ psycopg2-binary>=2.9.0
 asyncpg>=0.29.0
 aiosqlite>=0.20.0
 pydantic-settings>=2.2
+typing-extensions==4.13.2
