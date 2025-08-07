@@ -2,7 +2,6 @@
 One-time migration from SQLite to PostgreSQL (Supabase).
 This script migrates data from the local SQLite database to Supabase PostgreSQL.
 """
-import os
 import sys
 import sqlite3
 import pandas as pd
@@ -11,9 +10,13 @@ from pathlib import Path
 from datetime import datetime
 from sqlalchemy import text
 
-# Use absolute imports instead of sys.path manipulation
-from src.config import settings
-from src.db import get_sync_engine, test_connection
+# Add src directory to path for imports
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root / "src"))
+
+# Use imports after path is set up  # noqa: E402
+from src.config import settings  # noqa: E402
+from src.db import get_sync_engine, test_connection  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)

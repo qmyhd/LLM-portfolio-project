@@ -302,7 +302,6 @@ def process_trade_markers(trade_data: pd.DataFrame, price_data: pd.DataFrame):
         action = trade['action'].lower()
         shares = float(trade['total_quantity'])
         price = float(trade['execution_price'])
-        trade_value = float(trade['trade_value'])
         
         # Find the closest price data date
         price_dates = [idx.date() for idx in price_data.index]
@@ -316,11 +315,6 @@ def process_trade_markers(trade_data: pd.DataFrame, price_data: pd.DataFrame):
                 break
         
         if closest_idx is not None:
-            # Calculate marker size proportional to trade value (with reasonable limits)
-            base_size = 100
-            size_multiplier = max(1, min(5, trade_value / 10000))  # Scale based on $10k units
-            marker_size = base_size * size_multiplier
-            
             # Process the trade and generate label
             if action == 'buy':
                 # Add to FIFO tracker

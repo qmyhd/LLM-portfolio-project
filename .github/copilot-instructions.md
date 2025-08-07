@@ -2,12 +2,14 @@
 
 ## Architecture Overview
 
-This is a data-driven portfolio journal system with three core layers:
-- **Data Collection**: SnapTrade API + Discord bot + Twitter API → CSV files + SQLite database
+This is a data-driven portfolio journal system with three core layers and dual database architecture:
+- **Data Collection**: SnapTrade API + Discord bot + Twitter API → CSV files + PostgreSQL/SQLite database
 - **Processing**: Pandas ETL pipelines with ticker extraction and sentiment analysis
 - **Output**: LLM-generated journal entries in plain text and markdown formats
 
-Key data flow: `data_collector.py` → SQLite `price_history.db` + CSV files → `journal_generator.py` → LLM API → formatted journal outputs
+Key data flow: `data_collector.py` → PostgreSQL (Supabase) + SQLite fallback + CSV files → `journal_generator.py` → LLM API → formatted journal outputs
+
+**Database Architecture**: Hybrid PostgreSQL/SQLite system with automatic fallback, connection pooling, and migration tools for moving data between systems.
 
 ## Quick Start Commands
 
@@ -17,14 +19,28 @@ python -m venv .venv
 .venv\Scripts\Activate.ps1  # Windows PowerShell
 pip install -r requirements.txt && pip install -e .
 
+# Complete development setup (alternative)
+make setup
+
 # Generate journal (auto-updates data)
 python generate_journal.py --force
+# or via Makefile
+make journal
 
 # Run Discord bot for real-time data collection
 python -m src.bot.bot
+# or via Makefile
+make bot
 
-# Test API connections
-python check_twitter_api.py
+# Database initialization and migration
+make init-db      # Create tables + enable RLS policies
+make migrate      # SQLite → PostgreSQL migration
+make verify-migration  # Check migration status
+
+# Development workflow
+make test         # Run test suite
+make lint         # Code linting
+make clean        # Clean up temp files
 ```
 
 ## Critical File Patterns
@@ -35,15 +51,21 @@ python check_twitter_api.py
 - `notebooks/01_generate_journal.ipynb` - Interactive development workflow
 
 ### Core Architecture
-- `src/data_collector.py` - **Primary data ingestion**: SnapTrade positions/orders, yfinance prices, SQLite persistence
+- `src/data_collector.py` - **Primary data ingestion**: SnapTrade positions/orders, yfinance prices, dual database persistence
 - `src/journal_generator.py` - **LLM orchestration**: prompt engineering, API calls, dual output formats (text + markdown)
 - `src/database.py` - **Simple SQLite wrapper**: `get_connection()` returns connection to `data/database/price_history.db`
+- `src/db.py` - **Advanced PostgreSQL engine**: connection pooling, health checks, Supabase pooler detection
+- `src/config.py` - **Unified configuration**: Pydantic settings with automatic field mapping and database URL construction
+- `src/supabase_writers.py` - **Real-time database writes**: direct PostgreSQL writes for live data
 - `src/bot/` - **Modular Discord bot**: event handlers in `events.py`, commands in `commands/` subdirectory
+- `scripts/` - **Migration tools**: complete database migration pipeline from SQLite to PostgreSQL/Supabase
 
 ### Data Conventions
 - **Dual persistence**: CSV files in `data/raw/` + SQLite tables for historical data
 - **Symbol extraction**: Robust regex patterns for `$TICKER` format, handles complex API responses
 - **Sentiment scoring**: TextBlob integration with numerical values (-1.0 to 1.0)
+- **Database fallback**: Automatic SQLite fallback when PostgreSQL unavailable via `get_database_url()`
+- **Migration system**: Comprehensive scripts for SQLite → PostgreSQL data migration with verification
 
 ## Development Workflows
 
@@ -66,6 +88,12 @@ python -m src.bot.bot  # Run bot (requires DISCORD_BOT_TOKEN in .env)
 
 ## Key Patterns & Conventions
 
+### Database Architecture
+- **Dual engine system**: `src/db.py` (PostgreSQL/Supabase) + `src/database.py` (SQLite fallback)
+- **Connection pooling**: Advanced SQLAlchemy configuration with health checks and retry logic
+- **Migration pipeline**: Complete scripts in `scripts/` for SQLite → PostgreSQL data transfer
+- **Prepared statement optimization**: Auto-detection of Supabase pooler vs direct connection
+
 ### Error Handling
 - **Graceful degradation**: SnapTrade import failures don't crash the system
 - **Retry decorators**: `@retry_decorator(max_retries=3, delay=1)` for API calls in `journal_generator.py`
@@ -73,6 +101,9 @@ python -m src.bot.bot  # Run bot (requires DISCORD_BOT_TOKEN in .env)
 
 ### Configuration Management
 - **Environment-driven**: All secrets in `.env` (git-ignored), loaded via `python-dotenv`
+- **Pydantic settings**: `src/config.py` with automatic field mapping and database URL construction
+- **Database URL fallback**: `get_database_url()` with PostgreSQL → SQLite fallback logic
+- **Supabase pooler detection**: Auto-disables prepared statements for port 6543 compatibility
 - **Path objects**: Use `pathlib.Path` consistently, not string concatenation
 - **Directory structure**: Auto-create `data/{raw,processed,database}/` directories
 

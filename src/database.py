@@ -106,200 +106,380 @@ def execute_sql(query: str, params=None, fetch_results=False):
 
 def initialize_database():
     """Initialize the database with all required tables (both social and financial data)."""
-    if not use_postgres():
-        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Define table creation queries (PostgreSQL syntax first)
-    tables = [
-        # Discord and social media tables
-        """
-        CREATE TABLE IF NOT EXISTS discord_messages (
-            id SERIAL PRIMARY KEY,
-            message_id TEXT UNIQUE NOT NULL,
-            author TEXT NOT NULL,
-            content TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS twitter_data (
-            id SERIAL PRIMARY KEY,
-            message_id TEXT NOT NULL,
-            discord_date TEXT NOT NULL,
-            tweet_date TEXT,
-            content TEXT NOT NULL,
-            stock_tags TEXT,
-            author TEXT NOT NULL,
-            channel TEXT NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS discord_general_clean (
-            id SERIAL PRIMARY KEY,
-            message_id TEXT UNIQUE NOT NULL,
-            author TEXT NOT NULL,
-            content TEXT NOT NULL,
-            sentiment REAL,
-            cleaned_content TEXT,
-            timestamp TEXT NOT NULL,
-            processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS discord_trading_clean (
-            id SERIAL PRIMARY KEY,
-            message_id TEXT UNIQUE NOT NULL,
-            author TEXT NOT NULL,
-            content TEXT NOT NULL,
-            sentiment REAL,
-            cleaned_content TEXT,
-            stock_mentions TEXT,
-            timestamp TEXT NOT NULL,
-            processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS chart_metadata (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT NOT NULL,
-            period TEXT NOT NULL,
-            interval TEXT NOT NULL,
-            theme TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            trade_count INTEGER DEFAULT 0,
-            min_trade_size REAL DEFAULT 0.0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS processing_status (
-            id SERIAL PRIMARY KEY,
-            message_id TEXT UNIQUE NOT NULL,
-            channel TEXT NOT NULL,
-            processed_for_cleaning BOOLEAN DEFAULT FALSE,
-            processed_for_twitter BOOLEAN DEFAULT FALSE,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-        """,
-        # Financial data tables
-        """
-        CREATE TABLE IF NOT EXISTS daily_prices (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT NOT NULL,
-            date TEXT NOT NULL,
-            open REAL,
-            high REAL,
-            low REAL,
-            close REAL,
-            volume INTEGER,
-            dividends REAL,
-            stock_splits REAL,
-            UNIQUE(symbol, date)
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS realtime_prices (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            price REAL,
-            previous_close REAL,
-            abs_change REAL,
-            percent_change REAL,
-            UNIQUE(symbol, timestamp)
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS stock_metrics (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT NOT NULL,
-            date TEXT NOT NULL,
-            pe_ratio REAL,
-            market_cap REAL,
-            dividend_yield REAL,
-            fifty_day_avg REAL,
-            two_hundred_day_avg REAL,
-            UNIQUE(symbol, date)
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS positions (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT NOT NULL,
-            quantity REAL,
-            equity REAL,
-            price REAL,
-            average_buy_price REAL,
-            type TEXT,
-            currency TEXT,
-            sync_timestamp TEXT NOT NULL,
-            calculated_equity REAL,
-            UNIQUE(symbol, sync_timestamp)
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS orders (
-            brokerage_order_id TEXT,
-            status TEXT,
-            symbol TEXT,
-            universal_symbol TEXT,
-            quote_universal_symbol TEXT,
-            quote_currency TEXT,
-            option_symbol TEXT,
-            action TEXT,
-            total_quantity INTEGER,
-            open_quantity INTEGER,
-            canceled_quantity INTEGER,
-            filled_quantity INTEGER,
-            execution_price DECIMAL(18, 6),
-            limit_price DECIMAL(18, 6),
-            stop_price DECIMAL(18, 6),
-            order_type TEXT,
-            time_in_force TEXT,
-            time_placed TIMESTAMP,
-            time_updated TIMESTAMP,
-            time_executed TIMESTAMP,
-            expiry_date DATE,
-            child_brokerage_order_ids TEXT,
-            extracted_symbol TEXT
-        )
-        """,
-        """
-        CREATE TABLE IF NOT EXISTS stock_charts (
-            id SERIAL PRIMARY KEY,
-            symbol TEXT NOT NULL,
-            period TEXT NOT NULL,
-            interval TEXT NOT NULL,
-            theme TEXT NOT NULL,
-            file_path TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            trade_count INTEGER DEFAULT 0,
-            min_trade_size REAL DEFAULT 0.0,
-            UNIQUE(symbol, period, interval, theme, created_at)
-        )
-        """
-    ]
-    
-    try:
-        # Create tables
-        for query in tables:
-            # Convert PostgreSQL syntax to SQLite for local fallback
-            if not use_postgres():
-                query = query.replace("SERIAL PRIMARY KEY", "INTEGER PRIMARY KEY AUTOINCREMENT")
-                query = query.replace("TIMESTAMP", "DATETIME")
-                query = query.replace("BOOLEAN", "INTEGER")
-                query = query.replace("DECIMAL(18, 6)", "REAL")
+    if use_postgres():
+        # Use direct psycopg2 with explicit commits for PostgreSQL (working approach)
+        try:
+            import psycopg2
+            from psycopg2.extras import DictCursor
+            from src.config import get_database_url
             
-            execute_sql(query)
+            database_url = get_database_url()
+            
+            # Define PostgreSQL table creation schema
+            SCHEMA_SQL = """
+            -- Discord and social media tables
+            CREATE TABLE IF NOT EXISTS discord_messages (
+                id SERIAL PRIMARY KEY,
+                message_id TEXT UNIQUE NOT NULL,
+                author TEXT NOT NULL,
+                content TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS twitter_data (
+                id SERIAL PRIMARY KEY,
+                message_id TEXT NOT NULL,
+                discord_date TEXT NOT NULL,
+                tweet_date TEXT,
+                content TEXT NOT NULL,
+                stock_tags TEXT,
+                author TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS discord_general_clean (
+                id SERIAL PRIMARY KEY,
+                message_id TEXT UNIQUE NOT NULL,
+                author TEXT NOT NULL,
+                content TEXT NOT NULL,
+                sentiment REAL,
+                cleaned_content TEXT,
+                timestamp TEXT NOT NULL,
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS discord_trading_clean (
+                id SERIAL PRIMARY KEY,
+                message_id TEXT UNIQUE NOT NULL,
+                author TEXT NOT NULL,
+                content TEXT NOT NULL,
+                sentiment REAL,
+                cleaned_content TEXT,
+                stock_mentions TEXT,
+                timestamp TEXT NOT NULL,
+                processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS chart_metadata (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                period TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                theme TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                trade_count INTEGER DEFAULT 0,
+                min_trade_size REAL DEFAULT 0.0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS processing_status (
+                id SERIAL PRIMARY KEY,
+                message_id TEXT UNIQUE NOT NULL,
+                channel TEXT NOT NULL,
+                processed_for_cleaning BOOLEAN DEFAULT FALSE,
+                processed_for_twitter BOOLEAN DEFAULT FALSE,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+
+            -- Financial data tables
+            CREATE TABLE IF NOT EXISTS daily_prices (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                date TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                volume INTEGER,
+                dividends REAL,
+                stock_splits REAL,
+                UNIQUE(symbol, date)
+            );
+
+            CREATE TABLE IF NOT EXISTS realtime_prices (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                price REAL,
+                previous_close REAL,
+                abs_change REAL,
+                percent_change REAL,
+                UNIQUE(symbol, timestamp)
+            );
+
+            CREATE TABLE IF NOT EXISTS stock_metrics (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                date TEXT NOT NULL,
+                pe_ratio REAL,
+                market_cap REAL,
+                dividend_yield REAL,
+                fifty_day_avg REAL,
+                two_hundred_day_avg REAL,
+                UNIQUE(symbol, date)
+            );
+
+            CREATE TABLE IF NOT EXISTS positions (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                quantity REAL,
+                equity REAL,
+                price REAL,
+                average_buy_price REAL,
+                type TEXT,
+                currency TEXT,
+                sync_timestamp TEXT NOT NULL,
+                calculated_equity REAL,
+                UNIQUE(symbol, sync_timestamp)
+            );
+
+            CREATE TABLE IF NOT EXISTS orders (
+                brokerage_order_id TEXT,
+                status TEXT,
+                symbol TEXT,
+                universal_symbol TEXT,
+                quote_universal_symbol TEXT,
+                quote_currency TEXT,
+                option_symbol TEXT,
+                action TEXT,
+                total_quantity INTEGER,
+                open_quantity INTEGER,
+                canceled_quantity INTEGER,
+                filled_quantity INTEGER,
+                execution_price DECIMAL(18, 6),
+                limit_price DECIMAL(18, 6),
+                stop_price DECIMAL(18, 6),
+                order_type TEXT,
+                time_in_force TEXT,
+                time_placed TIMESTAMP,
+                time_updated TIMESTAMP,
+                time_executed TIMESTAMP,
+                expiry_date DATE,
+                child_brokerage_order_ids TEXT,
+                extracted_symbol TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS stock_charts (
+                id SERIAL PRIMARY KEY,
+                symbol TEXT NOT NULL,
+                period TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                theme TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                trade_count INTEGER DEFAULT 0,
+                min_trade_size REAL DEFAULT 0.0,
+                UNIQUE(symbol, period, interval, theme, created_at)
+            );
+            """
+            
+            # Connect and execute with explicit commit
+            conn = psycopg2.connect(database_url, cursor_factory=DictCursor)
+            cur = conn.cursor()
+            try:
+                cur.execute(SCHEMA_SQL)
+                conn.commit()  # 🟢 Explicit commit for DDL statements
+                logging.info("Database initialized successfully with all tables (social and financial data)")
+                return True
+            except Exception:
+                conn.rollback()
+                raise
+            finally:
+                cur.close()
+                conn.close()
+                
+        except ImportError:
+            logging.error("psycopg2 not installed. Install with: pip install psycopg2-binary")
+            raise
+        except Exception as e:
+            logging.error(f"Failed to initialize PostgreSQL database: {e}")
+            raise
+    else:
+        # SQLite fallback
+        DB_PATH.parent.mkdir(parents=True, exist_ok=True)
         
-        logging.info("Database initialized successfully with all tables (social and financial data)")
+        # Define SQLite table creation queries
+        tables = [
+            """
+            CREATE TABLE IF NOT EXISTS discord_messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT UNIQUE NOT NULL,
+                author TEXT NOT NULL,
+                content TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS twitter_data (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT NOT NULL,
+                discord_date TEXT NOT NULL,
+                tweet_date TEXT,
+                content TEXT NOT NULL,
+                stock_tags TEXT,
+                author TEXT NOT NULL,
+                channel TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS discord_general_clean (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT UNIQUE NOT NULL,
+                author TEXT NOT NULL,
+                content TEXT NOT NULL,
+                sentiment REAL,
+                cleaned_content TEXT,
+                timestamp TEXT NOT NULL,
+                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS discord_trading_clean (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT UNIQUE NOT NULL,
+                author TEXT NOT NULL,
+                content TEXT NOT NULL,
+                sentiment REAL,
+                cleaned_content TEXT,
+                stock_mentions TEXT,
+                timestamp TEXT NOT NULL,
+                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS chart_metadata (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                period TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                theme TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                trade_count INTEGER DEFAULT 0,
+                min_trade_size REAL DEFAULT 0.0,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS processing_status (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                message_id TEXT UNIQUE NOT NULL,
+                channel TEXT NOT NULL,
+                processed_for_cleaning INTEGER DEFAULT 0,
+                processed_for_twitter INTEGER DEFAULT 0,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS daily_prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                date TEXT NOT NULL,
+                open REAL,
+                high REAL,
+                low REAL,
+                close REAL,
+                volume INTEGER,
+                dividends REAL,
+                stock_splits REAL,
+                UNIQUE(symbol, date)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS realtime_prices (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                price REAL,
+                previous_close REAL,
+                abs_change REAL,
+                percent_change REAL,
+                UNIQUE(symbol, timestamp)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS stock_metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                date TEXT NOT NULL,
+                pe_ratio REAL,
+                market_cap REAL,
+                dividend_yield REAL,
+                fifty_day_avg REAL,
+                two_hundred_day_avg REAL,
+                UNIQUE(symbol, date)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                quantity REAL,
+                equity REAL,
+                price REAL,
+                average_buy_price REAL,
+                type TEXT,
+                currency TEXT,
+                sync_timestamp TEXT NOT NULL,
+                calculated_equity REAL,
+                UNIQUE(symbol, sync_timestamp)
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS orders (
+                brokerage_order_id TEXT,
+                status TEXT,
+                symbol TEXT,
+                universal_symbol TEXT,
+                quote_universal_symbol TEXT,
+                quote_currency TEXT,
+                option_symbol TEXT,
+                action TEXT,
+                total_quantity INTEGER,
+                open_quantity INTEGER,
+                canceled_quantity INTEGER,
+                filled_quantity INTEGER,
+                execution_price REAL,
+                limit_price REAL,
+                stop_price REAL,
+                order_type TEXT,
+                time_in_force TEXT,
+                time_placed DATETIME,
+                time_updated DATETIME,
+                time_executed DATETIME,
+                expiry_date DATE,
+                child_brokerage_order_ids TEXT,
+                extracted_symbol TEXT
+            )
+            """,
+            """
+            CREATE TABLE IF NOT EXISTS stock_charts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                symbol TEXT NOT NULL,
+                period TEXT NOT NULL,
+                interval TEXT NOT NULL,
+                theme TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                trade_count INTEGER DEFAULT 0,
+                min_trade_size REAL DEFAULT 0.0,
+                UNIQUE(symbol, period, interval, theme, created_at)
+            )
+            """
+        ]
         
-    except Exception as e:
-        logging.error(f"Failed to initialize database: {e}")
-        raise
+        try:
+            for query in tables:
+                execute_sql(query)
+            logging.info("Database initialized successfully with all tables (social and financial data)")
+        except Exception as e:
+            logging.error(f"Failed to initialize SQLite database: {e}")
+            raise
 
 def mark_message_processed(message_id: str, channel: str, processing_type: str):
     """Mark a message as processed for a specific type."""

@@ -94,7 +94,7 @@ def test_openai_api():
         client = openai.OpenAI(api_key=api_key)
         
         # Test with a minimal request
-        response = client.chat.completions.create(
+        client.chat.completions.create(
             model="gpt-3.5-turbo",
             messages=[{"role": "user", "content": "Hello"}],
             max_tokens=5
@@ -197,7 +197,6 @@ def test_discord_bot_config():
     logger.info("\n🤖 Testing Discord Bot Configuration...")
     
     try:
-        import discord
         
         config = settings()
         token = getattr(config, 'DISCORD_BOT_TOKEN', '') or getattr(config, 'discord_bot_token', '')

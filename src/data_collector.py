@@ -375,116 +375,175 @@ def get_recent_orders(account_id=None, user_id=None, user_secret=None, state="al
     return processed_orders[:limit] if limit else processed_orders
 
 def save_positions_to_db():
-    """Saves positions to the database using unified database layer
-    """
-    positions_df = get_account_positions()
+    """Saves positions to the database using unified database layer AND direct Supabase write"""
+    try:
+        config = settings()
+        account_id = getattr(config, 'ROBINHOOD_ACCOUNT_ID', '') or getattr(config, 'robinhood_account_id', '')
+        user_id = getattr(config, 'SNAPTRADE_USER_ID', '') or getattr(config, 'snaptrade_user_id', '') or getattr(config, 'userid', '')
+        user_secret = getattr(config, 'SNAPTRADE_USER_SECRET', '') or getattr(config, 'snaptrade_user_secret', '') or getattr(config, 'usersecret', '')
+        
+        if not all([account_id, user_id, user_secret]):
+            logger.warning("Missing SnapTrade credentials for position sync")
+            # Fallback to old behavior
+            positions_df = get_account_positions()
+        else:
+            # Get positions with credentials
+            positions_df = get_account_positions(account_id, user_id, user_secret)
 
-    if not positions_df.empty:
-        try:
-            from src.database import execute_sql, use_postgres
+        if not positions_df.empty:
+            # Write directly to Supabase first (primary)
+            try:
+                from src.supabase_writers import DirectSupabaseWriter
+                writer = DirectSupabaseWriter()
+                success = writer.write_position_data(positions_df.to_dict('records'))
+                if success:
+                    logger.info(f"✅ Successfully saved {len(positions_df)} positions to Supabase")
+                else:
+                    logger.warning("⚠️ Failed to save positions to Supabase, falling back to unified database layer")
+                    raise Exception("Supabase write failed")
+            except Exception as e:
+                logger.warning(f"Supabase write failed: {e}, using fallback database")
+                # Fallback to unified database layer
+                from src.database import execute_sql, use_postgres
+                
+                # Add sync timestamp to track when this position snapshot was taken
+                current_timestamp = datetime.now().isoformat()
+                positions_df['sync_timestamp'] = current_timestamp
+                
+                # Add equity verification column: calculated_equity = quantity × price
+                positions_df['calculated_equity'] = positions_df['quantity'] * positions_df['price']
+                
+                if use_postgres():
+                    # For PostgreSQL, insert each row individually to handle conflicts
+                    for _, row in positions_df.iterrows():
+                        execute_sql('''
+                        INSERT INTO positions 
+                        (symbol, quantity, equity, price, average_buy_price, type, currency, sync_timestamp, calculated_equity)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (symbol, sync_timestamp) DO NOTHING
+                        ''', (
+                            row['symbol'], row['quantity'], row['equity'], row['price'],
+                            row['average_buy_price'], row['type'], row['currency'],
+                            row['sync_timestamp'], row['calculated_equity']
+                        ))
+                else:
+                    # For SQLite, use DataFrame to_sql with existing connection
+                    conn = sqlite3.connect(PRICE_DB)
+                    positions_df.to_sql('positions', conn, if_exists='append', index=False)
+                    conn.commit()
+                    conn.close()
+                
+                logger.info(f"✅ Saved {len(positions_df)} positions to database with timestamp {current_timestamp}")
             
-            # Add sync timestamp to track when this position snapshot was taken
-            current_timestamp = datetime.now().isoformat()
-            positions_df['sync_timestamp'] = current_timestamp
+            # Also save to CSV for backup
+            positions_df.to_csv(POSITIONS_CSV, index=False)
+            logger.info(f"📁 Backup saved to {POSITIONS_CSV}")
             
-            # Add equity verification column: calculated_equity = quantity × price
-            positions_df['calculated_equity'] = positions_df['quantity'] * positions_df['price']
-            
-            # Use unified database layer instead of direct sqlite3
-            if use_postgres():
-                # For PostgreSQL, insert each row individually to handle conflicts
-                for _, row in positions_df.iterrows():
-                    execute_sql('''
-                    INSERT INTO positions 
-                    (symbol, quantity, equity, price, average_buy_price, type, currency, sync_timestamp, calculated_equity)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                    ON CONFLICT (symbol, sync_timestamp) DO NOTHING
-                    ''', (
-                        row['symbol'], row['quantity'], row['equity'], row['price'],
-                        row['average_buy_price'], row['type'], row['currency'],
-                        row['sync_timestamp'], row['calculated_equity']
-                    ))
-            else:
-                # For SQLite, use DataFrame to_sql with existing connection
-                conn = sqlite3.connect(PRICE_DB)
-                positions_df.to_sql('positions', conn, if_exists='append', index=False)
-                conn.commit()
-                conn.close()
-            
-            logger.info(f"✅ Saved {len(positions_df)} positions to database with timestamp {current_timestamp}")
-        except Exception as e:
-            logger.error(f"Error saving positions to database: {e}")
-    else:
-        logger.warning("❌ No positions to save")
-        return None
+        else:
+            logger.warning("❌ No positions to save")
+            return None
+    except Exception as e:
+        logger.error(f"Error saving positions: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
     
     
 
 def save_orders_to_db(days=365):
-    """Save recent orders to the database using unified database layer
+    """Save recent orders to the database using unified database layer AND direct Supabase write
     
     Args:
         days: Number of days to look back for orders
     """
-    orders = get_recent_orders(days=days)
-    if orders:
-        # Convert to DataFrame - this will include our extracted_symbol field
-        orders_df = pd.DataFrame(orders)
-
-        if 'option_symbol' in orders_df.columns:
-            orders_df['option_symbol'] = orders_df['option_symbol'].apply(
-                lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
-            )
-
-        if 'universal_symbol' in orders_df.columns:
-            orders_df['universal_symbol'] = orders_df['universal_symbol'].apply(
-                lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
-            )
-
-        if 'child_brokerage_order_ids' in orders_df.columns:
-            orders_df['child_brokerage_order_ids'] = orders_df['child_brokerage_order_ids'].apply(
-                lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
-            )
-
-        if orders_df.empty:
-            return
+    try:
+        config = settings()
+        account_id = getattr(config, 'ROBINHOOD_ACCOUNT_ID', '') or getattr(config, 'robinhood_account_id', '')
+        user_id = getattr(config, 'SNAPTRADE_USER_ID', '') or getattr(config, 'snaptrade_user_id', '') or getattr(config, 'userid', '')
+        user_secret = getattr(config, 'SNAPTRADE_USER_SECRET', '') or getattr(config, 'snaptrade_user_secret', '') or getattr(config, 'usersecret', '')
         
-        try:
-            from src.database import execute_sql, use_postgres
-            
-            # Use unified database layer instead of direct sqlite3
-            if use_postgres():
-                # For PostgreSQL, insert each row individually
-                for _, row in orders_df.iterrows():
-                    # Convert row to dict and handle NaN values
-                    row_dict = row.to_dict()
-                    for key, value in row_dict.items():
-                        if pd.isna(value):
-                            row_dict[key] = None
-                    
-                    # Build dynamic INSERT query based on available columns
-                    columns = list(row_dict.keys())
-                    values = [row_dict[col] for col in columns]
-                    placeholders = ', '.join(['%s'] * len(columns))
-                    
-                    execute_sql(f'''
-                    INSERT INTO orders ({', '.join(columns)})
-                    VALUES ({placeholders})
-                    ''', values)
-            else:
-                # For SQLite, use DataFrame to_sql with existing connection
-                conn = sqlite3.connect(PRICE_DB)
-                orders_df.to_sql('orders', conn, if_exists='append', index=False)
-                conn.commit()
-                conn.close()
-            
-            logger.info(f"✅ Saved {len(orders_df)} orders to database")
-        except Exception as e:
-            logger.error(f"Error saving orders to database: {e}")
+        if not all([account_id, user_id, user_secret]):
+            logger.warning("Missing SnapTrade credentials for orders sync")
+            # Fallback to old behavior
+            orders = get_recent_orders(days=days)
+        else:
+            # Get orders with credentials
+            orders = get_recent_orders(account_id, user_id, user_secret, days=days)
+        
+        if orders:
+            # Write directly to Supabase first (primary)
+            try:
+                from src.supabase_writers import DirectSupabaseWriter
+                writer = DirectSupabaseWriter()
+                success = writer.write_order_data(orders)
+                if success:
+                    logger.info(f"✅ Successfully saved {len(orders)} orders to Supabase")
+                else:
+                    logger.warning("⚠️ Failed to save orders to Supabase, falling back to unified database layer")
+                    raise Exception("Supabase write failed")
+            except Exception as e:
+                logger.warning(f"Supabase write failed: {e}, using fallback database")
+                # Fallback to unified database layer
+                orders_df = pd.DataFrame(orders)
 
-    else:
-        logger.warning("❌ No orders to save")
-        return None
+                if 'option_symbol' in orders_df.columns:
+                    orders_df['option_symbol'] = orders_df['option_symbol'].apply(
+                        lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
+                    )
+
+                if 'universal_symbol' in orders_df.columns:
+                    orders_df['universal_symbol'] = orders_df['universal_symbol'].apply(
+                        lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
+                    )
+
+                if 'child_brokerage_order_ids' in orders_df.columns:
+                    orders_df['child_brokerage_order_ids'] = orders_df['child_brokerage_order_ids'].apply(
+                        lambda x: json.dumps(x) if isinstance(x, dict) else str(x)
+                    )
+
+                if orders_df.empty:
+                    return
+                
+                from src.database import execute_sql, use_postgres
+                
+                if use_postgres():
+                    # For PostgreSQL, insert each row individually
+                    for _, row in orders_df.iterrows():
+                        # Convert row to dict and handle NaN values
+                        row_dict = row.to_dict()
+                        for key, value in row_dict.items():
+                            if pd.isna(value):
+                                row_dict[key] = None
+                        
+                        # Build dynamic INSERT query based on available columns
+                        columns = list(row_dict.keys())
+                        values = [row_dict[col] for col in columns]
+                        placeholders = ', '.join(['%s'] * len(columns))
+                        
+                        execute_sql(f'''
+                        INSERT INTO orders ({', '.join(columns)})
+                        VALUES ({placeholders})
+                        ''', values)
+                else:
+                    # For SQLite, use DataFrame to_sql with existing connection
+                    conn = sqlite3.connect(PRICE_DB)
+                    orders_df.to_sql('orders', conn, if_exists='append', index=False)
+                    conn.commit()
+                    conn.close()
+                
+                logger.info(f"✅ Saved {len(orders_df)} orders to database")
+            
+            # Also save to CSV for backup
+            orders_df = pd.DataFrame(orders)
+            orders_df.to_csv(ORDERS_CSV, index=False)
+            logger.info(f"📁 Backup saved to {ORDERS_CSV}")
+
+        else:
+            logger.warning("❌ No orders to save")
+            return None
+    except Exception as e:
+        logger.error(f"Error saving orders: {e}")
+        import traceback
+        logger.error(traceback.format_exc())
 
 def fetch_realtime_prices(symbols=None):
     """Fetch real-time prices for the given symbols or all positions
@@ -577,7 +636,7 @@ def fetch_realtime_prices(symbols=None):
     return df
 
 def save_realtime_prices_to_db(prices_df):
-    """Save real-time prices to the database using unified database layer
+    """Save real-time prices to the database using unified database layer AND direct Supabase write
     
     Args:
         prices_df: DataFrame containing real-time price data
@@ -586,27 +645,42 @@ def save_realtime_prices_to_db(prices_df):
         return
     
     try:
-        from src.database import execute_sql, use_postgres
-        
-        if use_postgres():
-            # For PostgreSQL, insert each row individually with conflict handling
-            for _, row in prices_df.iterrows():
-                execute_sql('''
-                INSERT INTO realtime_prices (symbol, timestamp, price, previous_close, abs_change, percent_change)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (symbol, timestamp) DO NOTHING
-                ''', (
-                    row['symbol'], row['timestamp'], row['price'], 
-                    row['previous_close'], row['abs_change'], row['percent_change']
-                ))
-        else:
-            # For SQLite, use DataFrame to_sql with existing connection
-            conn = sqlite3.connect(PRICE_DB)
-            prices_df.to_sql('realtime_prices', conn, if_exists='append', index=False)
-            conn.commit()
-            conn.close()
-        
-        logger.info(f"✅ Saved {len(prices_df)} real-time prices to database")
+        # Write directly to Supabase first (primary)
+        try:
+            from src.supabase_writers import DirectSupabaseWriter
+            writer = DirectSupabaseWriter()
+            success = writer.write_price_data(prices_df.to_dict('records'))
+            if success:
+                logger.info(f"✅ Successfully saved {len(prices_df)} prices to Supabase")
+                return  # Success, no need for fallback
+            else:
+                logger.warning("⚠️ Failed to save prices to Supabase, falling back to unified database layer")
+                raise Exception("Supabase write failed")
+        except Exception as e:
+            logger.warning(f"Supabase write failed: {e}, using fallback database")
+            
+            # Fallback to unified database layer
+            from src.database import execute_sql, use_postgres
+            
+            if use_postgres():
+                # For PostgreSQL, insert each row individually with conflict handling
+                for _, row in prices_df.iterrows():
+                    execute_sql('''
+                    INSERT INTO realtime_prices (symbol, timestamp, price, previous_close, abs_change, percent_change)
+                    VALUES (%s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (symbol, timestamp) DO NOTHING
+                    ''', (
+                        row['symbol'], row['timestamp'], row['price'], 
+                        row['previous_close'], row['abs_change'], row['percent_change']
+                    ))
+            else:
+                # For SQLite, use DataFrame to_sql with existing connection
+                conn = sqlite3.connect(PRICE_DB)
+                prices_df.to_sql('realtime_prices', conn, if_exists='append', index=False)
+                conn.commit()
+                conn.close()
+            
+            logger.info(f"✅ Saved {len(prices_df)} real-time prices to database")
     except Exception as e:
         logger.error(f"Error saving prices to database: {e}")
 

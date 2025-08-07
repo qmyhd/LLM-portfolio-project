@@ -217,7 +217,7 @@ def register(bot: commands.Bot):
                     response += f"• Unique Stocks: {unique_stocks}\n"
                     response += f"• Unique Authors: {unique_authors}\n"
                     response += f"• Unique Channels: {unique_channels}\n"
-            except (IndexError, TypeError) as e:
+            except (IndexError, TypeError):
                 await ctx.send("❌ Error parsing Twitter statistics data")
                 return
             
@@ -234,7 +234,7 @@ def register(bot: commands.Bot):
                     recent_count = recent_activity[0][0]  # type: ignore
                     response += f"• Recent Activity (7 days): {recent_count} tweets\n"
                 except (IndexError, TypeError):
-                    response += f"• Recent Activity (7 days): 0 tweets\n"
+                    response += "• Recent Activity (7 days): 0 tweets\n"
             
             await ctx.send(response)
             

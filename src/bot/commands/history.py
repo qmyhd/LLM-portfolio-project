@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 from discord.ext import commands
 
-from src.database import get_connection, execute_sql
+from src.database import execute_sql
 from src.logging_utils import log_message_to_database
 
 BASE_DIR = Path(__file__).resolve().parents[3]

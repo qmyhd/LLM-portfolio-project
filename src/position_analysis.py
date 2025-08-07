@@ -6,7 +6,6 @@ Provides deeper insights into position management over time.
 from datetime import datetime
 from typing import Dict, List
 
-from src.database import get_connection
 
 
 def analyze_position_history(symbol: str, start_date: datetime, end_date: datetime) -> Dict:

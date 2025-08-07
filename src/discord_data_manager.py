@@ -13,7 +13,6 @@ from pathlib import Path
 import pandas as pd
 from textblob import TextBlob
 
-from src.database import get_connection
 
 logger = logging.getLogger(__name__)
 
@@ -44,23 +43,18 @@ def get_processed_message_ids():
 def mark_messages_as_processed(message_ids, channel, processed_file):
     """Mark messages as processed in the tracking table."""
     try:
-        # For batch operations, use direct SQLite connection to avoid cursor issues
-        import sqlite3
+        # Use unified database layer instead of direct SQLite
+        from src.database import execute_sql
         
-        sqlite_path = BASE_DIR / "data" / "database" / "price_history.db"
-        sqlite_path.parent.mkdir(parents=True, exist_ok=True)
+        processed_date = datetime.now().isoformat()
         
-        with sqlite3.connect(sqlite_path) as conn:
-            cursor = conn.cursor()
-            processed_date = datetime.now().isoformat()
-            records = [(msg_id, channel, processed_date, processed_file) for msg_id in message_ids]
-            
-            cursor.executemany('''
+        # Insert records using unified database layer
+        for msg_id in message_ids:
+            execute_sql('''
                 INSERT OR REPLACE INTO discord_processing_log 
                 (message_id, channel, processed_date, processed_file) 
                 VALUES (?, ?, ?, ?)
-            ''', records)
-            conn.commit()
+            ''', (msg_id, channel, processed_date, processed_file))
         
         logger.info(f"Marked {len(message_ids)} messages as processed for channel {channel}")
     except Exception as e:

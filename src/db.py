@@ -257,16 +257,36 @@ def execute_query(query, params=None):
     Returns:
         Query result
     """
-    with get_connection() as conn:
-        if isinstance(query, str):
-            query = text(query)
-        
-        if params:
-            result = conn.execute(query, params)
-        else:
-            result = conn.execute(query)
-        
-        return result
+    engine = get_sync_engine()
+    
+    # Check if this is a DDL statement that needs transaction commit
+    query_str = str(query).upper().strip()
+    is_ddl = any(query_str.startswith(ddl) for ddl in ['CREATE', 'DROP', 'ALTER'])
+    
+    if is_ddl:
+        # Use begin() for DDL statements to ensure they are committed
+        with engine.begin() as conn:
+            if isinstance(query, str):
+                query = text(query)
+            
+            if params:
+                result = conn.execute(query, params)
+            else:
+                result = conn.execute(query)
+            
+            return result
+    else:
+        # Use regular connection for DML statements
+        with get_connection() as conn:
+            if isinstance(query, str):
+                query = text(query)
+            
+            if params:
+                result = conn.execute(query, params)
+            else:
+                result = conn.execute(query)
+            
+            return result
 
 
 def get_database_size():

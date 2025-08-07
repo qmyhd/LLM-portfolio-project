@@ -12,7 +12,13 @@ class _Settings(BaseSettings):
     # === Required (with fallbacks for compatibility) ================
     DATABASE_URL: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
-    
+
+    # === SnapTrade API ================================================
+    SNAPTRADE_CLIENT_ID: str = ""
+    SNAPTRADE_CONSUMER_KEY: str = ""
+    SNAPTRADE_USER_ID: str = ""
+    SNAPTRADE_USER_SECRET: str = ""
+    ROBINHOOD_ACCOUNT_ID: str = ""
     # === LLM API Keys ================================================
     GEMINI_API_KEY: str = ""
     OPENAI_API_KEY: str = ""
