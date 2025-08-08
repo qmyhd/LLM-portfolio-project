@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=64.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -21,27 +21,7 @@ classifiers = [
     "Programming Language :: Python :: 3.13",
 ]
 requires-python = ">=3.11"
-dependencies = [
-    "discord.py>=2.0.0",
-    "pandas>=1.5.0",
-    "yfinance>=0.1.96",
-    "matplotlib>=3.6.0",
-    "mplfinance>=0.12.9",
-    "textblob>=0.17.1",
-    "python-dotenv>=0.19.0",
-    "requests>=2.28.0",
-    "sqlalchemy>=1.4.0",
-    "psycopg2-binary>=2.9.0",
-    "supabase>=1.0.0",
-    "openai>=1.0.0",
-    "google-generativeai>=0.3.0",
-    "tweepy>=4.14.0",
-    "numpy>=1.24.0",
-    "pytest>=7.0.0",
-    "jupyter>=1.0.0",
-    "ipykernel>=6.0.0",
-    "pyarrow>=10.0.0",
-]
+dynamic = ["dependencies"]
 
 [project.urls]
 Homepage = "https://github.com/qmyhd/LLM-portfolio-project"
@@ -59,6 +39,9 @@ package-dir = {"" = "src"}
 where = ["src"]
 include = ["*"]
 exclude = ["tests*"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.pylance]
 # Ignore certain warnings for third-party libraries with dynamic imports
