@@ -1,10 +1,23 @@
 ﻿###############################################################################
 # 1) Secrets / env
 ###############################################################################
+.env
+.env.*
+**/.env
+**/.env.*
 /.env
 /src/.env
 /.env.*
 !.env.example
+!**/.env.example
+
+# Common secret key files
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.der
 
 ###############################################################################
 # 2) Venvs & Python build artefacts
@@ -27,15 +40,26 @@ share/python-wheels/
 .eggs/
 *.egg
 MANIFEST
+__pypackages__/
 
 ###############################################################################
 # 3) Project data (private)
 ###############################################################################
-/data/
+/data/*
+!/data/.gitkeep
+!/data/README.md
 *.db
 *.sqlite*
 *.csv
 
+*.parquet
+*.feather
+*.arrow
+*.orc
+*.pkl
+*.joblib
+*.jsonl
+*.ndjson
 # Images (keep only docs/)
 *.png
 *.jpg
@@ -83,6 +107,7 @@ logs/
 *.temp
 tmp/
 temp/
+.cache/
 
 ###############################################################################
 # 8) Test artefacts
@@ -90,4 +115,8 @@ temp/
 .pytest_cache/
 test_output/
 .coverage
+.coverage.*
 htmlcov/
+.mypy_cache/
+.pyright/
+ruff_cache/
