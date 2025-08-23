@@ -26,3 +26,4 @@ psycopg2-binary>=2.9.0
 asyncpg>=0.29.0
 aiosqlite>=0.20.0
 langchain-openai>=0.3.28
+pyarrow>=18.0.0

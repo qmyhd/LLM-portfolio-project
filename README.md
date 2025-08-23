@@ -24,49 +24,116 @@ A data-driven "portfolio journal" that pulls together your brokerage history, ma
 
 ## Features
 
-- **Persistent SQLite database** for historical price data, metrics, positions, and orders
-- **Automated ETL** of brokerage transactions (Robinhood via SnapTrade) and historical price data  
-- **Discord ingestion**: fetch past messages + real-time streaming with ticker symbol detection
-- **Social sentiment analysis**: Both from Discord messages and Twitter/X links shared in Discord
-- **Real-time & historical market data**: Fetches current prices and stores historical data in SQLite
-- **LLM summarization**: Portfolio changes, top gainers/losers, sentiment vs. fundamentals  
-- **Smart symbol extraction**: Robust extraction of ticker symbols from text and nested API responses
-- **Markdown journal output**: Rich formatted reports with tables of positions, gainers, losers, and sentiment
-- **Dual output formats**: Plain text summary and detailed markdown report
-- **Sentiment analysis**: TextBlob-powered sentiment scoring of Discord messages
-- **Retry mechanism**: Robust API calls with exponential backoff for transient failures
-- **Comprehensive logging**: Detailed logging throughout the application for debugging and monitoring
+- **🏗️ Robust Architecture**: Modular design with clear separation of concerns and comprehensive error handling
+- **💾 Dual Database Support**: SQLite for local development, PostgreSQL/Supabase for production with automatic fallback
+- **📊 Advanced Data Collection**: SnapTrade API integration, Discord bot, Twitter analysis, and real-time market data
+- **🤖 Intelligent Processing**: LLM-powered journal generation with dual output formats (text + markdown)
+- **📈 Sophisticated Analytics**: FIFO position tracking, P/L calculations, and enhanced charting capabilities
+- **🔍 Smart Symbol Extraction**: Robust ticker symbol detection from text and nested API responses
+- **💬 Social Sentiment Analysis**: Real-time Discord message processing with Twitter/X link analysis
+- **⚡ Real-time & Historical Data**: Live price feeds with comprehensive historical data storage
+- **🔄 Automated ETL Pipeline**: Comprehensive data cleaning, validation, and transformation
+- **🛡️ Enterprise-grade Reliability**: Retry mechanisms, connection pooling, and graceful degradation
+- **📱 Discord Bot Integration**: Interactive commands for data processing, analytics, and chart generation
+- **🔐 Secure Configuration**: Environment-based secrets management with comprehensive validation
+- **🧪 Comprehensive Testing**: Unit tests, integration tests, and validation scripts
+- **📚 Extensive Documentation**: Detailed API reference, architecture docs, and user guides
 
 ---
 
 ## Project Structure
 
-```markdown
+```
 llm_portfolio_project/
-├─ .env                 # API keys & credentials (git-ignored)
-├─ setup.py             # Package definition
-├─ requirements.txt     # Python dependencies
-├─ generate_journal.py  # CLI entry point
-├─ notebooks/           # Jupyter workflows
-│  ├─ 01_generate_journal.ipynb  # Interactive journal generation
-│  └─ 02_clean_discord.ipynb     # Discord data cleaning and preprocessing
-├─ src/                 # Core modules
-│  ├─ data_collector.py      # SnapTrade + price ETL, historical data storage
-│  ├─ bot/
-│  │  ├─ bot.py                # Discord bot entry point
-│  │  ├─ events.py             # Event handlers
-│  │  └─ commands/             # Individual command modules
-│  ├─ twitter_analysis.py      # Tweet detection and sentiment
-│  ├─ logging_utils.py         # Discord message logging
-│  ├─ database.py              # SQLite connection helpers
-│  ├─ portfolio.py             # Portfolio queries
-│  ├─ trades.py                # Trade history helpers
-│  └─ journal_generator.py     # LLM prompt & rendering with markdown output
-├─ data/
-│  ├─ raw/               # CSV exports (discord_msgs.csv, orders.csv, positions.csv, prices.csv, x_posts_log.csv)
-│  ├─ processed/         # Cleaned artifacts (discord_msgs_clean.parquet) and generated journals
-│  └─ database/          # SQLite price_history.db with tables for prices, positions, orders, and metrics
-└─ tests/               # Unit tests (test_core_functions.py)
+├─ 📁 Configuration & Setup
+│  ├─ .env                      # API keys & credentials (git-ignored)
+│  ├─ .env.example              # Template for environment configuration
+│  ├─ requirements.txt          # Python dependencies
+│  ├─ pyproject.toml           # Package configuration
+│  └─ Makefile                 # Development automation
+│
+├─ 🚀 Entry Points & Scripts
+│  ├─ generate_journal.py       # CLI entry point for journal generation
+│  ├─ validate_deployment.py    # Deployment validation script
+│  ├─ migrate_with_cleaning.py  # Data migration with cleaning
+│  └─ refresh_local_schema.py   # Schema synchronization utility
+│
+├─ 📓 Interactive Workflows
+│  ├─ notebooks/
+│  │  ├─ 01_generate_journal.ipynb     # Interactive journal generation
+│  │  └─ 02_clean_discord.ipynb        # Discord data cleaning workflow
+│
+├─ 🏗️ Core Application
+│  ├─ src/
+│  │  ├─ 📊 Data Collection Layer
+│  │  │  ├─ data_collector.py           # General market data & yfinance integration
+│  │  │  ├─ snaptrade_collector.py      # SnapTrade API with enhanced field extraction
+│  │  │  ├─ discord_data_manager.py     # Discord message processing & deduplication
+│  │  │  └─ twitter_analysis.py         # Twitter/X sentiment analysis & URL extraction
+│  │  │
+│  │  ├─ 💾 Database Management
+│  │  │  ├─ database.py                 # Unified SQLite/PostgreSQL abstraction
+│  │  │  ├─ db.py                      # SQLAlchemy engine with connection pooling
+│  │  │  ├─ supabase_writers.py        # Direct real-time Supabase writers
+│  │  │  └─ market_data.py             # Consolidated portfolio & trade queries
+│  │  │
+│  │  ├─ 🤖 Bot Infrastructure
+│  │  │  ├─ bot/
+│  │  │  │  ├─ bot.py                  # Discord bot entry point
+│  │  │  │  ├─ events.py               # Event handlers & message processing
+│  │  │  │  └─ commands/               # Modular command structure
+│  │  │  │     ├─ chart.py             # Advanced charting with FIFO tracking
+│  │  │  │     ├─ history.py           # Message history with deduplication
+│  │  │  │     ├─ process.py           # Channel processing & statistics
+│  │  │  │     ├─ twitter_cmd.py       # Twitter data analysis commands
+│  │  │  │     └─ eod.py               # End-of-day stock data
+│  │  │
+│  │  ├─ 🧠 Processing Engine
+│  │  │  ├─ message_cleaner.py          # Text processing & ticker extraction
+│  │  │  ├─ journal_generator.py        # LLM integration & dual output formats
+│  │  │  ├─ position_analysis.py        # Advanced position tracking & analytics
+│  │  │  └─ chart_enhancements.py       # Enhanced charting with position overlays
+│  │  │
+│  │  ├─ 🔧 Utilities & Configuration
+│  │  │  ├─ config.py                   # Centralized configuration with Pydantic
+│  │  │  ├─ retry_utils.py             # Hardened retry decorator with exception handling
+│  │  │  ├─ logging_utils.py           # Database logging with Twitter integration
+│  │  │  └─ channel_processor.py       # Channel-specific data processing
+│  │  │
+│  │  └─ 🔄 ETL Pipeline
+│  │     └─ etl/
+│  │        └─ clean_csv.py            # Robust CSV cleaning with validation
+│
+├─ 🛠️ Operational Tooling
+│  ├─ scripts/
+│  │  ├─ bootstrap.py               # Application bootstrap & dependency management
+│  │  ├─ init_database.py           # Database initialization & schema creation
+│  │  ├─ verify_schemas.py          # Comprehensive schema verification
+│  │  ├─ migrate_sqlite.py          # SQLite → PostgreSQL migration
+│  │  └─ init_twitter_schema.py     # Twitter-specific schema initialization
+│
+├─ 💾 Data Storage
+│  ├─ data/
+│  │  ├─ raw/                       # CSV exports & raw data files
+│  │  ├─ processed/                 # Cleaned artifacts & generated journals
+│  │  └─ database/                  # SQLite databases for local development
+│
+├─ 📊 Output & Visualization
+│  └─ charts/                       # Generated charts & visualizations
+│
+├─ 🧪 Testing & Quality Assurance
+│  ├─ tests/
+│  │  ├─ test_core_functions.py     # Comprehensive unit tests
+│  │  └─ test_safe_response_handling.py  # SnapTrade response handling tests
+│  └─ test_integration.py           # Integration tests for cleanup verification
+│
+└─ 📚 Documentation
+   └─ docs/
+      ├─ README.md                  # Documentation overview
+      ├─ ARCHITECTURE.md            # System architecture & design patterns
+      ├─ API_REFERENCE.md           # Comprehensive API documentation
+      ├─ SNAPTRADE_MIGRATION_COMPLETE.md    # SnapTrade migration notes
+      └─ SNAPTRADE_RESPONSE_IMPROVEMENTS.md # API response improvements
 ```
 
 ---
@@ -198,7 +265,183 @@ async def fetch_history(ctx, limit: int = 100):
 - Twitter/X link detection and metadata extraction
 - CSV storage with detailed message attributes
 
-## Robinhood / SnapTrade Integration
+---
+
+## 📚 Documentation
+
+This project includes comprehensive documentation to help you understand, use, and extend the system:
+
+### 📖 User Documentation
+- **[Main README](README.md)** - This file: overview, installation, and basic usage
+- **[Configuration Guide](#configuration)** - Detailed environment setup and API key configuration
+
+### 🏗️ Technical Documentation
+- **[Architecture Overview](docs/ARCHITECTURE.md)** - System design, data flow, and architectural patterns
+- **[API Reference](docs/API_REFERENCE.md)** - Complete module, class, and function documentation
+- **[Development Guide](docs/README.md)** - Development notes and migration history
+- **[Coding Agent Guide](docs/CODING_AGENT_GUIDE.md)** - Comprehensive guide for AI coding agents working with this codebase
+
+### 📋 Migration & Improvement Notes
+- **[SnapTrade Migration](docs/SNAPTRADE_MIGRATION_COMPLETE.md)** - Complete migration from direct API access to safe response handling
+- **[Response Improvements](docs/SNAPTRADE_RESPONSE_IMPROVEMENTS.md)** - Detailed SnapTrade API response handling improvements
+
+### 🧪 Testing & Validation
+- **Integration Tests** - `test_integration.py` for end-to-end validation
+- **Unit Tests** - Comprehensive test suite in `tests/` directory
+- **Validation Scripts** - `validate_deployment.py` for deployment readiness checks
+
+---
+
+## 🚀 Quick Start
+
+### Development Setup
+
+1. **Clone and Setup Environment**:
+   ```bash
+   git clone https://github.com/<USERNAME>/LLM-portfolio-project.git
+   cd LLM-portfolio-project
+   python -m venv .venv
+   source .venv/bin/activate    # macOS/Linux
+   .venv\Scripts\Activate.ps1   # Windows PowerShell
+   ```
+
+2. **Install Dependencies**:
+   ```bash
+   pip install -r requirements.txt && pip install -e .
+   ```
+
+3. **Configure Environment**:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your API keys and configuration
+   ```
+
+4. **Initialize Database** (Optional - for advanced users):
+   ```bash
+   python scripts/init_database.py
+   ```
+
+5. **Run Integration Tests**:
+   ```bash
+   python test_integration.py
+   ```
+
+### Basic Usage
+
+**Generate Journal**:
+```bash
+python generate_journal.py --force
+```
+
+**Run Discord Bot**:
+```bash
+python -m src.bot.bot
+```
+
+**Run Bootstrap Setup** (Comprehensive initialization):
+```bash
+python scripts/bootstrap.py
+```
+
+---
+
+## 🔧 Advanced Usage
+
+### Development Workflow
+
+**Using Makefile** (if available):
+```bash
+make setup     # Complete development setup
+make test      # Run test suite
+make journal   # Generate journal
+make bot       # Run Discord bot
+make clean     # Clean temporary files
+```
+
+**Manual Development Commands**:
+```bash
+# Data collection and processing
+python -c "from src.data_collector import fetch_realtime_prices; print(fetch_realtime_prices(['AAPL', 'MSFT']))"
+
+# Discord message processing
+python -c "from src.channel_processor import process_channel_data; print(process_channel_data('general'))"
+
+# Database operations
+python -c "from src.database import execute_sql; print(execute_sql('SELECT COUNT(*) FROM positions', fetch_results=True))"
+```
+
+### Database Management
+
+**Schema Verification**:
+```bash
+python scripts/verify_schemas.py --verbose
+```
+
+**Data Migration**:
+```bash
+python migrate_with_cleaning.py --all
+```
+
+**Schema Refresh**:
+```bash
+python refresh_local_schema.py --tables orders,discord_messages
+```
+
+### Discord Bot Commands
+
+Once the bot is running, use these commands in Discord:
+
+- `!history [limit]` - Fetch message history with deduplication
+- `!process [channel_type]` - Process current channel messages  
+- `!stats` - Show channel statistics
+- `!globalstats` - Show global processing statistics
+- `!chart SYMBOL [period] [type]` - Generate advanced charts with position tracking
+- `!twitter [SYMBOL]` - Show Twitter data and sentiment analysis
+- `!tweets [SYMBOL] [count]` - Get recent tweets with stock mentions
+- `!EOD` - Interactive end-of-day stock data lookup
+
+---
+
+## 🔍 Troubleshooting
+
+### Common Issues
+
+**Import Errors**:
+- Ensure virtual environment is activated
+- Run `pip install -r requirements.txt` to install dependencies
+- Check Python version compatibility (3.8+)
+
+**Database Connection Issues**:
+- Verify `DATABASE_URL` in `.env` file
+- For PostgreSQL: ensure database server is running
+- For SQLite: check file permissions in `data/database/` directory
+
+**API Authentication Errors**:
+- Verify API keys in `.env` file match the `.env.example` format
+- Check API key validity and rate limits
+- Ensure Discord bot has proper permissions in target channels
+
+**SnapTrade Integration Issues**:
+- Verify SnapTrade consumer key and user credentials
+- Check SnapTrade SDK installation: `pip install snaptrade-client`
+- Review SnapTrade account authorization status
+
+### Debug Mode
+
+Enable verbose logging by setting environment variable:
+```bash
+export DEBUG=True  # Linux/macOS
+set DEBUG=True     # Windows
+```
+
+### Getting Help
+
+1. **Check Logs**: Review application logs for detailed error messages
+2. **Run Validation**: Use `python validate_deployment.py` to check system health
+3. **Integration Tests**: Run `python test_integration.py` to verify core functionality
+4. **Documentation**: Refer to comprehensive docs in the `docs/` directory
+
+---
 
 SnapTrade provides a secure API layer to access Robinhood data without directly storing credentials.
 If the SnapTrade Python SDK is unavailable (e.g., unsupported Python version), the
