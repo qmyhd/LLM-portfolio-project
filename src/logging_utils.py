@@ -2,7 +2,7 @@ import logging
 from pathlib import Path
 
 from src.message_cleaner import extract_ticker_symbols
-from src.database import mark_message_processed, execute_sql
+from src.db import mark_message_processed, execute_sql
 from src.twitter_analysis import (
     analyze_sentiment,
     detect_twitter_links,
@@ -14,78 +14,39 @@ logger = logging.getLogger(__name__)
 
 
 def log_message_to_database(message, twitter_client=None):
-    """Persist a Discord message to database and optionally log any linked tweets."""
+    """Persist a Discord message to database using unified execute_sql approach."""
     try:
-        # First try direct Supabase write (primary)
-        try:
-            from src.supabase_writers import DirectSupabaseWriter
-            from src.twitter_analysis import detect_twitter_links
-            from src.message_cleaner import extract_ticker_symbols
+        from src.db import execute_sql, get_sync_engine
+        from src.twitter_analysis import detect_twitter_links, fetch_tweet_data
+        from src.message_cleaner import extract_ticker_symbols
 
-            writer = DirectSupabaseWriter()
-
-            # Convert Discord message to dictionary format
+        # Use single transaction for all message-related database operations
+        engine = get_sync_engine()
+        with engine.begin() as conn:
+            # 1. Insert Discord message with named placeholders and dict parameters
             message_data = {
                 "message_id": str(message.id),
                 "author": message.author.name,
                 "content": message.content,
                 "channel": message.channel.name,
                 "timestamp": message.created_at.isoformat(),
-                "author_id": (
-                    str(message.author.id) if hasattr(message.author, "id") else None
-                ),
-                "tickers_detected": ", ".join(extract_ticker_symbols(message.content)),
-                "tweet_urls": ", ".join(detect_twitter_links(message.content)),
-                "is_reply": bool(message.reference and message.reference.message_id),
-                "reply_to_id": (
-                    str(message.reference.message_id) if message.reference else None
-                ),
-                "mentions": (
-                    ", ".join([str(user.id) for user in message.mentions])
-                    if message.mentions
-                    else ""
-                ),
             }
 
-            success = writer.write_discord_message(message_data)
-            if success:
-                logger.info(f"✅ Successfully logged message {message.id} to Supabase")
-                return
-            else:
-                logger.warning(
-                    "⚠️ Failed to log to Supabase, falling back to unified database layer"
-                )
-                raise Exception("Supabase write failed")
-        except Exception as e:
-            logger.warning(f"Supabase write failed: {e}, using fallback database")
-            # Fallback to unified database layer
-
-            # Check if message already exists
-            existing = execute_sql(
-                "SELECT message_id FROM discord_messages WHERE message_id = ?",
-                (str(message.id),),
-                fetch_results=True,
-            )
-            if existing:
-                return  # Message already exists, skip
-
-            # Insert message into discord_messages table
             execute_sql(
                 """
                 INSERT INTO discord_messages 
                 (message_id, author, content, channel, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-            """,
-                (
-                    str(message.id),
-                    message.author.name,
-                    message.content,
-                    message.channel.name,
-                    message.created_at.isoformat(),
-                ),
+                VALUES (:message_id, :author, :content, :channel, :timestamp)
+                ON CONFLICT (message_id) DO UPDATE SET
+                    author = EXCLUDED.author,
+                    content = EXCLUDED.content,
+                    channel = EXCLUDED.channel,
+                    timestamp = EXCLUDED.timestamp
+                """,
+                message_data,
             )
 
-            # Check for Twitter links and process them
+            # 2. Process Twitter links if found
             twitter_links = detect_twitter_links(message.content)
             if twitter_links:
                 for url in twitter_links:
@@ -100,34 +61,46 @@ def log_message_to_database(message, twitter_client=None):
                                 tweet_data.get("content", "")
                             )
 
+                            twitter_data = {
+                                "message_id": str(message.id),
+                                "discord_date": message.created_at.isoformat(),
+                                "tweet_date": tweet_data.get("created_at", ""),
+                                "content": tweet_data.get("content", ""),
+                                "stock_tags": (
+                                    ", ".join(stock_tags) if stock_tags else ""
+                                ),
+                                "author": message.author.name,
+                                "channel": message.channel.name,
+                            }
+
                             execute_sql(
                                 """
                                 INSERT INTO twitter_data 
                                 (message_id, discord_date, tweet_date, content, stock_tags, author, channel)
-                                VALUES (?, ?, ?, ?, ?, ?, ?)
-                            """,
-                                (
-                                    str(message.id),
-                                    message.created_at.isoformat(),
-                                    tweet_data.get("created_at", ""),
-                                    tweet_data.get("content", ""),
-                                    ", ".join(stock_tags) if stock_tags else "",
-                                    message.author.name,
-                                    message.channel.name,
-                                ),
+                                VALUES (:message_id, :discord_date, :tweet_date, :content, :stock_tags, :author, :channel)
+                                ON CONFLICT (message_id) DO UPDATE SET
+                                    discord_date = EXCLUDED.discord_date,
+                                    tweet_date = EXCLUDED.tweet_date,
+                                    content = EXCLUDED.content,
+                                    stock_tags = EXCLUDED.stock_tags
+                                """,
+                                twitter_data,
                             )
+
+                            # 3. Mark message as processed for Twitter
+                            from src.db import mark_message_processed
 
                             mark_message_processed(
                                 str(message.id), message.channel.name, "twitter"
                             )
 
-            logger.info(f"Successfully logged message {message.id} to database")
+        logger.info(
+            f"✅ Successfully logged message {message.id} to database with all related data"
+        )
 
     except Exception as e:
-        logger.error(f"Error logging message to database: {e}")
-        import traceback
-
-        logger.error(traceback.format_exc())
+        logger.error(f"❌ Error logging message to database: {e}")
+        raise  # Re-raise for proper error surfacing
 
 
 def log_message_to_file(message, log_file: Path, tweet_log: Path, twitter_client=None):
@@ -136,18 +109,11 @@ def log_message_to_file(message, log_file: Path, tweet_log: Path, twitter_client
     This function is maintained for backward compatibility but now primarily
     uses the database-first approach instead of CSV files.
     """
-    # Primary: Log to database (Supabase + fallback)
+    # Primary: Log to database (Supabase)
     log_message_to_database(message, twitter_client)
 
     # Note: CSV logging has been deprecated in favor of database storage.
     # Database provides better consistency, deduplication, and query capabilities.
 
 
-def log_tweet_to_csv(tweet_data, discord_message_id, tweet_log: Path):
-    """Legacy function - CSV logging deprecated in favor of database storage.
-
-    This function is maintained for API compatibility but no longer writes CSV files.
-    Tweet data is now stored in the database through the main logging pipeline.
-    """
-    # CSV logging has been deprecated - data is now stored in database
-    pass
+# log_tweet_to_csv() function removed - CSV logging deprecated in favor of database storage

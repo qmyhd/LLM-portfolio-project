@@ -22,30 +22,30 @@ The LLM Portfolio Journal is a sophisticated data-driven application that integr
 
 ### Database Layer
 
-**Dual Database Architecture:**
-- **SQLite**: Local development and fallback storage
-- **PostgreSQL/Supabase**: Production with real-time capabilities
+**PostgreSQL-Only Database Architecture (SQLAlchemy 2.0 Compatible):**
+- **PostgreSQL/Supabase**: Production database with real-time capabilities and connection pooling
+- **Unified Interface**: All components use `execute_sql()` with named placeholders and dict parameters
+- **No Fallback**: System requires PostgreSQL - no SQLite support
 
-**Key Tables:**
-- `positions`: Current portfolio holdings with calculated equity
-- `orders`: Trade history with execution details
-- `discord_messages`: Social sentiment data with ticker extraction
-- `twitter_data`: Tweet analysis with stock correlations
-- `price_history`: Historical market data for analysis
+**Key Tables (17 operational):**
+- **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`
+- **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`, `discord_processing_log`
+- **Market Data**: `daily_prices`, `realtime_prices`, `stock_metrics`
+- **System**: `twitter_data`, `processing_status`, `chart_metadata`, `schema_migrations`
 
 ### Module Structure
 
 #### Data Collection (`src/`)
 - **`data_collector.py`**: General market data collection, yfinance integration
 - **`snaptrade_collector.py`**: SnapTrade API integration with enhanced field extraction
-- **`discord_data_manager.py`**: Discord message processing and deduplication
+- **`message_cleaner.py`**: Discord message cleaning with ticker extraction, sentiment analysis, and write helpers
+- **`channel_processor.py`**: Production wrapper that fetches → cleans → writes to discord_market_clean/discord_trading_clean
 - **`twitter_analysis.py`**: Twitter/X sentiment analysis and data extraction
 
 #### Database Management (`src/`)
-- **`database.py`**: Unified SQLite/PostgreSQL abstraction layer
-- **`db.py`**: SQLAlchemy engine with connection pooling and health checks
-- **`supabase_writers.py`**: Direct real-time writes to Supabase
-- **`market_data.py`**: Consolidated portfolio and trade data queries
+- **`db.py`**: Enhanced SQLAlchemy 2.0 engine with unified execute_sql(), connection pooling, bulk operations, and parameter type validation
+
+- **`market_data.py`**: Consolidated portfolio and trade data queries with PostgreSQL compatibility
 
 #### Bot Infrastructure (`src/bot/`)
 - **`bot.py`**: Discord bot entry point with Twitter client integration
@@ -96,8 +96,7 @@ The LLM Portfolio Journal is a sophisticated data-driven application that integr
    └─ Deduplication → Database Upserts
 
 3. Data Storage
-   ├─ SQLite (Local) → Immediate Storage
-   ├─ PostgreSQL (Production) → Real-time Writes
+   ├─ PostgreSQL (Production) → Real-time Writes with Connection Pooling
    └─ CSV Backup → Raw Data Persistence
 
 4. Analysis & Generation
@@ -119,7 +118,7 @@ The LLM Portfolio Journal is a sophisticated data-driven application that integr
 ### Error Handling Strategy
 - **Graceful Degradation**: Services continue operating when dependencies fail
 - **Retry Mechanisms**: Exponential backoff with circuit breaker patterns
-- **Fallback Systems**: SQLite backup when PostgreSQL unavailable
+- **Connection Pooling**: Automatic retry and connection management
 - **Exception Filtering**: Non-retryable exceptions handled immediately
 
 ### Database Patterns
@@ -165,13 +164,13 @@ The LLM Portfolio Journal is a sophisticated data-driven application that integr
 
 ### Local Development
 1. **Environment Setup**: Virtual environment with requirements.txt
-2. **Database Initialization**: Local SQLite for development
-3. **Configuration**: `.env` file with development credentials
+2. **Database Initialization**: PostgreSQL/Supabase connection required
+3. **Configuration**: `.env` file with PostgreSQL credentials
 4. **Testing**: Comprehensive unit and integration tests
 
 ### Production Deployment
 1. **Bootstrap Process**: Automated dependency and database setup
-2. **Migration**: SQLite → PostgreSQL data transfer
+2. **Schema Validation**: PostgreSQL schema verification and setup
 3. **Health Validation**: Comprehensive system health checks
 4. **Monitoring**: Ongoing performance and error monitoring
 

@@ -43,23 +43,33 @@ SnapTradeCollector(user_id: str = "default_user", enable_parquet: bool = False)
 - `safely_extract_position_data(response)` → List[Dict]: Safe position data extraction
 - `safely_extract_order_data(response)` → List[Dict]: Safe order data extraction
 
-#### `src.discord_data_manager`
+#### `src.message_cleaner`
 
-Discord message processing and deduplication management.
+Discord message cleaning and processing module with centralized logic.
 
 **Key Functions:**
-- `get_processed_message_ids()` → Set[str]: Get already processed message IDs
-- `mark_messages_as_processed(message_ids, channel, file)`: Track processing status
-- `process_channel_messages(channel, channel_type="general")` → Dict: Process channel data
+- `extract_ticker_symbols(text)` → List[str]: Extract $TICKER symbols from text
+- `clean_messages(messages, channel_type="general")` → DataFrame: Clean message content with sentiment analysis
+- `save_to_database(df, table_name, connection)` → bool: Save cleaned data to database
+- `save_to_parquet(df, file_path)` → bool: Save cleaned data to Parquet format
+- `process_messages_for_channel(messages, channel_name, channel_type)`: Complete processing pipeline
+
+#### `src.channel_processor`
+
+Production wrapper for Discord message processing.
+
+**Key Functions:**
+- `process_channel_data(channel_name, channel_type="general")` → Dict: Fetch → clean → write pipeline
+- `get_channel_stats(channel_name=None)` → Dict: Statistics for processed channels
 
 ### Database Management
 
-#### `src.database`
+#### `src.db`
 
-Unified database abstraction layer supporting SQLite and PostgreSQL.
+Unified database abstraction layer supporting SQLite and PostgreSQL with SQLAlchemy.
 
 **Key Functions:**
-- `use_postgres()` → bool: Check if PostgreSQL should be used
+- PostgreSQL-only: All database operations now use Supabase PostgreSQL exclusively (SQLite fallback removed)
 - `get_connection(path=DB_PATH)`: Get database connection with fallback logic
 - `execute_sql(query, params=None, fetch_results=False)`: Execute SQL with parameter binding
 - `get_table_info(table_name)` → List: Get table schema information
@@ -217,8 +227,22 @@ Centralized configuration management with Pydantic validation.
 - `LOG_CHANNEL_IDS`: Discord channels to monitor
 
 **Functions:**
-- `settings()` → Settings: Get validated configuration instance
-- `get_database_url()` → str: Get database URL with fallback logic
+- `settings()` → Settings: Get validated configuration instance with automatic key mapping
+- `get_database_url(use_direct: bool = False)` → str: Get database URL with Transaction Pooler (default) or Direct connection
+- `get_migration_database_url()` → str: Get optimized database URL for migration operations (direct connection)
+
+**New Supabase Environment Variables:**
+- `DATABASE_URL`: Transaction Pooler connection (port 6543) 
+- `DATABASE_DIRECT_URL`: Direct connection (port 5432, non-pooling)
+- `SUPABASE_SERVICE_ROLE_KEY`: Secret key (sb_secret_…) for server-side access
+- `SUPABASE_ANON_KEY`: Publishable key (sb_publishable_…) for client-side access  
+- `JWT_PUBLIC_KEY`: Public key from ECC (P-256) for JWT verification
+- `JWT_PRIVATE_KEY`: Private key for server-side token signing (optional)
+
+**Legacy Key Support (backward compatibility):**
+- `anon_public` → `SUPABASE_ANON_KEY`
+- `service_role` → `SUPABASE_SERVICE_ROLE_KEY`  
+- `JWT_Secret_Key` → `JWT_SECRET`
 
 #### `src.retry_utils`
 

@@ -1,150 +1,150 @@
-# LLM Portfolio Journal - AI Coding Instructions
+# LLM Portfolio Journal - AI Coding Agent Instructions
 
-## Architecture Overview
+> **📖 For comprehensive guidance, see [AGENTS.md](../AGENTS.md) - the canonical AI contributor guide**  
+> **🏗️ For architecture details, see [docs/ARCHITECTURE.md](../docs/ARCHITECTURE.md) - the canonical architecture reference**
 
-This is a data-driven portfolio journal system with three core layers and dual database architecture:
-- **Data Collection**: SnapTrade API + Discord bot + Twitter API → CSV files + PostgreSQL/SQLite database
-- **Processing**: Pandas ETL pipelines with ticker extraction and sentiment analysis
-- **Output**: LLM-generated journal entries in plain text and markdown formats
+## 🚨 Critical Setup Sequence
 
-Key data flow: `data_collector.py` → PostgreSQL (Supabase) + SQLite fallback + CSV files → `journal_generator.py` → LLM API → formatted journal outputs
+**ALWAYS follow this order before any development:**
+1. **Pre-validation**: `python tests/validate_deployment.py` - validates environment readiness
+2. **Automated setup**: `python scripts/bootstrap.py` - handles dependencies, database, migration
+3. **Environment config**: Copy `.env.example` to `.env` with your API keys
 
-**Database Architecture**: Hybrid PostgreSQL/SQLite system with automatic fallback, connection pooling, and migration tools for moving data between systems.
-
-## Quick Start Commands
+## ⚡ Essential Commands
 
 ```bash
-# Setup environment
-python -m venv .venv
-.venv\Scripts\Activate.ps1  # Windows PowerShell
-pip install -r requirements.txt && pip install -e .
+# Core workflow
+python generate_journal.py --force    # Generate journal with data refresh
+python -m src.bot.bot                  # Run Discord bot
+python scripts/bootstrap.py           # Complete setup + migration
 
-# Complete development setup (alternative)
-make setup
-
-# Generate journal (auto-updates data)
-python generate_journal.py --force
-# or via Makefile
-make journal
-
-# Run Discord bot for real-time data collection
-python -m src.bot.bot
-# or via Makefile
-make bot
-
-# Database initialization and migration
-make init-db      # Create tables + enable RLS policies
-make migrate      # SQLite → PostgreSQL migration
-make verify-migration  # Check migration status
-
-# Development workflow
-make test         # Run test suite
-make lint         # Code linting
-make clean        # Clean up temp files
+# Development & debugging
+make test                              # Run pytest test suite
+python test_integration.py            # Core integration tests
+python scripts/verify_schemas.py      # Database schema validation
 ```
 
-## Critical File Patterns
+## 🧰 Copilot Toolsets
 
-### Entry Points
-- `generate_journal.py` - CLI wrapper, delegates to `src.journal_generator.main()`
-- `src/bot/bot.py` - Discord bot entry point with Twitter integration
-- `notebooks/01_generate_journal.ipynb` - Interactive development workflow
+Leverage the curated Copilot tool palettes to stay efficient:
 
-### Core Architecture
-- `src/data_collector.py` - **Primary data ingestion**: SnapTrade positions/orders, yfinance prices, dual database persistence
-- `src/journal_generator.py` - **LLM orchestration**: prompt engineering, API calls, dual output formats (text + markdown)
-- `src/database.py` - **Simple SQLite wrapper**: `get_connection()` returns connection to `data/database/price_history.db`
-- `src/db.py` - **Advanced PostgreSQL engine**: connection pooling, health checks, Supabase pooler detection
-- `src/config.py` - **Unified configuration**: Pydantic settings with automatic field mapping and database URL construction
-- `src/supabase_writers.py` - **Real-time database writes**: direct PostgreSQL writes for live data
-- `src/bot/` - **Modular Discord bot**: event handlers in `events.py`, commands in `commands/` subdirectory
-- `scripts/` - **Migration tools**: complete database migration pipeline from SQLite to PostgreSQL/Supabase
+- **reader** → Scout recent diffs, open diagnostics, and trace symbol usage before editing anything.
+- **semantic_search** → Ask deeper questions; pair semantic queries with the sequential thinking tool to reason across files.
+- **codebase** → Map the repo fast by combining global search, change history, and usage lookups.
+- **editing** → Open precise editors, add new files, and keep diffs tight while you iterate.
+- **execution** → Launch commands, tests, or notebooks and watch diagnostics for fast validation cycles.
+- **research** → Pull external docs, upstream repos, or quick reference pages without leaving the editor.
 
-### Data Conventions
-- **Dual persistence**: CSV files in `data/raw/` + SQLite tables for historical data
-- **Symbol extraction**: Robust regex patterns for `$TICKER` format, handles complex API responses
-- **Sentiment scoring**: TextBlob integration with numerical values (-1.0 to 1.0)
-- **Database fallback**: Automatic SQLite fallback when PostgreSQL unavailable via `get_database_url()`
-- **Migration system**: Comprehensive scripts for SQLite → PostgreSQL data migration with verification
+## 🎯 Critical Architecture Patterns
 
-## Development Workflows
+### Database Engine (PostgreSQL/Supabase Only)
+```python
+# ALWAYS use these patterns for database operations:
+from src.db import execute_sql, get_connection, get_sync_engine
 
-### Testing
+# Universal query execution with PostgreSQL
+result = execute_sql("SELECT * FROM positions", fetch_results=True)
+
+# Connection management with pooling/health checks
+with get_connection() as conn:
+    # Your database operations
+
+# Direct engine access for SQLAlchemy operations
+engine = get_sync_engine()
+```
+
+### Retry & Error Handling (Required for all external calls)
+```python
+from src.retry_utils import hardened_retry, database_retry
+
+@hardened_retry(max_retries=3, delay=2)  # API calls
+def api_operation(): pass
+
+@database_retry(max_retries=3)  # Database operations  
+def db_operation(): pass
+```
+
+### File Operations (Path-based, not strings)
+```python
+from pathlib import Path
+# ALWAYS use Path objects, never string concatenation
+BASE_DIR = Path(__file__).resolve().parent.parent
+data_file = BASE_DIR / "data" / "raw" / "positions.csv"
+```
+
+### Ticker Symbol Extraction (Core business logic)
+```python
+from src.message_cleaner import extract_ticker_symbols
+# Handles $AAPL, $BRK.B format with 1-6 character limit
+symbols = extract_ticker_symbols("Text with $AAPL and $MSFT")
+```
+
+## 🔧 Key Integration Points
+
+### LLM Journal Generation
+```python
+from src.journal_generator import create_enhanced_journal_prompt, generate_journal_entry
+
+# Primary: Gemini API → Fallback: OpenAI API  
+prompt = create_enhanced_journal_prompt(positions_df, messages_df, prices_df)
+journal = generate_journal_entry(prompt, max_tokens=160)  # ~120 words
+```
+
+### Discord Bot (Modular Command Pattern)
+```python
+# Commands located in src/bot/commands/
+# Registration pattern in each command file:
+def register(bot: commands.Bot):
+    @bot.command(name="command_name")
+    async def command_func(ctx, param: str = "default"):
+        # Command implementation
+```
+
+### Configuration (Pydantic + Environment)
+```python
+from src.config import settings, get_database_url
+config = settings()  # Auto-loads from .env with validation
+db_url = get_database_url()  # Returns PostgreSQL URL only (no SQLite fallback)
+```
+
+## 🔍 Development Workflow
+
+### Before Making Changes
 ```bash
-pytest tests/ --maxfail=1 --disable-warnings -v
-```
-Tests focus on ticker extraction logic and data formatting functions.
-
-### Journal Generation
-```bash
-python generate_journal.py --force  # Force refresh all data
-python generate_journal.py --output custom/path  # Custom output directory
+# 1. Validate current state
+python tests/validate_deployment.py
+# 2. Run integration tests  
+python test_integration.py
+# 3. Check database health
+python -c "from src.db import test_connection; print(test_connection())"
 ```
 
-### Discord Bot Development
-```bash
-python -m src.bot.bot  # Run bot (requires DISCORD_BOT_TOKEN in .env)
+### Testing Patterns
+- **Integration**: `python test_integration.py` - tests ticker extraction, imports
+- **Unit tests**: `pytest tests/ --maxfail=1 --disable-warnings -v`  
+- **Database**: Use `execute_sql("SELECT COUNT(*) FROM table_name", fetch_results=True)`
+- **Schema validation**: `python scripts/verify_schemas.py --verbose`
+
+### File Structure Context
+- **Entry points**: `generate_journal.py`, `src/bot/bot.py`
+- **Data processing**: `src/data_collector.py` (market), `src/snaptrade_collector.py` (brokerage)
+- **LLM integration**: `src/journal_generator.py` (dual text/markdown output)
+- **Database**: `src/db.py` (engine with unified real-time writes)
+- **Bot commands**: `src/bot/commands/` (modular structure with `register()` functions)
+
+### Data Flow Architecture
+```
+SnapTrade + Discord + Twitter → PostgreSQL (Supabase) → LLM → Journal (text + markdown)
 ```
 
-## Key Patterns & Conventions
+## ⚠️ Critical Rules
 
-### Database Architecture
-- **Dual engine system**: `src/db.py` (PostgreSQL/Supabase) + `src/database.py` (SQLite fallback)
-- **Connection pooling**: Advanced SQLAlchemy configuration with health checks and retry logic
-- **Migration pipeline**: Complete scripts in `scripts/` for SQLite → PostgreSQL data transfer
-- **Prepared statement optimization**: Auto-detection of Supabase pooler vs direct connection
+- **PostgreSQL-only**: No SQLite fallback - all database operations use Supabase PostgreSQL
+- **Always use retry patterns** for external APIs (SnapTrade, yfinance, LLM APIs)
+- **Always use `pathlib.Path`** - never string concatenation for file paths
+- **Test ticker extraction** with edge cases (`$BRK.B`, mixed text, duplicates)
+- **Database operations**: Use `execute_sql()` or connection patterns with PostgreSQL syntax
+- **Virtual environment required** - bootstrap validates this automatically
+- **Environment variables mandatory** - 27+ dependencies, see requirements.txt
 
-### Error Handling
-- **Graceful degradation**: SnapTrade import failures don't crash the system
-- **Retry decorators**: `@retry_decorator(max_retries=3, delay=1)` for API calls in `journal_generator.py`
-- **Optional dependencies**: Twitter client gracefully handles missing credentials
-
-### Configuration Management
-- **Environment-driven**: All secrets in `.env` (git-ignored), loaded via `python-dotenv`
-- **Pydantic settings**: `src/config.py` with automatic field mapping and database URL construction
-- **Database URL fallback**: `get_database_url()` with PostgreSQL → SQLite fallback logic
-- **Supabase pooler detection**: Auto-disables prepared statements for port 6543 compatibility
-- **Path objects**: Use `pathlib.Path` consistently, not string concatenation
-- **Directory structure**: Auto-create `data/{raw,processed,database}/` directories
-
-### Data Processing
-- **Symbol extraction**: `extract_ticker_symbols()` function with regex `r'\$[A-Z]{1,6}(?:\.[A-Z]+)?'`
-- **DataFrame conventions**: Standardized column names (`symbol`, `quantity`, `price`, `equity`)
-- **Timestamp handling**: Use pandas datetime parsing with timezone awareness
-
-### LLM Integration
-- **Dual prompt functions**: `create_journal_prompt()` (basic) vs `create_enhanced_journal_prompt()` (detailed)
-- **LLM fallback chain**: Gemini API (free tier) → OpenAI API → error handling
-- **Token management**: Max 200 tokens for journal entries (~120 words)
-- **Structured output**: JSON formatting functions for consistent LLM input format
-
-### Discord Bot Structure
-- **Command registration**: Each command file in `commands/` has `register(bot)` function
-- **Event handling**: Centralized in `events.py` with Twitter client dependency injection
-- **Message logging**: Real-time ticker detection and sentiment analysis via `on_message` handler
-- **Channel filtering**: Only logs messages from channels in `LOG_CHANNEL_IDS` environment variable
-
-### Symbol Extraction Pattern
-- **Regex**: `r'\$[A-Z]{1,6}(?:\.[A-Z]+)?'` matches `$AAPL`, `$BRK.B`, handles 1-6 character symbols
-- **SnapTrade parsing**: `extract_symbol_from_data()` walks nested dicts, handles "Unknown" symbols gracefully
-- **Fallback hierarchy**: `raw_symbol` → `symbol` → `ticker` → short `id` values (no UUIDs)
-
-## Integration Points
-
-### External APIs
-- **SnapTrade**: Optional dependency with graceful fallback if SDK unavailable
-- **yfinance**: Primary price data source with retry logic
-- **OpenAI/LangChain**: LLM providers for journal generation
-- **Twitter API**: Tweet data extraction from Discord-shared links
-
-### File Dependencies
-- **CSV → DataFrame**: Raw data loading with pandas, handle missing files gracefully
-- **SQLite schemas**: Historical price tables, positions, orders, metrics
-- **Markdown templates**: Rich formatting with tables, sections, and summary text
-
-When working with this codebase:
-1. Always handle missing `.env` variables gracefully
-2. Use `pathlib.Path` for file operations
-3. Test ticker extraction with edge cases (numbers, special characters)
-4. Maintain dual output formats (text summary + detailed markdown)
-5. Follow the retry pattern for external API calls
+**📚 For complete setup instructions, architecture deep-dives, and advanced patterns, see [AGENTS.md](../AGENTS.md)**

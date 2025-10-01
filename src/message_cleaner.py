@@ -13,9 +13,41 @@ from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import pandas as pd
 from textblob import TextBlob
+
 from sqlalchemy import text
 
 logger = logging.getLogger(__name__)
+
+
+# Centralized table mapping for channel types
+CHANNEL_TYPE_TO_TABLE = {
+    "general": "discord_market_clean",
+    "trading": "discord_trading_clean",
+    "market": "discord_market_clean",  # Alternative name
+}
+
+
+def get_table_name_for_channel_type(channel_type: str) -> str:
+    """Get the database table name for a given channel type.
+
+    Args:
+        channel_type: The type of Discord channel
+
+    Returns:
+        Database table name for the channel type
+
+    Raises:
+        ValueError: If channel_type is not recognized
+    """
+    normalized_type = channel_type.lower().strip()
+
+    if normalized_type not in CHANNEL_TYPE_TO_TABLE:
+        raise ValueError(
+            f"Unknown channel type '{channel_type}'. "
+            f"Valid types: {list(CHANNEL_TYPE_TO_TABLE.keys())}"
+        )
+
+    return CHANNEL_TYPE_TO_TABLE[normalized_type]
 
 
 def extract_ticker_symbols(text: str | None) -> List[str]:
@@ -146,9 +178,9 @@ def clean_messages(
         logger.error(f"Missing required columns: {missing_columns}")
         raise ValueError(f"Missing required columns: {missing_columns}")
 
-    # Deduplication by message_id
+    # Deduplication by message_id - ensure DataFrame return
     original_count = len(df)
-    df = df.drop_duplicates(subset=[deduplication_key])
+    df = df.drop_duplicates(subset=[deduplication_key]).copy()
     if len(df) < original_count:
         logger.info(f"Removed {original_count - len(df)} duplicate messages")
 
@@ -189,8 +221,8 @@ def clean_messages(
         df["has_tickers"] = df["tickers"].apply(lambda x: len(x) > 0)
         df["ticker_count"] = df["tickers"].apply(len)
 
-    # Sort by timestamp
-    df = df.sort_values("timestamp")
+    # Sort by timestamp - ensure DataFrame return
+    df = df.sort_values("timestamp").copy()
 
     # Standardize column names for output
     standard_columns = [
@@ -214,12 +246,24 @@ def clean_messages(
     if channel_type.lower() == "trading":
         standard_columns.extend(["has_tickers", "ticker_count"])
 
-    # Only keep columns that exist
+    # Only keep columns that exist - ensure DataFrame return
     available_columns = [col for col in standard_columns if col in df.columns]
-    df = df[available_columns]
 
-    logger.info(f"Successfully cleaned {len(df)} messages")
-    return df
+    # Ensure we always return a DataFrame, never a Series
+    if available_columns:
+        # Use double brackets to ensure DataFrame return even with single column
+        result_df = df[available_columns].copy()
+    else:
+        # If no columns available, return empty DataFrame with proper structure
+        result_df = pd.DataFrame()
+
+    # Final safeguard: ensure we're returning a DataFrame
+    if not isinstance(result_df, pd.DataFrame):
+        logger.warning("Converting non-DataFrame result to DataFrame")
+        result_df = pd.DataFrame(result_df)
+
+    logger.info(f"Successfully cleaned {len(result_df)} messages")
+    return result_df
 
 
 def save_to_parquet(
@@ -297,7 +341,7 @@ def save_to_database(
     connection,
     if_exists: Literal["append", "replace", "fail"] = "append",
 ) -> bool:
-    """Save cleaned DataFrame to database table.
+    """Save cleaned DataFrame to database table using psycopg named parameters.
 
     Args:
         df: Cleaned DataFrame to save
@@ -332,14 +376,49 @@ def save_to_database(
             columns=[col for col in columns_to_drop if col in db_df.columns]
         )
 
-        # Ensure timestamp is properly formatted
+        # Ensure timestamp is properly formatted as string for consistency
         if "timestamp" in db_df.columns:
-            db_df["timestamp"] = pd.to_datetime(db_df["timestamp"], errors="coerce")
+            # Convert timestamp column to string format safely
+            try:
+                db_df["timestamp"] = db_df["timestamp"].apply(
+                    lambda x: (
+                        pd.to_datetime(x, errors="coerce").strftime("%Y-%m-%d %H:%M:%S")
+                        if pd.notna(pd.to_datetime(x, errors="coerce"))
+                        else str(x)
+                    )
+                )
+            except Exception:
+                # Fallback: keep as string if conversion fails
+                db_df["timestamp"] = db_df["timestamp"].astype(str)
 
-        # Use pandas to_sql for database insertion
-        db_df.to_sql(
-            table_name, connection, if_exists=if_exists, index=False, method="multi"
-        )
+        # Use proper psycopg named parameters for PostgreSQL
+        from src.db import execute_sql
+        from sqlalchemy import text
+
+        # Build column list for INSERT statement with named placeholders
+        columns = list(db_df.columns)
+        columns_str = ", ".join(columns)
+        placeholders = ", ".join([f":{col}" for col in columns])
+
+        # Build INSERT with ON CONFLICT for idempotency
+        if table_name in ["discord_market_clean", "discord_trading_clean"]:
+            insert_sql = f"""
+            INSERT INTO {table_name} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT (message_id) DO UPDATE SET
+                {", ".join([f"{col} = EXCLUDED.{col}" for col in columns if col != "message_id"])}
+            """
+        else:
+            insert_sql = f"""
+            INSERT INTO {table_name} ({columns_str})
+            VALUES ({placeholders})
+            ON CONFLICT DO NOTHING
+            """
+
+        # Execute bulk insert using named parameters
+        records = db_df.to_dict("records")
+        execute_sql(insert_sql, records)
+
         logger.info(f"Saved {len(db_df)} messages to database table {table_name}")
         return True
     except Exception as e:
@@ -393,11 +472,8 @@ def process_messages_for_channel(
 
     # Save to database if requested
     if save_database and database_connection:
-        # Use correct table name based on channel type
-        if channel_type.lower() == "trading":
-            table_name = "discord_trading_clean"
-        else:
-            table_name = "discord_general_clean"
+        # Use centralized table mapping
+        table_name = get_table_name_for_channel_type(channel_type)
         success_flags["database"] = save_to_database(
             cleaned_df, table_name, database_connection
         )
@@ -434,14 +510,14 @@ if __name__ == "__main__":
             "content": "Just bought $AAPL and $MSFT! 🚀",
             "author": "trader1",
             "channel": "trading",
-            "created_at": "2024-01-01T10:00:00Z",
+            "created_at": "2025-09-19T10:00:00Z",
         },
         {
             "message_id": "2",
             "content": "Check out this tweet: https://twitter.com/user/status/123456",
             "author": "user2",
             "channel": "general",
-            "created_at": "2024-01-01T11:00:00Z",
+            "created_at": "2025-09-19T11:00:00Z",
         },
     ]
 

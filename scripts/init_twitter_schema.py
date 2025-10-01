@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 def create_twitter_schema_postgres_sql():
     """Create PostgreSQL Twitter schema using execute_sql."""
-    from src.database import execute_sql
+    from src.db import execute_sql
 
     schema_sql = """
     -- Create schema if it doesn't exist
@@ -110,46 +110,12 @@ def create_twitter_schema_postgres(connection):
         return False
 
 
-def create_twitter_schema_sqlite(connection):
-    """Create SQLite tables for X/Twitter data."""
-    try:
-        cursor = connection.cursor()
-
-        # Create twitter_x_posts_log table
-        cursor.execute(
-            """
-            CREATE TABLE IF NOT EXISTS twitter_x_posts_log (
-                tweet_id TEXT PRIMARY KEY,
-                tweet_time TEXT NOT NULL,
-                discord_message_time TEXT,
-                tweet_text TEXT NOT NULL,
-                tickers TEXT NOT NULL DEFAULT '[]',
-                author_id TEXT,
-                conversation_id TEXT,
-                inserted_at TEXT NOT NULL DEFAULT (datetime('now'))
-            );
-        """
-        )
-
-        # Create index
-        cursor.execute(
-            """
-            CREATE INDEX IF NOT EXISTS twitter_x_posts_log_time_idx 
-            ON twitter_x_posts_log (tweet_time DESC);
-        """
-        )
-
-        connection.commit()
-        logger.info("SQLite Twitter tables created successfully")
-        return True
-
-    except Exception as e:
-        logger.error(f"Error creating SQLite Twitter tables: {e}")
-        return False
+# SQLite support removed in PostgreSQL-only standardization (Sept 2025)
+# All Twitter data now stored in PostgreSQL/Supabase only
 
 
 def initialize_twitter_schema():
-    """Initialize Twitter schema for both PostgreSQL and SQLite."""
+    """Initialize Twitter schema for PostgreSQL-only system."""
     import sys
     from pathlib import Path
 
@@ -159,7 +125,7 @@ def initialize_twitter_schema():
     sys.path.insert(0, str(project_root))
 
     try:
-        from src.database import use_postgres, get_connection, execute_sql
+        from src.db import execute_sql
     except ImportError as e:
         print(f"❌ Import error: {e}")
         print("Make sure you're running this from the project root directory")
@@ -167,29 +133,16 @@ def initialize_twitter_schema():
 
     success = True
 
-    # Try PostgreSQL first
-    if use_postgres():
-        try:
-            print("Initializing PostgreSQL Twitter schema...")
-            if not create_twitter_schema_postgres_sql():
-                success = False
-                print("❌ PostgreSQL Twitter schema creation failed")
-            else:
-                print("✅ PostgreSQL Twitter schema created successfully")
-        except Exception as e:
-            print(f"⚠️  PostgreSQL not available, falling back to SQLite: {e}")
-
-    # Always ensure SQLite fallback exists
+    # PostgreSQL-only system (SQLite support removed Sept 2025)
     try:
-        print("Initializing SQLite Twitter schema...")
-        with get_connection() as conn:
-            if not create_twitter_schema_sqlite(conn):
-                success = False
-                logger.error("SQLite Twitter schema creation failed")
-            else:
-                print("✅ SQLite Twitter schema created successfully")
+        print("Initializing PostgreSQL Twitter schema...")
+        if not create_twitter_schema_postgres_sql():
+            success = False
+            print("❌ PostgreSQL Twitter schema creation failed")
+        else:
+            print("✅ PostgreSQL Twitter schema created successfully")
     except Exception as e:
-        print(f"❌ SQLite Twitter schema creation failed: {e}")
+        print(f"❌ PostgreSQL schema creation error: {e}")
         success = False
 
     return success

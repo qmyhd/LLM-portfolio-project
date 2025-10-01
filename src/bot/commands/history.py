@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 from discord.ext import commands
 
-from src.database import execute_sql
+from src.db import execute_sql
 from src.logging_utils import log_message_to_database
 
 BASE_DIR = Path(__file__).resolve().parents[3]
@@ -21,19 +21,16 @@ def register(bot: commands.Bot, twitter_client=None):
         # --- de-dupe guard - check for existing message IDs in database ---
         existing_message_ids = set()
         try:
-            results = execute_sql("SELECT message_id FROM discord_messages WHERE channel = ?", (ctx.channel.name,), fetch_results=True)
+            results = execute_sql(
+                "SELECT message_id FROM discord_messages WHERE channel = :channel",
+                {"channel": ctx.channel.name},
+                fetch_results=True,
+            )
             existing_message_ids = {row[0] for row in results}
         except Exception as e:
             print(f"Database error: {e}")
-            # Fallback to CSV check if database fails
-            if DISCORD_CSV.exists():
-                try:
-                    df = pd.read_csv(DISCORD_CSV)
-                    ch_df = df[df["channel"] == ctx.channel.name]
-                    if not ch_df.empty:
-                        existing_message_ids = set(ch_df["message_id"].astype(str))
-                except pd.errors.EmptyDataError:           # handles blank file
-                    pass
+            # Re-raise database errors rather than falling back to CSV
+            raise
 
         # --- pull messages ---
         count = 0
@@ -42,10 +39,11 @@ def register(bot: commands.Bot, twitter_client=None):
                 continue
             if str(msg.id) in existing_message_ids:
                 continue  # Skip messages that are already logged
-            
+
             # Log to database (preferred method)
             log_message_to_database(msg, twitter_client)
             count += 1
-            
-        await ctx.send(f"✅ Logged {count} fresh messages from #{ctx.channel} to database.")
 
+        await ctx.send(
+            f"✅ Logged {count} fresh messages from #{ctx.channel} to database."
+        )

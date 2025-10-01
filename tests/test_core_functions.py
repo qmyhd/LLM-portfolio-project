@@ -177,7 +177,7 @@ class TestPromptBuilder(unittest.TestCase):
                 "symbol": ["AAPL", "MSFT"],
                 "price": [150, 200],
                 "previous_close": [145, 205],
-                "timestamp": ["2023-01-01", "2023-01-01"],
+                "timestamp": ["2025-09-19", "2025-09-19"],
             }
         )
 
@@ -231,14 +231,14 @@ class TestPromptBuilder(unittest.TestCase):
                 "symbol": ["AAPL", "MSFT"],
                 "price": [150, 200],
                 "previous_close": [145, 205],
-                "timestamp": ["2023-01-01", "2023-01-01"],
+                "timestamp": ["2025-09-19", "2025-09-19"],
             }
         )
 
         messages_df = pd.DataFrame(
             {
                 "content": ["$AAPL looking good!", "$MSFT is overvalued"],
-                "created_at": ["2023-01-01", "2023-01-01"],
+                "created_at": ["2025-09-19", "2025-09-19"],
                 "tickers_detected": ["$AAPL", "$MSFT"],
             }
         )

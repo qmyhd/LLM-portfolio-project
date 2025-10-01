@@ -7,7 +7,7 @@ Delegates all cleaning logic to the message_cleaner module.
 import logging
 from typing import Any, Dict
 
-from src.database import (
+from src.db import (
     get_connection,
     get_unprocessed_messages,
     mark_message_processed,
@@ -114,32 +114,52 @@ def get_channel_stats(channel_name: str | None = None) -> Dict[str, Any]:
             # Raw messages count
             if channel_name:
                 result = execute_sql(
-                    "SELECT COUNT(*) FROM discord_messages WHERE channel = ?",
-                    (channel_name,),
+                    "SELECT COUNT(*) FROM discord_messages WHERE channel = :channel",
+                    {"channel": channel_name},
                     fetch_results=True,
                 )
             else:
                 result = execute_sql(
                     "SELECT COUNT(*) FROM discord_messages", fetch_results=True
                 )
-            stats["raw_messages"] = result[0][0] if result else 0
+            try:
+                if result and isinstance(result, (list, tuple)) and len(result) > 0:
+                    row = result[0]
+                    if isinstance(row, (list, tuple)) and len(row) > 0:
+                        stats["raw_messages"] = row[0]
+                    else:
+                        stats["raw_messages"] = 0
+                else:
+                    stats["raw_messages"] = 0
+            except (IndexError, TypeError, AttributeError):
+                stats["raw_messages"] = 0
 
-            # Processed general messages
+            # Processed market messages (renamed from general)
             if channel_name:
                 result = execute_sql(
                     """
-                    SELECT COUNT(*) FROM discord_general_clean dgc 
-                    JOIN discord_messages dm ON dgc.message_id = dm.message_id 
-                    WHERE dm.channel = ?
+                    SELECT COUNT(*) FROM discord_market_clean dmc 
+                    JOIN discord_messages dm ON dmc.message_id = dm.message_id 
+                    WHERE dm.channel = :channel
                 """,
-                    (channel_name,),
+                    {"channel": channel_name},
                     fetch_results=True,
                 )
             else:
                 result = execute_sql(
-                    "SELECT COUNT(*) FROM discord_general_clean", fetch_results=True
+                    "SELECT COUNT(*) FROM discord_market_clean", fetch_results=True
                 )
-            stats["general_processed"] = result[0][0] if result else 0
+            try:
+                if result and isinstance(result, (list, tuple)) and len(result) > 0:
+                    row = result[0]
+                    if isinstance(row, (list, tuple)) and len(row) > 0:
+                        stats["market_processed"] = row[0]
+                    else:
+                        stats["market_processed"] = 0
+                else:
+                    stats["market_processed"] = 0
+            except (IndexError, TypeError, AttributeError):
+                stats["market_processed"] = 0
 
             # Processed trading messages
             if channel_name:
@@ -147,29 +167,49 @@ def get_channel_stats(channel_name: str | None = None) -> Dict[str, Any]:
                     """
                     SELECT COUNT(*) FROM discord_trading_clean dtc 
                     JOIN discord_messages dm ON dtc.message_id = dm.message_id 
-                    WHERE dm.channel = ?
+                    WHERE dm.channel = :channel
                 """,
-                    (channel_name,),
+                    {"channel": channel_name},
                     fetch_results=True,
                 )
             else:
                 result = execute_sql(
                     "SELECT COUNT(*) FROM discord_trading_clean", fetch_results=True
                 )
-            stats["trading_processed"] = result[0][0] if result else 0
+            try:
+                if result and isinstance(result, (list, tuple)) and len(result) > 0:
+                    row = result[0]
+                    if isinstance(row, (list, tuple)) and len(row) > 0:
+                        stats["trading_processed"] = row[0]
+                    else:
+                        stats["trading_processed"] = 0
+                else:
+                    stats["trading_processed"] = 0
+            except (IndexError, TypeError, AttributeError):
+                stats["trading_processed"] = 0
 
             # Twitter data count
             if channel_name:
                 result = execute_sql(
-                    "SELECT COUNT(*) FROM twitter_data WHERE channel = ?",
-                    (channel_name,),
+                    "SELECT COUNT(*) FROM twitter_data WHERE channel = :channel",
+                    {"channel": channel_name},
                     fetch_results=True,
                 )
             else:
                 result = execute_sql(
                     "SELECT COUNT(*) FROM twitter_data", fetch_results=True
                 )
-            stats["twitter_data"] = result[0][0] if result else 0
+            try:
+                if result and isinstance(result, (list, tuple)) and len(result) > 0:
+                    row = result[0]
+                    if isinstance(row, (list, tuple)) and len(row) > 0:
+                        stats["twitter_data"] = row[0]
+                    else:
+                        stats["twitter_data"] = 0
+                else:
+                    stats["twitter_data"] = 0
+            except (IndexError, TypeError, AttributeError):
+                stats["twitter_data"] = 0
 
             return stats
 

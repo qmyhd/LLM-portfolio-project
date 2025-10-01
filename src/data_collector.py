@@ -1,8 +1,7 @@
 import csv
 import logging
 import re
-import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pandas as pd
@@ -45,7 +44,7 @@ def fetch_realtime_prices(symbols=None):
     """
     if symbols is None:
         # Get symbols from the database positions table
-        from src.database import execute_sql
+        from src.db import execute_sql
 
         try:
             result = execute_sql(
@@ -62,7 +61,8 @@ def fetch_realtime_prices(symbols=None):
     for symbol in symbols:
         if isinstance(symbol, str) and symbol.strip():
             clean_symbol = symbol.strip().upper()
-            if re.match(r"^[A-Z]{1,5}$", clean_symbol):  # Basic ticker validation
+            # Enhanced ticker validation - supports symbols like BRK.B, BF.B, etc.
+            if re.match(r"^[A-Z]{1,6}(?:\.[A-Z]{1,2})?$", clean_symbol):
                 valid_symbols.append(clean_symbol)
 
     if not valid_symbols:
@@ -89,7 +89,9 @@ def fetch_realtime_prices(symbols=None):
                 price_data.append(
                     {
                         "symbol": symbol,
-                        "timestamp": datetime.now().isoformat(),
+                        "timestamp": datetime.now(
+                            timezone.utc
+                        ),  # Use timezone-aware datetime for timestamptz
                         "price": current_price,
                         "previous_close": previous_close,
                         "abs_change": abs_change,
@@ -124,49 +126,44 @@ def save_realtime_prices_to_db(prices_df):
         return
 
     try:
-        from src.database import execute_sql, use_postgres
+        from src.db import execute_sql, df_to_records
+        import pandas as pd
 
-        for _, row in prices_df.iterrows():
-            if use_postgres():
-                query = """
-                INSERT INTO realtime_prices (symbol, timestamp, price, previous_close, abs_change, percent_change)
-                VALUES (%s, %s, %s, %s, %s, %s)
-                ON CONFLICT (symbol, timestamp) DO UPDATE SET
-                price = EXCLUDED.price,
-                previous_close = EXCLUDED.previous_close,
-                abs_change = EXCLUDED.abs_change,
-                percent_change = EXCLUDED.percent_change
-                """
-                params = (
-                    row["symbol"],
-                    row["timestamp"],
-                    row["price"],
-                    row["previous_close"],
-                    row["abs_change"],
-                    row["percent_change"],
-                )
-            else:
-                # SQLite version
-                query = """
-                INSERT OR REPLACE INTO realtime_prices 
-                (symbol, timestamp, price, previous_close, abs_change, percent_change)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """
-                params = (
-                    row["symbol"],
-                    row["timestamp"],
-                    row["price"],
-                    row["previous_close"],
-                    row["abs_change"],
-                    row["percent_change"],
-                )
+        # Normalize timestamps to UTC timezone-aware
+        prices_df_processed = prices_df.copy()
+        prices_df_processed["timestamp"] = pd.to_datetime(
+            prices_df_processed["timestamp"], utc=True
+        )
 
-            execute_sql(query, params)
+        # Convert DataFrame to list of dicts for bulk operation
+        records = df_to_records(prices_df_processed, utc_columns=["timestamp"])
 
-        logger.info(f"✅ Saved {len(prices_df)} real-time price records to database")
+        # Ensure proper data types for PostgreSQL columns
+        for record in records:
+            record["symbol"] = str(record["symbol"])  # TEXT column
+            record["price"] = float(record["price"])  # REAL column
+            record["previous_close"] = float(record["previous_close"])  # REAL column
+            record["abs_change"] = float(record["abs_change"])  # REAL column
+            record["percent_change"] = float(record["percent_change"])  # REAL column
+
+        # PostgreSQL bulk upsert with ON CONFLICT using named placeholders
+        query = """
+        INSERT INTO realtime_prices (symbol, timestamp, price, previous_close, abs_change, percent_change)
+        VALUES (:symbol, :timestamp, :price, :previous_close, :abs_change, :percent_change)
+        ON CONFLICT (symbol, timestamp) DO UPDATE SET
+        price = EXCLUDED.price,
+        previous_close = EXCLUDED.previous_close,
+        abs_change = EXCLUDED.abs_change,
+        percent_change = EXCLUDED.percent_change
+        """
+
+        # Execute bulk operation
+        execute_sql(query, records)
+        logger.info(f"✅ Saved {len(records)} real-time price records to database")
 
     except Exception as e:
         logger.error(f"Error saving real-time prices to database: {e}")
+        raise  # Re-raise the exception to ensure failures are visible
 
 
 def fetch_historical_prices(symbols=None, period="1y", interval="1d"):
@@ -182,7 +179,7 @@ def fetch_historical_prices(symbols=None, period="1y", interval="1d"):
     """
     if symbols is None:
         # Get symbols from the database positions table
-        from src.database import execute_sql
+        from src.db import execute_sql
 
         try:
             result = execute_sql(
@@ -199,7 +196,8 @@ def fetch_historical_prices(symbols=None, period="1y", interval="1d"):
     for symbol in symbols:
         if isinstance(symbol, str) and symbol.strip():
             clean_symbol = symbol.strip().upper()
-            if re.match(r"^[A-Z]{1,5}$", clean_symbol):  # Basic ticker validation
+            # Enhanced ticker validation - supports symbols like BRK.B, BF.B, etc.
+            if re.match(r"^[A-Z]{1,6}(?:\.[A-Z]{1,2})?$", clean_symbol):
                 valid_symbols.append(clean_symbol)
 
     if not valid_symbols:
@@ -238,7 +236,7 @@ def fetch_historical_prices(symbols=None, period="1y", interval="1d"):
 
 
 def save_historical_prices_to_db(symbol, history_df):
-    """Save historical prices to the SQLite database using append-only writes
+    """Save historical prices to the PostgreSQL database using bulk upserts
 
     Args:
         symbol: Ticker symbol
@@ -249,61 +247,82 @@ def save_historical_prices_to_db(symbol, history_df):
         return
 
     try:
-        from src.database import execute_sql, use_postgres
+        from src.db import execute_sql, df_to_records
+        import pandas as pd
 
-        for _, row in history_df.iterrows():
-            date_str = (
-                row["Date"].strftime("%Y-%m-%d")
-                if hasattr(row["Date"], "strftime")
-                else str(row["Date"])
-            )
+        # Prepare DataFrame with proper date formatting
+        history_df_processed = history_df.copy()
+        history_df_processed["Date"] = pd.to_datetime(
+            history_df_processed["Date"]
+        ).dt.strftime("%Y-%m-%d")
+        history_df_processed["symbol"] = symbol  # Add symbol column
 
-            if use_postgres():
-                query = """
-                INSERT INTO daily_prices (symbol, date, open, high, low, close, volume, dividends, stock_splits)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (symbol, date) DO UPDATE SET
-                open = EXCLUDED.open,
-                high = EXCLUDED.high,
-                low = EXCLUDED.low,
-                close = EXCLUDED.close,
-                volume = EXCLUDED.volume,
-                dividends = EXCLUDED.dividends,
-                stock_splits = EXCLUDED.stock_splits
-                """
-                params = (
-                    symbol,
-                    date_str,
-                    row.get("Open"),
-                    row.get("High"),
-                    row.get("Low"),
-                    row.get("Close"),
-                    row.get("Volume", 0),
-                    row.get("Dividends", 0),
-                    row.get("Stock Splits", 0),
-                )
-            else:
-                # SQLite version
-                query = """
-                INSERT OR REPLACE INTO daily_prices 
-                (symbol, date, open, high, low, close, volume, dividends, stock_splits)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """
-                params = (
-                    symbol,
-                    date_str,
-                    row.get("Open"),
-                    row.get("High"),
-                    row.get("Low"),
-                    row.get("Close"),
-                    row.get("Volume", 0),
-                    row.get("Dividends", 0),
-                    row.get("Stock Splits", 0),
-                )
+        # Convert DataFrame to list of dicts for bulk operation
+        records = df_to_records(history_df_processed)
 
-            execute_sql(query, params)
+        # Ensure proper data types and field mapping for PostgreSQL columns
+        processed_records = []
+        for record in records:
+            processed_record = {
+                "symbol": str(symbol),
+                "date": record["Date"],  # Already formatted as YYYY-MM-DD
+                "open": (
+                    float(record.get("Open", 0))
+                    if record.get("Open") is not None
+                    else None
+                ),
+                "high": (
+                    float(record.get("High", 0))
+                    if record.get("High") is not None
+                    else None
+                ),
+                "low": (
+                    float(record.get("Low", 0))
+                    if record.get("Low") is not None
+                    else None
+                ),
+                "close": (
+                    float(record.get("Close", 0))
+                    if record.get("Close") is not None
+                    else None
+                ),
+                "volume": (
+                    int(record.get("Volume", 0))
+                    if record.get("Volume") is not None
+                    else None
+                ),
+                "dividends": (
+                    float(record.get("Dividends", 0))
+                    if record.get("Dividends") is not None
+                    else None
+                ),
+                "stock_splits": (
+                    float(record.get("Stock Splits", 0))
+                    if record.get("Stock Splits") is not None
+                    else None
+                ),
+            }
+            processed_records.append(processed_record)
 
-        logger.info(f"✅ Saved {len(history_df)} historical price records for {symbol}")
+        # PostgreSQL bulk upsert with ON CONFLICT using named placeholders
+        query = """
+        INSERT INTO daily_prices (symbol, date, open, high, low, close, volume, dividends, stock_splits)
+        VALUES (:symbol, :date, :open, :high, :low, :close, :volume, :dividends, :stock_splits)
+        ON CONFLICT (symbol, date) DO UPDATE SET
+        open = EXCLUDED.open,
+        high = EXCLUDED.high,
+        low = EXCLUDED.low,
+        close = EXCLUDED.close,
+        volume = EXCLUDED.volume,
+        dividends = EXCLUDED.dividends,
+        stock_splits = EXCLUDED.stock_splits
+        """
+
+        # Execute bulk operation
+        execute_sql(query, processed_records)
+        logger.info(
+            f"✅ Saved {len(processed_records)} historical price records for {symbol}"
+        )
 
     except Exception as e:
         logger.error(f"Error saving historical prices for {symbol}: {e}")
@@ -320,7 +339,7 @@ def fetch_stock_metrics(symbols=None):
     """
     if symbols is None:
         # Get symbols from the database positions table
-        from src.database import execute_sql
+        from src.db import execute_sql
 
         try:
             result = execute_sql(
@@ -337,7 +356,8 @@ def fetch_stock_metrics(symbols=None):
     for symbol in symbols:
         if isinstance(symbol, str) and symbol.strip():
             clean_symbol = symbol.strip().upper()
-            if re.match(r"^[A-Z]{1,5}$", clean_symbol):  # Basic ticker validation
+            # Enhanced ticker validation - supports symbols like BRK.B, BF.B, etc.
+            if re.match(r"^[A-Z]{1,6}(?:\.[A-Z]{1,2})?$", clean_symbol):
                 valid_symbols.append(clean_symbol)
 
     if not valid_symbols:
@@ -355,7 +375,7 @@ def fetch_stock_metrics(symbols=None):
             metrics_data.append(
                 {
                     "symbol": symbol,
-                    "date": datetime.now().date().isoformat(),
+                    "date": datetime.now(timezone.utc).date().isoformat(),
                     "pe_ratio": info.get("trailingPE"),
                     "market_cap": info.get("marketCap"),
                     "dividend_yield": info.get("dividendYield"),
@@ -387,49 +407,62 @@ def save_stock_metrics_to_db(metrics_df):
         return
 
     try:
-        from src.database import execute_sql, use_postgres
+        from src.db import execute_sql, df_to_records
 
-        for _, row in metrics_df.iterrows():
-            if use_postgres():
-                query = """
-                INSERT INTO stock_metrics (symbol, date, pe_ratio, market_cap, dividend_yield, fifty_day_avg, two_hundred_day_avg)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (symbol, date) DO UPDATE SET
-                pe_ratio = EXCLUDED.pe_ratio,
-                market_cap = EXCLUDED.market_cap,
-                dividend_yield = EXCLUDED.dividend_yield,
-                fifty_day_avg = EXCLUDED.fifty_day_avg,
-                two_hundred_day_avg = EXCLUDED.two_hundred_day_avg
-                """
-                params = (
-                    row["symbol"],
-                    row["date"],
-                    row["pe_ratio"],
-                    row["market_cap"],
-                    row["dividend_yield"],
-                    row["fifty_day_avg"],
-                    row["two_hundred_day_avg"],
-                )
-            else:
-                # SQLite version
-                query = """
-                INSERT OR REPLACE INTO stock_metrics 
-                (symbol, date, pe_ratio, market_cap, dividend_yield, fifty_day_avg, two_hundred_day_avg)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """
-                params = (
-                    row["symbol"],
-                    row["date"],
-                    row["pe_ratio"],
-                    row["market_cap"],
-                    row["dividend_yield"],
-                    row["fifty_day_avg"],
-                    row["two_hundred_day_avg"],
-                )
+        # Convert DataFrame to list of dicts for bulk operation
+        records = df_to_records(metrics_df)
 
-            execute_sql(query, params)
+        # Ensure proper data types for PostgreSQL columns
+        processed_records = []
+        for record in records:
+            processed_record = {
+                "symbol": str(record["symbol"]),
+                "date": str(record["date"]),
+                "pe_ratio": (
+                    float(record["pe_ratio"])
+                    if record["pe_ratio"] is not None
+                    else None
+                ),
+                "market_cap": (
+                    float(record["market_cap"])
+                    if record["market_cap"] is not None
+                    else None
+                ),
+                "dividend_yield": (
+                    float(record["dividend_yield"])
+                    if record["dividend_yield"] is not None
+                    else None
+                ),
+                "fifty_day_avg": (
+                    float(record["fifty_day_avg"])
+                    if record["fifty_day_avg"] is not None
+                    else None
+                ),
+                "two_hundred_day_avg": (
+                    float(record["two_hundred_day_avg"])
+                    if record["two_hundred_day_avg"] is not None
+                    else None
+                ),
+            }
+            processed_records.append(processed_record)
 
-        logger.info(f"✅ Saved {len(metrics_df)} stock metrics records to database")
+        # PostgreSQL bulk upsert with ON CONFLICT using named placeholders
+        query = """
+        INSERT INTO stock_metrics (symbol, date, pe_ratio, market_cap, dividend_yield, fifty_day_avg, two_hundred_day_avg)
+        VALUES (:symbol, :date, :pe_ratio, :market_cap, :dividend_yield, :fifty_day_avg, :two_hundred_day_avg)
+        ON CONFLICT (symbol, date) DO UPDATE SET
+        pe_ratio = EXCLUDED.pe_ratio,
+        market_cap = EXCLUDED.market_cap,
+        dividend_yield = EXCLUDED.dividend_yield,
+        fifty_day_avg = EXCLUDED.fifty_day_avg,
+        two_hundred_day_avg = EXCLUDED.two_hundred_day_avg
+        """
+
+        # Execute bulk operation
+        execute_sql(query, processed_records)
+        logger.info(
+            f"✅ Saved {len(processed_records)} stock metrics records to database"
+        )
 
     except Exception as e:
         logger.error(f"Error saving stock metrics to database: {e}")
@@ -437,14 +470,16 @@ def save_stock_metrics_to_db(metrics_df):
 
 def update_all_data():
     """Update all data: real-time prices, historical prices, and metrics for active positions"""
-    # Initialize database if it doesn't exist
-    from src.database import initialize_database
+    # Initialize database if it doesn't exist (smart check to avoid conflicts)
+    from src.db import initialize_database_smart
 
-    initialize_database()
+    if not initialize_database_smart():
+        logger.error("❌ Database initialization failed")
+        return False
 
     # Fetch active position symbols from the database
     try:
-        from src.database import execute_sql
+        from src.db import execute_sql
 
         result = execute_sql(
             "SELECT DISTINCT symbol FROM positions WHERE quantity > 0",
@@ -472,7 +507,11 @@ def update_all_data():
         logger.info("🔄 Fetching stock metrics...")
         fetch_stock_metrics(symbols)
 
-    logger.info("✅ All data updated successfully")
+        logger.info("✅ All data updated successfully")
+        return True
+    else:
+        logger.warning("⚠️ No active positions found - skipping market data updates")
+        return True
 
 
 def append_discord_message_to_csv(message_text, tickers=None, output_path=None):
@@ -496,14 +535,14 @@ def append_discord_message_to_csv(message_text, tickers=None, output_path=None):
         # Use centralized ticker extraction from message_cleaner
         tickers = extract_ticker_symbols(message_text)
 
-    timestamp = datetime.now().isoformat()
+    timestamp = datetime.now(timezone.utc).isoformat()
 
     # Sanitize message text (replace newlines with spaces to avoid CSV corruption)
     sanitized_text = re.sub(r"[\r\n]+", " ", message_text)
 
     # Create the record
     record = {
-        "message_id": f"manual-{int(datetime.now().timestamp())}",
+        "message_id": f"manual-{int(datetime.now(timezone.utc).timestamp())}",
         "created_at": timestamp,
         "channel": "manual_entry",
         "author_name": "manual_user",
@@ -543,12 +582,14 @@ def append_discord_message_to_csv(message_text, tickers=None, output_path=None):
 
 # Example usage when running this file directly
 if __name__ == "__main__":
-    # Initialize the database
-    from src.database import initialize_database
+    # Initialize the database (smart initialization to avoid conflicts)
+    from src.db import initialize_database_smart
 
-    initialize_database()
-
-    # Update all market data for active positions
-    update_all_data()
-
-    logger.info("✅ Data collection completed successfully")
+    if initialize_database_smart():
+        # Update all market data for active positions
+        if update_all_data():
+            logger.info("✅ Data collection completed successfully")
+        else:
+            logger.error("❌ Data collection failed")
+    else:
+        logger.error("❌ Database initialization failed")

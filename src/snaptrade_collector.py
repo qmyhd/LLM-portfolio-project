@@ -7,7 +7,6 @@ dual database writes, and optional Parquet snapshots.
 
 import json
 import logging
-import sqlite3
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -304,7 +303,7 @@ class SnapTradeCollector:
                         "institution_name": account.get("institution_name"),
                         "last_successful_sync": last_successful_sync,
                         "total_equity": total_equity,
-                        "sync_timestamp": datetime.now(timezone.utc).isoformat(),
+                        "sync_timestamp": datetime.now(timezone.utc),
                     }
                 )
             except Exception as e:
@@ -358,7 +357,7 @@ class SnapTradeCollector:
             data = [data]
 
         balances = []
-        snapshot_date = datetime.now(timezone.utc).date().isoformat()
+        snapshot_date = datetime.now(timezone.utc).date()
 
         for balance in data:
             try:
@@ -373,7 +372,7 @@ class SnapTradeCollector:
                             "cash": balance.get("cash"),
                             "buying_power": balance.get("buying_power"),
                             "snapshot_date": snapshot_date,
-                            "sync_timestamp": datetime.now(timezone.utc).isoformat(),
+                            "sync_timestamp": datetime.now(timezone.utc),
                         }
                     )
             except Exception as e:
@@ -427,74 +426,10 @@ class SnapTradeCollector:
         positions = []
         for position in data:
             try:
-                symbol_data = position.get("symbol", {})
-
-                # Extract symbol with preference for nested path
-                symbol = None
-                symbol_description = None
-                asset_type = None
-                logo_url = None
-
-                if isinstance(symbol_data, dict):
-                    # Prefer position.symbol.symbol.symbol
-                    nested_symbol = symbol_data.get("symbol", {})
-                    if isinstance(nested_symbol, dict):
-                        symbol = nested_symbol.get("symbol")
-                        symbol_description = nested_symbol.get("description")
-                        logo_url = nested_symbol.get("logo_url")
-
-                        # Extract asset type
-                        type_info = nested_symbol.get("type", {})
-                        if isinstance(type_info, dict):
-                            asset_type = type_info.get("description") or type_info.get(
-                                "code"
-                            )
-
-                    # Fallback to raw_symbol
-                    if not symbol:
-                        symbol = symbol_data.get("raw_symbol")
-
-                # Use symbol extractor as final fallback
-                if not symbol:
-                    symbol = self.extract_symbol_from_data(symbol_data)
-
-                # Extract quantity with preference for units
-                quantity = position.get("units")
-                if quantity is None:
-                    quantity = position.get("fractional_units")
-                if quantity is None:
-                    quantity = 0
-
-                # Extract other fields
-                price = position.get("price", 0)
-                equity = float(quantity) * float(price) if quantity and price else 0
-                average_buy_price = position.get("average_purchase_price")
-                open_pnl = position.get("open_pnl")
-
-                # Extract currency
-                currency = None
-                currency_data = position.get("currency", {})
-                if isinstance(currency_data, dict):
-                    currency = currency_data.get("code")
-
-                positions.append(
-                    {
-                        "symbol": symbol or "Unknown",
-                        "symbol_description": symbol_description,
-                        "quantity": float(quantity) if quantity else 0,
-                        "price": float(price) if price else 0,
-                        "equity": equity,
-                        "average_buy_price": (
-                            float(average_buy_price) if average_buy_price else None
-                        ),
-                        "open_pnl": float(open_pnl) if open_pnl else None,
-                        "asset_type": asset_type,
-                        "currency": currency,
-                        "logo_url": logo_url,
-                        "account_id": account_id,
-                        "sync_timestamp": datetime.now(timezone.utc).isoformat(),
-                    }
-                )
+                # Use enhanced position extraction
+                enhanced_position = self.extract_position_data(position, account_id)
+                enhanced_position["sync_timestamp"] = datetime.now(timezone.utc)
+                positions.append(enhanced_position)
             except Exception as e:
                 logger.error(f"Error processing position: {e}")
                 continue
@@ -564,23 +499,23 @@ class SnapTradeCollector:
                 # Extract symbol (sometimes present as string)
                 symbol = order.get("symbol")
 
-                # Extract universal_symbol and extracted_symbol
+                # Extract universal_symbol and canonical symbol
                 universal_symbol = order.get("universal_symbol")
-                extracted_symbol = None
+                canonical_symbol = None
 
                 if isinstance(universal_symbol, dict):
                     # Try to extract symbol from universal_symbol.symbol.symbol
                     nested_symbol = universal_symbol.get("symbol", {})
                     if isinstance(nested_symbol, dict):
-                        extracted_symbol = nested_symbol.get("symbol")
+                        canonical_symbol = nested_symbol.get("symbol")
 
                     # Fallback to raw_symbol
-                    if not extracted_symbol:
-                        extracted_symbol = universal_symbol.get("raw_symbol")
+                    if not canonical_symbol:
+                        canonical_symbol = universal_symbol.get("raw_symbol")
 
                 # Use string symbol as fallback
-                if not extracted_symbol and isinstance(symbol, str):
-                    extracted_symbol = symbol
+                if not canonical_symbol and isinstance(symbol, str):
+                    canonical_symbol = symbol
 
                 # Extract quote_universal_symbol and option_symbol
                 quote_universal_symbol = order.get("quote_universal_symbol")
@@ -605,8 +540,11 @@ class SnapTradeCollector:
                 time_executed = order.get("time_executed")
                 expiry_date = order.get("expiry_date")
 
-                # Extract child order IDs
+                # Extract child order IDs as Python list
                 child_brokerage_order_ids = order.get("child_brokerage_order_ids", [])
+                # Ensure it's a list, not a string
+                if not isinstance(child_brokerage_order_ids, list):
+                    child_brokerage_order_ids = []
 
                 # Extract option-specific fields
                 option_ticker = None
@@ -624,19 +562,8 @@ class SnapTradeCollector:
                     {
                         "brokerage_order_id": brokerage_order_id,
                         "status": status,
-                        "symbol": symbol,
-                        "universal_symbol": (
-                            json.dumps(universal_symbol) if universal_symbol else None
-                        ),
-                        "extracted_symbol": extracted_symbol or "Unknown",
-                        "quote_universal_symbol": (
-                            json.dumps(quote_universal_symbol)
-                            if quote_universal_symbol
-                            else None
-                        ),
-                        "option_symbol": (
-                            json.dumps(option_symbol) if option_symbol else None
-                        ),
+                        "symbol": canonical_symbol
+                        or "Unknown",  # Use canonical normalized ticker
                         "action": action,
                         "total_quantity": (
                             float(total_quantity) if total_quantity else None
@@ -661,11 +588,7 @@ class SnapTradeCollector:
                         "time_updated": time_updated,
                         "time_executed": time_executed,
                         "expiry_date": expiry_date,
-                        "child_brokerage_order_ids": (
-                            json.dumps(child_brokerage_order_ids)
-                            if child_brokerage_order_ids
-                            else None
-                        ),
+                        "child_brokerage_order_ids": child_brokerage_order_ids,  # Pass as Python list
                         "option_ticker": option_ticker,
                         "option_expiry": option_expiry,
                         "option_strike": (
@@ -673,7 +596,7 @@ class SnapTradeCollector:
                         ),
                         "option_right": option_right,
                         "account_id": account_id,
-                        "sync_timestamp": datetime.now(timezone.utc).isoformat(),
+                        "sync_timestamp": datetime.now(timezone.utc),
                     }
                 )
             except Exception as e:
@@ -689,6 +612,7 @@ class SnapTradeCollector:
     def upsert_symbols_table(self, symbols_data: List[Dict]) -> bool:
         """
         Upsert symbols into the symbols table.
+        Only upserts symbols with valid (non-empty, not 'unknown') tickers.
 
         Args:
             symbols_data: List of symbol dictionaries
@@ -701,49 +625,49 @@ class SnapTradeCollector:
 
         try:
             # Use unified database layer for symbols
-            from src.database import execute_sql, use_postgres
+            from src.db import execute_sql
 
-            if use_postgres():
-                for symbol in symbols_data:
-                    execute_sql(
-                        """
-                        INSERT INTO symbols (id, ticker, description, asset_type, type_code, 
-                                           exchange_code, exchange_name, exchange_mic, figi_code,
-                                           raw_symbol, logo_url, base_currency_code, is_supported,
-                                           is_quotable, is_tradable, created_at, updated_at)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (id) DO UPDATE SET
-                            ticker = EXCLUDED.ticker,
-                            description = EXCLUDED.description,
-                            updated_at = EXCLUDED.updated_at
-                    """,
-                        (
-                            symbol.get("id"),
-                            symbol.get("ticker"),
-                            symbol.get("description"),
-                            symbol.get("asset_type"),
-                            symbol.get("type_code"),
-                            symbol.get("exchange_code"),
-                            symbol.get("exchange_name"),
-                            symbol.get("exchange_mic"),
-                            symbol.get("figi_code"),
-                            symbol.get("raw_symbol"),
-                            symbol.get("logo_url"),
-                            symbol.get("base_currency_code"),
-                            symbol.get("is_supported"),
-                            symbol.get("is_quotable"),
-                            symbol.get("is_tradable"),
-                            symbol.get("created_at"),
-                            symbol.get("updated_at"),
-                        ),
-                    )
-            else:
-                # SQLite version
-                conn = sqlite3.connect(PRICE_DB)
-                symbols_df = pd.DataFrame(symbols_data)
-                symbols_df.to_sql("symbols", conn, if_exists="append", index=False)
-                conn.commit()
-                conn.close()
+            for symbol in symbols_data:
+                # SnapTrade ingestion guard: only upsert when ticker is non-empty/known
+                ticker = symbol.get("ticker")
+                if not ticker or str(ticker).lower() in ("unknown", "none", ""):
+                    logger.debug(f"⏭️ Skipping symbol with invalid ticker: {ticker}")
+                    continue
+                execute_sql(
+                    """
+                    INSERT INTO symbols (id, ticker, description, asset_type, type_code, 
+                                       exchange_code, exchange_name, exchange_mic, figi_code,
+                                       raw_symbol, logo_url, base_currency_code, is_supported,
+                                       is_quotable, is_tradable, created_at, updated_at)
+                    VALUES (:id, :ticker, :description, :asset_type, :type_code, :exchange_code, 
+                           :exchange_name, :exchange_mic, :figi_code, :raw_symbol, :logo_url, 
+                           :base_currency_code, :is_supported, :is_quotable, :is_tradable, 
+                           :created_at, :updated_at)
+                    ON CONFLICT (ticker) DO UPDATE SET
+                        id = EXCLUDED.id,
+                        description = EXCLUDED.description,
+                        updated_at = EXCLUDED.updated_at
+                """,
+                    {
+                        "id": symbol.get("id"),
+                        "ticker": symbol.get("ticker"),
+                        "description": symbol.get("description"),
+                        "asset_type": symbol.get("asset_type"),
+                        "type_code": symbol.get("type_code"),
+                        "exchange_code": symbol.get("exchange_code"),
+                        "exchange_name": symbol.get("exchange_name"),
+                        "exchange_mic": symbol.get("exchange_mic"),
+                        "figi_code": symbol.get("figi_code"),
+                        "raw_symbol": symbol.get("raw_symbol"),
+                        "logo_url": symbol.get("logo_url"),
+                        "base_currency_code": symbol.get("base_currency_code"),
+                        "is_supported": symbol.get("is_supported"),
+                        "is_quotable": symbol.get("is_quotable"),
+                        "is_tradable": symbol.get("is_tradable"),
+                        "created_at": symbol.get("created_at"),
+                        "updated_at": symbol.get("updated_at"),
+                    },
+                )
 
             logger.info(f"✅ Upserted {len(symbols_data)} symbols to database")
             return True
@@ -773,81 +697,49 @@ class SnapTradeCollector:
             return True
 
         try:
-            # Try Supabase first
-            try:
-                from src.supabase_writers import DirectSupabaseWriter
+            # Unified database approach with bulk operations and PostgreSQL compatibility
+            from src.db import execute_sql, df_to_records
 
-                writer = DirectSupabaseWriter()
-
-                # Map table names to writer methods
-                method_map = {
-                    "accounts": "write_account_data",
-                    "account_balances": "write_balance_data",
-                    "positions": "write_position_data",
-                    "orders": "write_order_data",
-                }
-
-                if table_name in method_map:
-                    method = getattr(writer, method_map[table_name])
-                    success = method(df.to_dict("records"))
-                    if success:
-                        logger.info(
-                            f"✅ Wrote {len(df)} records to Supabase {table_name}"
-                        )
-                        return True
-
-                raise Exception("Supabase write failed")
-
-            except Exception as e:
-                logger.warning(
-                    f"Supabase {table_name} write failed: {e}, using fallback"
-                )
-
-                # Fallback to unified database layer
-                from src.database import execute_sql, use_postgres
-
-                if use_postgres():
-                    # PostgreSQL with upsert logic
-                    for _, row in df.iterrows():
-                        # Build column and value lists
-                        columns = list(row.index)
-                        values = list(row.values)
-                        placeholders = ", ".join(["%s"] * len(values))
-                        column_list = ", ".join(columns)
-
-                        if conflict_columns:
-                            # ON CONFLICT DO UPDATE
-                            conflict_cols = ", ".join(conflict_columns)
-                            update_set = ", ".join(
-                                [
-                                    f"{col} = EXCLUDED.{col}"
-                                    for col in columns
-                                    if col not in conflict_columns
-                                ]
-                            )
-                            sql = f"""
-                                INSERT INTO {table_name} ({column_list})
-                                VALUES ({placeholders})
-                                ON CONFLICT ({conflict_cols}) DO UPDATE SET {update_set}
-                            """
-                        else:
-                            # ON CONFLICT DO NOTHING
-                            sql = f"""
-                                INSERT INTO {table_name} ({column_list})
-                                VALUES ({placeholders})
-                                ON CONFLICT DO NOTHING
-                            """
-
-                        execute_sql(sql, values)
-                else:
-                    # SQLite
-                    conn = sqlite3.connect(PRICE_DB)
-                    df.to_sql(table_name, conn, if_exists="append", index=False)
-                    conn.commit()
-                    conn.close()
-
-                logger.info(f"✅ Wrote {len(df)} records to database {table_name}")
+            # Convert DataFrame to dict records for bulk operation
+            records = df_to_records(df)
+            if not records:
                 return True
+
+            # Get column list from first record
+            columns = [str(col) for col in records[0].keys()]
+            column_list = ", ".join(columns)
+            placeholders = ", ".join([f":{col}" for col in columns])
+
+            if conflict_columns:
+                # ON CONFLICT DO UPDATE with named placeholders
+                conflict_cols = ", ".join(conflict_columns)
+                update_set = ", ".join(
+                    [
+                        f"{col} = EXCLUDED.{col}"
+                        for col in columns
+                        if col not in conflict_columns
+                    ]
+                )
+                sql = f"""
+                    INSERT INTO {table_name} ({column_list})
+                    VALUES ({placeholders})
+                    ON CONFLICT ({conflict_cols}) DO UPDATE SET {update_set}
+                """
+            else:
+                # ON CONFLICT DO NOTHING with named placeholders
+                sql = f"""
+                    INSERT INTO {table_name} ({column_list})
+                    VALUES ({placeholders})
+                    ON CONFLICT DO NOTHING
+                """
+
+            # Execute bulk operation with list of dicts (SQLAlchemy 2.0 compatible)
+            execute_sql(sql, records)
+
+            logger.info(
+                f"✅ Wrote {len(df)} records to Supabase {table_name} via unified database layer"
+            )
+            return True
 
         except Exception as e:
             logger.error(f"Error writing to {table_name}: {e}")
@@ -939,12 +831,25 @@ class SnapTradeCollector:
             logger.info("🔄 Collecting positions...")
             positions_df = self.get_positions(account_id)
             if not positions_df.empty:
-                self.write_to_database(
-                    positions_df, "positions", conflict_columns=["account_id", "symbol"]
-                )
-                if write_parquet:
-                    self.write_parquet_snapshot(positions_df, "positions")
-                results["positions"] = len(positions_df)
+                # Validate positions have account_id before database write
+                missing_account = positions_df["account_id"].isna().sum()
+                if missing_account > 0:
+                    logger.warning(
+                        f"⚠️ {missing_account} positions missing account_id - skipping database write"
+                    )
+                    results["positions"] = 0
+                    results["errors"].append(
+                        f"Positions missing account_id: {missing_account}"
+                    )
+                else:
+                    self.write_to_database(
+                        positions_df,
+                        "positions",
+                        conflict_columns=["account_id", "symbol"],
+                    )
+                    if write_parquet:
+                        self.write_parquet_snapshot(positions_df, "positions")
+                    results["positions"] = len(positions_df)
 
                 # Extract symbols from positions
                 symbols_data = self._extract_symbols_from_positions(positions_df)
@@ -956,12 +861,23 @@ class SnapTradeCollector:
             logger.info("🔄 Collecting orders...")
             orders_df = self.get_orders(account_id)
             if not orders_df.empty:
-                self.write_to_database(
-                    orders_df, "orders", conflict_columns=["brokerage_order_id"]
-                )
-                if write_parquet:
-                    self.write_parquet_snapshot(orders_df, "orders")
-                results["orders"] = len(orders_df)
+                # Validate orders have account_id before database write
+                missing_account = orders_df["account_id"].isna().sum()
+                if missing_account > 0:
+                    logger.warning(
+                        f"⚠️ {missing_account} orders missing account_id - skipping database write"
+                    )
+                    results["orders"] = 0
+                    results["errors"].append(
+                        f"Orders missing account_id: {missing_account}"
+                    )
+                else:
+                    self.write_to_database(
+                        orders_df, "orders", conflict_columns=["brokerage_order_id"]
+                    )
+                    if write_parquet:
+                        self.write_parquet_snapshot(orders_df, "orders")
+                    results["orders"] = len(orders_df)
 
                 # Extract symbols from orders
                 symbols_data = self._extract_symbols_from_orders(orders_df)
@@ -982,21 +898,28 @@ class SnapTradeCollector:
         symbols = []
 
         for _, row in positions_df.iterrows():
-            if row["symbol"] and row["symbol"] != "Unknown":
-                symbol_data = {
-                    "id": f"pos_{row['symbol']}",
-                    "ticker": row["symbol"],
-                    "description": row.get("symbol_description"),
-                    "asset_type": row.get("asset_type"),
-                    "logo_url": row.get("logo_url"),
-                    "base_currency_code": row.get("currency"),
-                    "is_supported": True,
-                    "is_quotable": True,
-                    "is_tradable": True,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+            try:
+                symbol_val = str(row["symbol"]) if row["symbol"] is not None else None
+                if symbol_val and symbol_val.lower() not in ("unknown", "none", ""):
+                    symbol_data = {
+                        "id": f"pos_{row['symbol']}",
+                        "ticker": row[
+                            "symbol"
+                        ],  # Canonical ticker for conflict resolution
+                        "description": row.get("symbol_description"),
+                        "asset_type": row.get("asset_type"),
+                        "logo_url": row.get("logo_url"),
+                        "base_currency_code": row.get("currency"),
+                        "is_supported": True,
+                        "is_quotable": True,
+                        "is_tradable": True,
+                        "created_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc),
+                    }
                 symbols.append(symbol_data)
+            except Exception as e:
+                logger.warning(f"Error extracting symbol from position: {e}")
+                continue
 
         return symbols
 
@@ -1005,19 +928,238 @@ class SnapTradeCollector:
         symbols = []
 
         for _, row in orders_df.iterrows():
-            if row["extracted_symbol"] and row["extracted_symbol"] != "Unknown":
-                symbol_data = {
-                    "id": f"ord_{row['extracted_symbol']}",
-                    "ticker": row["extracted_symbol"],
-                    "is_supported": True,
-                    "is_quotable": True,
-                    "is_tradable": True,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                }
+            try:
+                # Use symbol field (canonical normalized ticker) instead of extracted_symbol
+                symbol_val = str(row["symbol"]) if row["symbol"] is not None else None
+                if symbol_val and symbol_val.lower() not in ("unknown", "none", ""):
+                    symbol_data = {
+                        "id": f"ord_{row['symbol']}",
+                        "ticker": row[
+                            "symbol"
+                        ],  # Canonical ticker for conflict resolution
+                        "is_supported": True,
+                        "is_quotable": True,
+                        "is_tradable": True,
+                        "created_at": datetime.now(timezone.utc),
+                        "updated_at": datetime.now(timezone.utc),
+                    }
                 symbols.append(symbol_data)
+            except Exception as e:
+                logger.warning(f"Error extracting symbol from order: {e}")
+                continue
 
         return symbols
+
+    # ==============================================================================
+    # DATABASE POSITION QUERIES (moved from market_data.py for centralization)
+    # ==============================================================================
+
+    def get_stored_positions(self) -> pd.DataFrame:
+        """Return all portfolio positions as a DataFrame from the latest sync in the database."""
+        from src.db import execute_sql
+
+        try:
+            # Get positions from the most recent sync timestamp
+            query = """
+            SELECT symbol, quantity, equity, price, average_buy_price, asset_type, currency, sync_timestamp, calculated_equity 
+            FROM positions 
+            WHERE sync_timestamp = (SELECT MAX(sync_timestamp) FROM positions)
+            ORDER BY equity DESC
+            """
+            result = execute_sql(query, fetch_results=True)
+            if result:
+                columns = [
+                    "symbol",
+                    "quantity",
+                    "equity",
+                    "price",
+                    "average_buy_price",
+                    "asset_type",
+                    "currency",
+                    "sync_timestamp",
+                    "calculated_equity",
+                ]
+                return pd.DataFrame(result, columns=columns)
+            return pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error getting stored positions: {e}")
+            return pd.DataFrame()
+
+    def get_stored_position(self, symbol: str) -> pd.DataFrame:
+        """Return the most recent stored position for the given symbol."""
+        from src.db import execute_sql
+
+        try:
+            # Get the most recent position for this symbol
+            query = """
+            SELECT symbol, quantity, equity, price, average_buy_price, asset_type, currency, sync_timestamp, calculated_equity 
+            FROM positions 
+            WHERE symbol = :symbol AND sync_timestamp = (SELECT MAX(sync_timestamp) FROM positions WHERE symbol = :symbol)
+            """
+            result = execute_sql(query, {"symbol": symbol}, fetch_results=True)
+            if result:
+                columns = [
+                    "symbol",
+                    "quantity",
+                    "equity",
+                    "price",
+                    "average_buy_price",
+                    "asset_type",
+                    "currency",
+                    "sync_timestamp",
+                    "calculated_equity",
+                ]
+                return pd.DataFrame(result, columns=columns)
+            return pd.DataFrame()
+        except Exception as e:
+            logger.error(f"Error getting stored position for {symbol}: {e}")
+            return pd.DataFrame()
+
+    def extract_symbol_from_order_data(self, order: Dict) -> str:
+        """
+        Extract clean symbol from SnapTrade order structure with enhanced fallback hierarchy.
+
+        Priority:
+        1. order.symbol (if string)
+        2. order.universal_symbol.symbol.symbol
+        3. order.universal_symbol.raw_symbol
+
+        Args:
+            order: Order data from SnapTrade API
+
+        Returns:
+            str: Extracted symbol or "UNKNOWN"
+        """
+        # 1. Try direct symbol field first (canonical normalized ticker)
+        symbol_field = order.get("symbol")
+        if isinstance(symbol_field, str) and symbol_field.strip():
+            return symbol_field.strip()
+
+        # 2. Try extracted_symbol for backward compatibility (if already processed)
+        if order.get("extracted_symbol"):
+            return str(order["extracted_symbol"]).strip()
+
+        # 3. Try universal_symbol nested structure
+        universal_symbol = order.get("universal_symbol", {})
+        if isinstance(universal_symbol, dict):
+            # Try symbol.symbol (nested structure)
+            symbol_obj = universal_symbol.get("symbol", {})
+            if isinstance(symbol_obj, dict):
+                nested_symbol = symbol_obj.get("symbol")
+                if nested_symbol and isinstance(nested_symbol, str):
+                    return nested_symbol.strip()
+
+            # 4. Fallback to raw_symbol
+            raw_symbol = universal_symbol.get("raw_symbol")
+            if raw_symbol and isinstance(raw_symbol, str):
+                return raw_symbol.strip()
+
+        # 5. Last resort: try nested symbol extraction from symbol field if it's a dict
+        if isinstance(symbol_field, dict):
+            nested_result = self.extract_symbol_from_data(symbol_field)
+            if nested_result:
+                return nested_result
+
+        return "UNKNOWN"
+
+    def extract_position_data(self, position: Dict, account_id: str) -> Dict:
+        """
+        Extract enhanced position data with nested symbol structure parsing.
+
+        Args:
+            position: Position data from SnapTrade API
+
+        Returns:
+            dict: Enhanced position data with extracted symbol info
+        """
+        # Extract symbol information from nested structure
+        symbol_data = position.get("symbol", {})
+
+        # Handle nested position.symbol.symbol.symbol structure
+        extracted_symbol = "UNKNOWN"
+        symbol_id = None
+        symbol_description = ""
+        asset_type = "Unknown"
+        exchange_code = ""
+        exchange_name = ""
+        mic_code = ""
+        figi_code = ""
+        logo_url = ""
+        is_quotable = True
+        is_tradable = True
+
+        if isinstance(symbol_data, dict):
+            # Navigate nested symbol structure: position.symbol.symbol
+            inner_symbol = symbol_data.get("symbol", {})
+            if isinstance(inner_symbol, dict):
+                # Extract from innermost symbol object
+                innermost_symbol = inner_symbol.get("symbol")
+                if innermost_symbol:
+                    extracted_symbol = innermost_symbol
+                    symbol_id = inner_symbol.get("id")
+                    symbol_description = inner_symbol.get("description", "")
+                    logo_url = inner_symbol.get("logo_url", "")
+                    figi_code = inner_symbol.get("figi_code", "")
+
+                    # Extract asset type
+                    type_info = inner_symbol.get("type", {})
+                    if isinstance(type_info, dict):
+                        asset_type = type_info.get("description") or type_info.get(
+                            "code", "Unknown"
+                        )
+
+                    # Extract exchange information
+                    exchange_info = inner_symbol.get("exchange", {})
+                    if isinstance(exchange_info, dict):
+                        exchange_code = exchange_info.get("code", "")
+                        exchange_name = exchange_info.get("name", "")
+                        mic_code = exchange_info.get("mic_code", "")
+                else:
+                    # Fallback to raw_symbol if nested structure incomplete
+                    extracted_symbol = symbol_data.get("raw_symbol", "UNKNOWN")
+            else:
+                # Simple string symbol
+                extracted_symbol = str(symbol_data) if symbol_data else "UNKNOWN"
+
+        # Calculate quantities - prefer units, fallback to fractional_units
+        quantity = position.get("units")
+        if quantity is None:
+            quantity = position.get("fractional_units", 0)
+
+        # Calculate equity if not provided
+        price = position.get("price", 0)
+        equity = position.get("equity")
+        if equity is None and quantity and price:
+            equity = float(quantity) * float(price)
+
+        # Extract currency info
+        currency_info = position.get("currency", {})
+        currency_code = "USD"
+        if isinstance(currency_info, dict):
+            currency_code = currency_info.get("code", "USD")
+        elif isinstance(currency_info, str):
+            currency_code = currency_info
+
+        return {
+            "symbol": extracted_symbol,
+            "symbol_id": symbol_id,
+            "symbol_description": symbol_description,
+            "quantity": quantity,
+            "price": price,
+            "equity": equity,
+            "average_buy_price": position.get("average_purchase_price"),
+            "open_pnl": position.get("open_pnl"),
+            "asset_type": asset_type,
+            "currency": currency_code,
+            "logo_url": logo_url,
+            "exchange_code": exchange_code,
+            "exchange_name": exchange_name,
+            "mic_code": mic_code,
+            "figi_code": figi_code,
+            "is_quotable": is_quotable,
+            "is_tradable": is_tradable,
+            "account_id": account_id,  # Use the provided account_id parameter
+        }
 
 
 if __name__ == "__main__":

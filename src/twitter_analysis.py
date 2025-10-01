@@ -2,7 +2,7 @@ import csv
 import json
 import logging
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
@@ -83,7 +83,7 @@ def fetch_tweet_data(tweet_id: str, twitter_client=None):
             "like_count": metrics.get("like_count", 0),
             "reply_count": metrics.get("reply_count", 0),
             "quote_count": metrics.get("quote_count", 0),
-            "retrieved_at": datetime.now().isoformat(),
+            "retrieved_at": datetime.now(timezone.utc).isoformat(),
         }
         return data
     except Exception as e:
@@ -220,49 +220,140 @@ def extract_stock_symbols_from_tweet(tweet_text):
 
 
 def log_tweet_to_database(tweet_data: dict, discord_message_id: int):
-    """Log tweet data to the SQLite database."""
+    """Log tweet data to PostgreSQL database using named placeholders."""
     try:
-        from datetime import datetime
+        from datetime import datetime, timezone
+        from src.db import execute_sql
 
-        from src.database import execute_sql
-
-        # Extract stock symbols from tweet content
-        stock_tags = extract_stock_symbols_from_tweet(tweet_data.get("text", ""))
+        # Extract stock symbols from tweet content (handles both 'text' and 'tweet_content' keys)
+        tweet_text = tweet_data.get("tweet_content") or tweet_data.get("text", "")
+        stock_tags = extract_stock_symbols_from_tweet(tweet_text)
         stock_tags_str = ", ".join(stock_tags) if stock_tags else None
 
-        # Insert or update tweet data
+        # Handle timestamp fields - ensure valid timezone-aware datetime objects
+        now = datetime.now(timezone.utc)  # Use datetime object, not isoformat string
+
+        # Get tweet_created_date with fallbacks and validation
+        tweet_created = tweet_data.get("tweet_created_date") or tweet_data.get(
+            "created_at"
+        )
+        if not tweet_created or tweet_created == "":
+            tweet_created = now  # Default to current time if missing
+        elif isinstance(tweet_created, str):
+            # Convert string timestamps to datetime objects
+            try:
+                from datetime import datetime as dt
+
+                if "T" in tweet_created:
+                    tweet_created = dt.fromisoformat(
+                        tweet_created.replace("Z", "+00:00")
+                    )
+                    if tweet_created.tzinfo is None:
+                        tweet_created = tweet_created.replace(tzinfo=timezone.utc)
+                else:
+                    tweet_created = now
+            except (ValueError, AttributeError):
+                tweet_created = now
+
+        # Get retrieved_at with validation
+        retrieved_at = tweet_data.get("retrieved_at")
+        if not retrieved_at or retrieved_at == "":
+            retrieved_at = now
+        elif isinstance(retrieved_at, str):
+            # Convert string timestamps to datetime objects
+            try:
+                from datetime import datetime as dt
+
+                if "T" in retrieved_at:
+                    retrieved_at = dt.fromisoformat(retrieved_at.replace("Z", "+00:00"))
+                    if retrieved_at.tzinfo is None:
+                        retrieved_at = retrieved_at.replace(tzinfo=timezone.utc)
+                else:
+                    retrieved_at = now
+            except (ValueError, AttributeError):
+                retrieved_at = (
+                    now  # PostgreSQL upsert with named placeholders and dict parameters
+                )
+        # Map to actual database schema with required NOT NULL fields
+        tweet_record = {
+            "tweet_id": str(tweet_data.get("tweet_id", "")),
+            "message_id": str(discord_message_id),  # Required NOT NULL field
+            "content": tweet_text[
+                :500
+            ],  # Required NOT NULL field (truncate if too long)
+            "author": tweet_data.get(
+                "author_username", "unknown"
+            ),  # Required NOT NULL field
+            "channel": "twitter",  # Required NOT NULL field
+            "discord_message_id": str(discord_message_id),  # Optional field
+            "discord_sent_date": (
+                tweet_data.get("discord_sent_date", now)
+                if not isinstance(tweet_data.get("discord_sent_date"), str)
+                else now
+            ),
+            "discord_date": now,  # Add missing discord_date field (timestamptz)
+            "tweet_date": tweet_created,  # Add missing tweet_date field (timestamptz)
+            "tweet_created_date": tweet_created,
+            "tweet_content": tweet_text,
+            "author_username": tweet_data.get("author_username", ""),
+            "author_name": tweet_data.get("author_name", ""),
+            "retweet_count": int(
+                tweet_data.get("retweet_count", 0)
+            ),  # Ensure integer type
+            "like_count": int(tweet_data.get("like_count", 0)),  # Ensure integer type
+            "reply_count": int(tweet_data.get("reply_count", 0)),  # Ensure integer type
+            "quote_count": int(tweet_data.get("quote_count", 0)),  # Ensure integer type
+            "stock_tags": stock_tags_str,
+            "source_url": tweet_data.get("source_url", ""),
+            "retrieved_at": (
+                str(retrieved_at.isoformat())
+                if hasattr(retrieved_at, "isoformat")
+                else str(retrieved_at)
+            ),  # Convert to text as per schema
+        }
+
         execute_sql(
             """
-            INSERT OR REPLACE INTO twitter_data 
-            (tweet_id, discord_message_id, discord_sent_date, tweet_created_date, 
-             tweet_content, author_username, author_name, retweet_count, like_count, 
-             reply_count, quote_count, stock_tags, source_url, retrieved_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-            (
-                str(tweet_data.get("tweet_id", "")),
-                str(discord_message_id),
-                datetime.now().isoformat(),  # When it was shared in Discord
-                tweet_data.get("created_at", ""),  # Original tweet date
-                tweet_data.get("text", ""),
-                tweet_data.get("author_username", ""),
-                tweet_data.get("author_name", ""),
-                tweet_data.get("retweet_count", 0),
-                tweet_data.get("like_count", 0),
-                tweet_data.get("reply_count", 0),
-                tweet_data.get("quote_count", 0),
-                stock_tags_str,
-                tweet_data.get("source_url", ""),
-                tweet_data.get("retrieved_at", datetime.now().isoformat()),
-            ),
+            INSERT INTO twitter_data 
+            (tweet_id, message_id, content, author, channel, discord_message_id,
+             discord_sent_date, discord_date, tweet_date, tweet_created_date, tweet_content, author_username, 
+             author_name, retweet_count, like_count, reply_count, quote_count, 
+             stock_tags, source_url, retrieved_at)
+            VALUES (:tweet_id, :message_id, :content, :author, :channel, :discord_message_id,
+                   :discord_sent_date, :discord_date, :tweet_date, :tweet_created_date, :tweet_content, :author_username, 
+                   :author_name, :retweet_count, :like_count, :reply_count, :quote_count, 
+                   :stock_tags, :source_url, :retrieved_at)
+            ON CONFLICT (tweet_id) DO UPDATE SET
+                message_id = EXCLUDED.message_id,
+                content = EXCLUDED.content,
+                author = EXCLUDED.author,
+                channel = EXCLUDED.channel,
+                discord_message_id = EXCLUDED.discord_message_id,
+                discord_sent_date = EXCLUDED.discord_sent_date,
+                discord_date = EXCLUDED.discord_date,
+                tweet_date = EXCLUDED.tweet_date,
+                tweet_created_date = EXCLUDED.tweet_created_date,
+                tweet_content = EXCLUDED.tweet_content,
+                author_username = EXCLUDED.author_username,
+                author_name = EXCLUDED.author_name,
+                retweet_count = EXCLUDED.retweet_count,
+                like_count = EXCLUDED.like_count,
+                reply_count = EXCLUDED.reply_count,
+                quote_count = EXCLUDED.quote_count,
+                stock_tags = EXCLUDED.stock_tags,
+                source_url = EXCLUDED.source_url,
+                retrieved_at = EXCLUDED.retrieved_at
+            """,
+            tweet_record,
         )
 
         logger.info(
-            f"Logged tweet {tweet_data.get('tweet_id')} to database with {len(stock_tags)} stock tags"
+            f"✅ Logged tweet {tweet_data.get('tweet_id')} to database with {len(stock_tags)} stock tags"
         )
 
     except Exception as e:
-        logger.error(f"Error logging tweet to database: {e}")
+        logger.error(f"❌ Error logging tweet to database: {e}")
+        raise  # Re-raise for proper error surfacing
 
 
 def get_tweets_by_stock_symbol(symbol, days_back=30):
@@ -270,19 +361,21 @@ def get_tweets_by_stock_symbol(symbol, days_back=30):
     try:
         from datetime import datetime, timedelta
 
-        from src.database import execute_sql
+        from src.db import execute_sql
 
-        cutoff_date = (datetime.now() - timedelta(days=days_back)).isoformat()
+        cutoff_date = (
+            datetime.now(timezone.utc) - timedelta(days=days_back)
+        ).isoformat()
 
         results = execute_sql(
             """
             SELECT tweet_id, discord_sent_date, tweet_created_date, tweet_content, 
                    author_username, like_count, retweet_count, source_url
             FROM twitter_data 
-            WHERE stock_tags LIKE ? AND discord_sent_date > ?
+            WHERE stock_tags LIKE :symbol_pattern AND discord_sent_date > :cutoff_date
             ORDER BY discord_sent_date DESC
         """,
-            (f"%{symbol}%", cutoff_date),
+            {"symbol_pattern": f"%{symbol}%", "cutoff_date": cutoff_date},
         )
 
         return [
@@ -494,16 +587,13 @@ def write_x_posts_parquet(
     return root_path
 
 
-def upsert_x_posts_db(
-    df: pd.DataFrame, db_url: Optional[str] = None, use_postgres: bool = True
-) -> bool:
+def upsert_x_posts_db(df: pd.DataFrame, db_url: Optional[str] = None) -> bool:
     """
     Upsert X/Twitter posts to database with conflict resolution.
 
     Args:
         df: DataFrame with X/Twitter posts
         db_url: Database URL (optional, will use default if not provided)
-        use_postgres: Whether to use PostgreSQL (True) or SQLite (False)
 
     Returns:
         True if successful, False otherwise
@@ -513,115 +603,43 @@ def upsert_x_posts_db(
         return True
 
     try:
-        from src.database import (
-            use_postgres as check_postgres,
-            get_connection,
-            execute_sql,
-        )
-
-        # Determine which database to use
-        should_use_postgres = use_postgres and check_postgres()
+        from src.db import execute_sql
 
         # Prepare DataFrame for database insertion
         db_df = df.copy()
 
-        # Convert tickers list to appropriate format for database
-        if should_use_postgres:
-            # PostgreSQL: keep as list for TEXT[] column
-            db_df["tickers"] = db_df["tickers"].apply(
-                lambda x: x if isinstance(x, list) else []
+        # PostgreSQL: keep tickers as list for TEXT[] column
+        db_df["tickers"] = db_df["tickers"].apply(
+            lambda x: x if isinstance(x, list) else []
+        )
+
+        # Convert timestamps to appropriate format for PostgreSQL
+        # PostgreSQL: keep as timezone-aware timestamps (pandas handles this correctly)
+
+        # PostgreSQL upsert with ON CONFLICT using execute_sql
+        for _, row in db_df.iterrows():
+            execute_sql(
+                """
+                INSERT INTO twitter_data.x_posts_log 
+                (tweet_id, tweet_time, discord_message_time, tweet_text, 
+                 tickers, author_id, conversation_id)
+                VALUES (:tweet_id, :tweet_time, :discord_message_time, :tweet_text, 
+                       :tickers, :author_id, :conversation_id)
+                ON CONFLICT (tweet_id) DO NOTHING
+            """,
+                {
+                    "tweet_id": row["tweet_id"],
+                    "tweet_time": row["tweet_time"],
+                    "discord_message_time": row["discord_message_time"],
+                    "tweet_text": row["tweet_text"],
+                    "tickers": row["tickers"],
+                    "author_id": row["author_id"],
+                    "conversation_id": row["conversation_id"],
+                },
             )
-        else:
-            # SQLite: convert to JSON string
-            db_df["tickers"] = db_df["tickers"].apply(
-                lambda x: json.dumps(x) if isinstance(x, list) else "[]"
-            )
 
-        # Convert timestamps to appropriate format
-        if should_use_postgres:
-            # PostgreSQL: keep as timezone-aware timestamps
-            pass  # pandas handles this correctly
-        else:
-            # SQLite: convert to ISO 8601 strings
-            db_df["tweet_time"] = db_df["tweet_time"].dt.strftime(
-                "%Y-%m-%dT%H:%M:%S.%fZ"
-            )
-            db_df["discord_message_time"] = db_df["discord_message_time"].apply(
-                lambda x: x.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if pd.notna(x) else None
-            )
-
-        # Database-specific upsert logic
-        if should_use_postgres:
-            # PostgreSQL with ON CONFLICT (using execute_sql)
-            try:
-                for _, row in db_df.iterrows():
-                    execute_sql(
-                        """
-                        INSERT INTO twitter_data.x_posts_log 
-                        (tweet_id, tweet_time, discord_message_time, tweet_text, 
-                         tickers, author_id, conversation_id)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
-                        ON CONFLICT (tweet_id) DO NOTHING
-                    """,
-                        (
-                            row["tweet_id"],
-                            row["tweet_time"],
-                            row["discord_message_time"],
-                            row["tweet_text"],
-                            row["tickers"],
-                            row["author_id"],
-                            row["conversation_id"],
-                        ),
-                    )
-
-                logger.info(f"Upserted {len(db_df)} tweets to PostgreSQL")
-                return True
-
-            except Exception as e:
-                logger.warning(f"PostgreSQL upsert failed: {e}, falling back to SQLite")
-                should_use_postgres = False
-
-        # SQLite fallback (always executed if PostgreSQL not used or failed)
-        if not should_use_postgres:
-            # SQLite fallback with manual conflict resolution
-            try:
-                # Delete existing records with same tweet_ids
-                tweet_ids = db_df["tweet_id"].tolist()
-                if tweet_ids:
-                    placeholders = ",".join("?" * len(tweet_ids))
-                    execute_sql(
-                        f"DELETE FROM twitter_x_posts_log WHERE tweet_id IN ({placeholders})",
-                        tweet_ids,
-                    )
-
-                # Insert new records
-                for _, row in db_df.iterrows():
-                    execute_sql(
-                        """
-                        INSERT INTO twitter_x_posts_log 
-                        (tweet_id, tweet_time, discord_message_time, tweet_text, 
-                         tickers, author_id, conversation_id)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                        (
-                            row["tweet_id"],
-                            row["tweet_time"],
-                            row["discord_message_time"],
-                            row["tweet_text"],
-                            row["tickers"],
-                            row["author_id"],
-                            row["conversation_id"],
-                        ),
-                    )
-
-                logger.info(f"Upserted {len(db_df)} tweets to SQLite")
-                return True
-            except Exception as e:
-                logger.error(f"SQLite upsert failed: {e}")
-                return False
-
-        # This should never be reached, but just in case
-        return False
+        logger.info(f"✅ Upserted {len(db_df)} tweets to PostgreSQL")
+        return True
 
     except Exception as e:
         logger.error(f"Error upserting tweets to database: {e}")

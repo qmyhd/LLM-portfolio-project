@@ -1,4 +1,11 @@
-# LLM Portfolio Journal - Common Development Tasks
+# LLM Portfolio Journal - Common post-migration:		## Validate post-migration state  
+	$(PYTHON) scripts\validate_post_migration.py
+
+gen-schemas:			## Generate src/expected_schemas.py from SSOT baseline
+	$(PYTHON) scripts\schema_parser.py --output expected
+	@echo "✅ Generated EXPECTED_SCHEMAS from 000_baseline.sql"
+
+clean:					## Clean up temporary files and cacheslopment Tasks
 # Works on PowerShell via 'make' command
 # Usage: make init-db, make migrate, make size
 
@@ -13,22 +20,26 @@ help:					## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-15s %s\n", $$1, $$2}'
 
 init-db:				## Create database tables + enable RLS policies
-	$(PYTHON) -m scripts.init_database --enable-rls
+	$(PYTHON) scripts\deploy_database.py
 
-migrate:				## Copy fresh rows from SQLite to PostgreSQL/Supabase  
-	$(PYTHON) -m scripts.migrate_sqlite
+# ARCHIVED COMMANDS - Scripts moved or no longer exist
+# bulk-import:			## Bulk import CSV data to PostgreSQL (recommended)
+#	$(PYTHON) scripts\bulk_csv_import_fixed.py
 
-bulk-import:			## Bulk import CSV data to PostgreSQL (recommended)
-	$(PYTHON) scripts\bulk_csv_import_fixed.py
+# verify-migration:		## Verify migration success and show data status
+#	$(PYTHON) scripts\verify_migration.py
 
-verify-migration:		## Verify migration success and show data status
-	$(PYTHON) scripts\verify_migration.py
+# check-data:				## Check what data is available for migration
+#	$(PYTHON) scripts\check_data_status.py
 
-check-data:				## Check what data is available for migration
-	$(PYTHON) scripts\check_data_status.py
+# size:					## Show PostgreSQL table counts and sizes
+#	$(PYTHON) check_postgres_tables.py
 
-size:					## Show PostgreSQL table counts and sizes
-	$(PYTHON) check_postgres_tables.py
+verify-db:				## Verify database deployment and status
+	$(PYTHON) scripts\verify_database.py
+
+post-migration:			## Validate post-migration state  
+	$(PYTHON) scripts\validate_post_migration.py
 
 clean:					## Clean up temporary files and caches
 	Remove-Item -Recurse -Force -ErrorAction SilentlyContinue __pycache__
