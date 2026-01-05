@@ -1,0 +1,127 @@
+name: Schema Validation
+
+on:
+  pull_request:
+    paths:
+      - 'schema/**/*.sql'
+      - 'src/expected_schemas.py'
+      - 'scripts/schema_parser.py'
+      - 'scripts/verify_database.py'
+  push:
+    branches:
+      - main
+    paths:
+      - 'schema/**/*.sql'
+      - 'src/expected_schemas.py'
+
+jobs:
+  validate-schema-sync:
+    name: Validate Schema Files Are In Sync
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Regenerate expected_schemas.py
+        run: |
+          python scripts/schema_parser.py --output expected
+        
+      - name: Check if expected_schemas.py is up to date
+        run: |
+          if ! git diff --exit-code src/expected_schemas.py; then
+            echo "❌ ERROR: expected_schemas.py is out of sync with SQL migrations"
+            echo ""
+            echo "The SQL schema files have changed but expected_schemas.py was not regenerated."
+            echo ""
+            echo "To fix this, run:"
+            echo "  python scripts/schema_parser.py --output expected"
+            echo ""
+            echo "Then commit the updated expected_schemas.py file."
+            exit 1
+          fi
+          echo "✅ expected_schemas.py is in sync with SQL migrations"
+  
+  validate-database-schema:
+    name: Validate Database Schema Compliance
+    runs-on: ubuntu-latest
+    needs: validate-schema-sync
+    
+    # Only run if we have database credentials
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run database schema verification
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+        run: |
+          # Run in warn-only mode for main branch (doesn't fail on warnings)
+          python scripts/verify_database.py --verbose
+      
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schema-verification-report
+          path: |
+            *.log
+            reports/
+          retention-days: 30
+
+  lint-sql:
+    name: Lint SQL Migration Files
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Check SQL file naming convention
+        run: |
+          # Check that migration files follow NNN_name.sql pattern
+          for file in schema/*.sql; do
+            if [[ ! "$file" =~ schema/[0-9]{3}_[a-z_]+\.sql$ ]] && [[ ! "$file" =~ schema/archive/ ]]; then
+              echo "❌ Invalid migration file name: $file"
+              echo "Migration files must follow pattern: NNN_descriptive_name.sql"
+              exit 1
+            fi
+          done
+          echo "✅ All migration files follow naming convention"
+      
+      - name: Check for TODO/FIXME in new migrations
+        run: |
+          # Check if any new migration files contain TODO or FIXME
+          changed_files=$(git diff --name-only ${{ github.event.before }} ${{ github.sha }} | grep "^schema/.*\.sql$" || true)
+          if [ -n "$changed_files" ]; then
+            if grep -E "TODO|FIXME" $changed_files; then
+              echo "⚠️  Warning: Migration files contain TODO or FIXME comments"
+              echo "Consider resolving these before merging"
+            fi
+          fi

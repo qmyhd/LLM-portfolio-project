@@ -1,0 +1,51 @@
+# Argilla Local Docker Compose
+# 
+# Option 1: Use official argilla-quickstart image
+# Option 2: Use your HF Spaces image (registry.hf.space/qaisy-qqq-argilla:latest)
+# 
+# Usage:
+#   cd docker/argilla
+#   docker compose up -d
+#
+# Then access Argilla at: http://localhost:6900
+# Default credentials:
+#   - Owner: owner / 12345678 (API key: owner.apikey)
+#   - Admin: admin / 12345678 (API key: admin.apikey)
+#   - Annotator: argilla / 12345678
+
+services:
+  argilla:
+    # Official quickstart image (simpler, recommended for local dev)
+    image: argilla/argilla-quickstart:latest
+    # Alternative: Your HF Spaces image (same config as your Space)
+    # image: registry.hf.space/qaisy-qqq-argilla:latest
+    # platform: linux/amd64  # Required for HF Spaces image on ARM Macs
+    container_name: argilla-local
+    ports:
+      - "6900:6900"
+    environment:
+      # Owner credentials
+      - OWNER_USERNAME=owner
+      - OWNER_PASSWORD=12345678
+      - OWNER_API_KEY=owner.apikey
+      # Admin credentials  
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=12345678
+      - ADMIN_API_KEY=admin.apikey
+      # Annotator credentials
+      - ANNOTATOR_USERNAME=argilla
+      - ANNOTATOR_PASSWORD=12345678
+      # Dataset loading
+      - LOAD_DATASETS=none  # Don't load sample datasets
+    volumes:
+      - argilla_data:/var/lib/argilla
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6900/api/v1/me"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  argilla_data:
+    driver: local

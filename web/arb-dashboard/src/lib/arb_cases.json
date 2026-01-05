@@ -1,0 +1,522 @@
+[
+  {
+    "_section": "=== NO ARB / NEGATIVE EDGE CASES ===",
+    "_description": "Standard vig scenarios where no arbitrage exists"
+  },
+  {
+    "name": "No Arb (-110/-110)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "has_arb": false,
+      "edge_pct": -4.76,
+      "guaranteed_profit": -4.55,
+      "stake1": 50.00,
+      "stake2": 50.00,
+      "can_no_loss": false
+    }
+  },
+  {
+    "name": "No Arb Heavy Favorite (-300/+200)",
+    "inputs": {
+      "odds1": -300,
+      "odds2": 200,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "has_arb": false,
+      "can_no_loss": false
+    }
+  },
+  
+  {
+    "_section": "=== TRUE ARB CASES ===",
+    "_description": "Positive edge scenarios with guaranteed profit"
+  },
+  {
+    "name": "Symmetric Arb (-110/+120)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "has_arb": true,
+      "edge_pct": 2.21,
+      "guaranteed_profit": 2.21,
+      "stake1": 53.54,
+      "stake2": 46.46,
+      "can_no_loss": true
+    }
+  },
+  {
+    "name": "True Arb (+105/+105)",
+    "inputs": {
+      "odds1": 105,
+      "odds2": 105,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "has_arb": true,
+      "edge_pct": 2.44,
+      "guaranteed_profit": 2.50,
+      "stake1": 50.00,
+      "stake2": 50.00,
+      "can_no_loss": true
+    }
+  },
+  {
+    "name": "Strong Arb (+150/+150)",
+    "inputs": {
+      "odds1": 150,
+      "odds2": 150,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "has_arb": true,
+      "edge_pct": 20.0,
+      "can_no_loss": true
+    }
+  },
+  
+  {
+    "_section": "=== EXTREME BIAS TESTS ===",
+    "_description": "Verify stake monotonicity with bias slider"
+  },
+  {
+    "name": "Extreme Bias 0% (All on Bet 2)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 0.0
+    },
+    "expected": {
+      "stake1": 0.0,
+      "stake2": 100.0,
+      "has_arb": true
+    }
+  },
+  {
+    "name": "Extreme Bias 100% (All on Bet 1)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 100.0
+    },
+    "expected": {
+      "stake1": 100.0,
+      "stake2": 0.0,
+      "has_arb": true
+    }
+  },
+  {
+    "name": "Bias 75% (Favor Bet 1)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 75.0
+    },
+    "expected": {
+      "has_arb": true,
+      "edge_pct": 2.16,
+      "stake1": 76.74,
+      "stake2": 23.26
+    }
+  },
+  
+  {
+    "_section": "=== BOOST SCENARIOS ===",
+    "_description": "Test profit boosts on one or both sides"
+  },
+  {
+    "name": "Single Boost on Bet 1 (25%)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "is_boosted1": true,
+      "boost_pct1": 25.0
+    },
+    "expected": {
+      "effective_american1": 114,
+      "has_arb": true,
+      "edge_pct": 0.81,
+      "guaranteed_profit": 0.81,
+      "can_no_loss": true
+    }
+  },
+  {
+    "name": "Single Boost on Bet 2 (50%)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "is_boosted2": true,
+      "boost_pct2": 50.0
+    },
+    "expected": {
+      "effective_american2": 136,
+      "has_arb": true,
+      "can_no_loss": true
+    }
+  },
+  {
+    "name": "Boost Both Sides (20% each)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "is_boosted1": true,
+      "boost_pct1": 20.0,
+      "is_boosted2": true,
+      "boost_pct2": 20.0
+    },
+    "expected": {
+      "has_arb": true,
+      "can_no_loss": true
+    }
+  },
+  {
+    "name": "Large Boost (50%) on Better Base Creates Arb",
+    "_comment": "-110 base decimal = 1.909. 50% boost: 1 + (1.909-1)*1.5 = 2.36 -> american ~+136. Other side -110 at 1.909 -> prob = 0.52. Total = 0.42 + 0.52 = 0.94 < 1 (arb!)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "is_boosted1": true,
+      "boost_pct1": 50.0
+    },
+    "expected": {
+      "has_arb": true,
+      "can_no_loss": true
+    }
+  },
+  {
+    "name": "Boost Not Enough for Arb",
+    "inputs": {
+      "odds1": -200,
+      "odds2": -200,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "is_boosted1": true,
+      "boost_pct1": 10.0
+    },
+    "expected": {
+      "has_arb": false,
+      "can_no_loss": false
+    }
+  },
+  
+  {
+    "_section": "=== STAKE CAP TESTS ===",
+    "_description": "Test max stake limits and their effects"
+  },
+  {
+    "name": "Cap Only on Boosted Side",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "is_boosted1": true,
+      "boost_pct1": 25.0,
+      "max_stake1": 20.0
+    },
+    "expected": {
+      "stake1": 20.0,
+      "stake2": 80.0,
+      "total_stake": 100.0
+    }
+  },
+  {
+    "name": "Caps on Both Sides (Smaller Than Total)",
+    "inputs": {
+      "odds1": 105,
+      "odds2": 105,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "max_stake1": 10.0,
+      "max_stake2": 15.0
+    },
+    "expected": {
+      "total_stake": 25.0,
+      "has_arb": true
+    }
+  },
+  {
+    "name": "Bias Hits Cap",
+    "inputs": {
+      "odds1": 105,
+      "odds2": 105,
+      "total_stake": 100.0,
+      "bias_to_bet1": 80.0,
+      "max_stake1": 60.0
+    },
+    "expected": {
+      "stake1": 60.0,
+      "stake2": 40.0,
+      "has_arb": true
+    }
+  },
+  
+  {
+    "_section": "=== NO-LOSS MODE TESTS ===",
+    "_description": "Test mode='noLoss' for risk-free exposure"
+  },
+  {
+    "name": "No-Loss Mode: Arb Exists (Bias 0)",
+    "inputs": {
+      "odds1": 105,
+      "odds2": 105,
+      "total_stake": 100.0,
+      "bias_to_bet1": 0.0,
+      "mode": "noLoss"
+    },
+    "expected": {
+      "has_arb": true,
+      "can_no_loss": true
+    },
+    "assertions": {
+      "profit1_gte": -0.01,
+      "profit2_gte": -0.01
+    }
+  },
+  {
+    "name": "No-Loss Mode: Arb Exists (Bias 50)",
+    "inputs": {
+      "odds1": 105,
+      "odds2": 105,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "mode": "noLoss"
+    },
+    "expected": {
+      "has_arb": true,
+      "can_no_loss": true
+    },
+    "assertions": {
+      "profit1_gte": -0.01,
+      "profit2_gte": -0.01
+    }
+  },
+  {
+    "name": "No-Loss Mode: Arb Exists (Bias 100)",
+    "inputs": {
+      "odds1": 105,
+      "odds2": 105,
+      "total_stake": 100.0,
+      "bias_to_bet1": 100.0,
+      "mode": "noLoss"
+    },
+    "expected": {
+      "has_arb": true,
+      "can_no_loss": true
+    },
+    "assertions": {
+      "profit1_gte": -0.01,
+      "profit2_gte": -0.01
+    }
+  },
+  {
+    "name": "No-Loss Mode: No Arb (-110/-110)",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "mode": "noLoss"
+    },
+    "expected": {
+      "has_arb": false,
+      "can_no_loss": false
+    }
+  },
+  {
+    "name": "No-Loss Mode: With Caps",
+    "inputs": {
+      "odds1": 150,
+      "odds2": 150,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "mode": "noLoss",
+      "max_stake1": 45.0
+    },
+    "expected": {
+      "has_arb": true,
+      "can_no_loss": true
+    },
+    "assertions": {
+      "profit1_gte": -0.01,
+      "profit2_gte": -0.01,
+      "stake1_lte": 45.0
+    }
+  },
+  
+  {
+    "_section": "=== INVALID INPUT TESTS ===",
+    "_description": "Test edge cases and invalid inputs"
+  },
+  {
+    "name": "Zero Total Stake",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": 0.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "result": null
+    }
+  },
+  {
+    "name": "Negative Total Stake",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": -50.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "result": null
+    }
+  },
+  {
+    "name": "Invalid Odds (Zero)",
+    "inputs": {
+      "odds1": 0,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "result": null
+    }
+  },
+  {
+    "name": "Invalid Odds (In Dead Zone)",
+    "inputs": {
+      "odds1": 50,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "result": null
+    }
+  },
+  {
+    "name": "Invalid Odds (Negative Dead Zone)",
+    "inputs": {
+      "odds1": -50,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "result": null
+    }
+  },
+  
+  {
+    "_section": "=== ROBINHOOD CONVERTER TESTS ===",
+    "_description": "Test convertRhOdds function"
+  },
+  {
+    "name": "RH Simple Case (0.40 + 0.02 fee)",
+    "inputs_rh": {
+      "price": 0.40,
+      "fee": 0.02
+    },
+    "expected_rh": {
+      "effective_price": 0.42,
+      "decimal": 2.38,
+      "implied_prob": 0.42,
+      "american": 138
+    }
+  },
+  {
+    "name": "RH Boundary (0.99 + 0.01 fee = 1.0)",
+    "inputs_rh": {
+      "price": 0.99,
+      "fee": 0.01
+    },
+    "expected_rh": {
+      "result": null
+    }
+  },
+  {
+    "name": "RH Invalid Price (0)",
+    "inputs_rh": {
+      "price": 0.0,
+      "fee": 0.02
+    },
+    "expected_rh": {
+      "result": null
+    }
+  },
+  {
+    "name": "RH Invalid Price (1)",
+    "inputs_rh": {
+      "price": 1.0,
+      "fee": 0.02
+    },
+    "expected_rh": {
+      "result": null
+    }
+  },
+  {
+    "name": "RH Invalid Price (Negative)",
+    "inputs_rh": {
+      "price": -0.40,
+      "fee": 0.02
+    },
+    "expected_rh": {
+      "result": null
+    }
+  },
+  {
+    "name": "RH Low Price (0.10 + 0.02)",
+    "inputs_rh": {
+      "price": 0.10,
+      "fee": 0.02
+    },
+    "expected_rh": {
+      "effective_price": 0.12,
+      "decimal": 8.33,
+      "american": 733
+    }
+  },
+  {
+    "name": "RH High Price (0.80 + 0.02)",
+    "inputs_rh": {
+      "price": 0.80,
+      "fee": 0.02
+    },
+    "expected_rh": {
+      "effective_price": 0.82,
+      "decimal": 1.22,
+      "american": -455
+    }
+  },
+  
+  {
+    "_section": "=== ODDS ROUND-TRIP TESTS ===",
+    "_description": "Validate american -> decimal -> american conversion",
+    "round_trip_odds": [-500, -250, -200, -110, -101, -100, 100, 105, 150, 250, 500]
+  }
+]

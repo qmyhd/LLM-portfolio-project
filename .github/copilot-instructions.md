@@ -20,8 +20,11 @@ python scripts/bootstrap.py           # Complete setup + migration
 
 # Development & debugging
 make test                              # Run pytest test suite
-python test_integration.py            # Core integration tests
-python scripts/verify_schemas.py      # Database schema validation
+python tests/test_integration.py      # Core integration tests
+python scripts/verify_database.py     # Database schema validation
+
+# PowerShell-friendly alternatives (Windows)
+# All commands work in PowerShell via 'make' or direct Python calls
 ```
 
 ## 🧰 Copilot Toolsets
@@ -42,8 +45,12 @@ Leverage the curated Copilot tool palettes to stay efficient:
 # ALWAYS use these patterns for database operations:
 from src.db import execute_sql, get_connection, get_sync_engine
 
-# Universal query execution with PostgreSQL
-result = execute_sql("SELECT * FROM positions", fetch_results=True)
+# Universal query execution with named placeholders (REQUIRED)
+result = execute_sql(
+    "SELECT * FROM positions WHERE symbol = :symbol", 
+    params={'symbol': 'AAPL'}, 
+    fetch_results=True
+)
 
 # Connection management with pooling/health checks
 with get_connection() as conn:
@@ -51,6 +58,9 @@ with get_connection() as conn:
 
 # Direct engine access for SQLAlchemy operations
 engine = get_sync_engine()
+
+# CRITICAL: Must use service role key in DATABASE_URL to bypass RLS policies
+# Format: postgresql://postgres.project:sb_secret_YOUR_KEY@...
 ```
 
 ### Retry & Error Handling (Required for all external calls)
@@ -94,10 +104,15 @@ journal = generate_journal_entry(prompt, max_tokens=160)  # ~120 words
 ```python
 # Commands located in src/bot/commands/
 # Registration pattern in each command file:
-def register(bot: commands.Bot):
-    @bot.command(name="command_name")
+def register(bot: commands.Bot, twitter_client=None):
+    @bot.command(name="command_name")  
     async def command_func(ctx, param: str = "default"):
-        # Command implementation
+        # Command implementation - can use twitter_client if needed
+        pass
+
+# Bot initialization with Twitter integration:
+from src.bot import create_bot
+bot = create_bot(command_prefix="!", twitter_client=twitter_client)
 ```
 
 ### Configuration (Pydantic + Environment)
@@ -105,6 +120,53 @@ def register(bot: commands.Bot):
 from src.config import settings, get_database_url
 config = settings()  # Auto-loads from .env with validation
 db_url = get_database_url()  # Returns PostgreSQL URL only (no SQLite fallback)
+
+# Channel-to-table mapping for Discord messages:
+from src.message_cleaner import CHANNEL_TYPE_TO_TABLE
+table_name = CHANNEL_TYPE_TO_TABLE["trading"]  # -> "discord_trading_clean"
+```
+
+### NLP Pipeline (OpenAI Structured Outputs)
+```python
+# Parse Discord messages into structured idea units
+from src.nlp.openai_parser import process_message
+from src.nlp.schemas import MessageParseResult, ParsedIdea
+
+# Process a single message (includes triage + parsing + escalation)
+result = process_message(text, message_id=123, channel_id=456)
+if result and result.ideas:
+    for idea in result.ideas:
+        # Each idea has: primary_symbol, labels, direction, confidence, levels
+        print(f"{idea.primary_symbol}: {idea.labels} ({idea.confidence})")
+
+# Model routing via environment variables:
+# OPENAI_MODEL_TRIAGE, OPENAI_MODEL_MAIN, OPENAI_MODEL_ESCALATION
+# OPENAI_MODEL_LONG (high symbol density), OPENAI_MODEL_SUMMARY
+```
+
+### Ticker Accuracy (preclean.py)
+```python
+# Deterministic ticker extraction before LLM + post-validation
+from src.nlp.preclean import (
+    extract_candidate_tickers,      # Pre-LLM deterministic extraction
+    validate_llm_tickers,           # Post-validate LLM output against candidates
+    is_reserved_signal_word,        # Check if word is trading terminology  
+    RESERVED_SIGNAL_WORDS,          # 80+ terms: tgt, pt, target, support, etc.
+    ALIAS_MAP,                      # Company names → tickers (~100 entries)
+)
+
+# Example: prevent "price target $50" from becoming "$TGT $50"
+candidates = extract_candidate_tickers("price target $50 for AAPL")
+# Returns: {'AAPL'} (not TGT - "target" is in RESERVED_SIGNAL_WORDS)
+```
+
+### Concurrency Guards (Advisory Locks)
+```python
+# REQUIRED for delete+insert patterns on discord_parsed_ideas
+# Prevents race conditions when multiple workers process same message
+lock_key = int(message_id) if str(message_id).isdigit() else hash(str(message_id)) & 0x7FFFFFFFFFFFFFFF
+execute_sql("SELECT pg_advisory_xact_lock(:lock_key)", params={"lock_key": lock_key})
+# Then safely: DELETE existing ideas → INSERT new ideas
 ```
 
 ## 🔍 Development Workflow
@@ -119,32 +181,53 @@ python test_integration.py
 python -c "from src.db import test_connection; print(test_connection())"
 ```
 
+### Schema Management & Migrations  
+```bash
+# Deploy latest schema changes
+python scripts/deploy_database.py
+# Verify schema compliance
+python scripts/verify_database.py --verbose
+# Run timestamp migrations (if needed)
+python scripts/run_timestamp_migration.py
+```
+
 ### Testing Patterns
-- **Integration**: `python test_integration.py` - tests ticker extraction, imports
+- **Integration**: `python tests/test_integration.py` - tests ticker extraction, imports
 - **Unit tests**: `pytest tests/ --maxfail=1 --disable-warnings -v`  
 - **Database**: Use `execute_sql("SELECT COUNT(*) FROM table_name", fetch_results=True)`
-- **Schema validation**: `python scripts/verify_schemas.py --verbose`
+- **Schema validation**: `python scripts/verify_database.py --verbose`
 
 ### File Structure Context
 - **Entry points**: `generate_journal.py`, `src/bot/bot.py`
 - **Data processing**: `src/data_collector.py` (market), `src/snaptrade_collector.py` (brokerage)
+- **NLP processing**: `src/nlp/` (OpenAI parser, schemas, soft splitter, preclean)
+- **NLP scripts**: `scripts/nlp/` (parse_messages, build_batch, run_batch, ingest_batch)
 - **LLM integration**: `src/journal_generator.py` (dual text/markdown output)
 - **Database**: `src/db.py` (engine with unified real-time writes)
 - **Bot commands**: `src/bot/commands/` (modular structure with `register()` functions)
 
 ### Data Flow Architecture
 ```
-SnapTrade + Discord + Twitter → PostgreSQL (Supabase) → LLM → Journal (text + markdown)
+SnapTrade + Discord + Twitter → PostgreSQL (Supabase) → NLP Parser → discord_parsed_ideas → Journal (text + markdown)
 ```
+
+**NLP Pipeline Stage** (new):
+1. Discord messages stored in `discord_messages`
+2. `scripts/nlp/parse_messages.py` processes pending messages
+3. OpenAI structured outputs extract idea units with labels, symbols, levels
+4. Ideas stored in `discord_parsed_ideas` with unique constraint `(message_id, soft_chunk_index, local_idea_index)`
+5. Journal generator uses parsed ideas for enhanced summaries
 
 ## ⚠️ Critical Rules
 
 - **PostgreSQL-only**: No SQLite fallback - all database operations use Supabase PostgreSQL
-- **Always use retry patterns** for external APIs (SnapTrade, yfinance, LLM APIs)
+- **Always use retry patterns** for external APIs (SnapTrade, yfinance, LLM APIs, OpenAI)
 - **Always use `pathlib.Path`** - never string concatenation for file paths
 - **Test ticker extraction** with edge cases (`$BRK.B`, mixed text, duplicates)
 - **Database operations**: Use `execute_sql()` or connection patterns with PostgreSQL syntax
+- **Advisory locks required** for delete+insert patterns on `discord_parsed_ideas` (use `pg_advisory_xact_lock`)
+- **NLP structured outputs**: Use Pydantic schemas from `src.nlp.schemas` for OpenAI Responses API
 - **Virtual environment required** - bootstrap validates this automatically
-- **Environment variables mandatory** - 27+ dependencies, see requirements.txt
+- **Environment variables mandatory** - see requirements.txt for dependencies
 
 **📚 For complete setup instructions, architecture deep-dives, and advanced patterns, see [AGENTS.md](../AGENTS.md)**
