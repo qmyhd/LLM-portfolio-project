@@ -2,8 +2,10 @@
 Market Data Query Module
 ========================
 
-Consolidated module for retrieving trades and market data from the database.
+Consolidated module for retrieving executed orders and market data from the database.
 Position queries have been moved to SnapTradeCollector for better organization.
+
+NOTE: There is no 'trades' table. Use orders table with status='EXECUTED' instead.
 """
 
 import pandas as pd
@@ -11,42 +13,82 @@ import pandas as pd
 from src.db import execute_sql
 
 
-# Deprecated functions removed - use SnapTradeCollector.get_stored_positions() and get_stored_position() instead
+def get_recent_executed_orders(limit: int = 50) -> pd.DataFrame:
+    """Return recent executed orders from the database.
 
+    Queries the orders table for orders with status='EXECUTED',
+    sorted by time_executed descending.
 
-def get_recent_trades(limit: int = 50) -> pd.DataFrame:
-    """Return recent trades from the database."""
+    Args:
+        limit: Maximum number of orders to return (default: 50)
+
+    Returns:
+        DataFrame with columns: symbol, time_executed, execution_price,
+        total_quantity, action, account_id
+    """
     try:
-        query = "SELECT * FROM trades ORDER BY timestamp DESC LIMIT :limit"
+        query = """
+        SELECT symbol, time_executed, execution_price, total_quantity, action, account_id
+        FROM orders 
+        WHERE status = 'EXECUTED' AND time_executed IS NOT NULL
+        ORDER BY time_executed DESC 
+        LIMIT :limit
+        """
         result = execute_sql(query, {"limit": limit}, fetch_results=True)
         if result:
-            # Note: Column names should match actual trades table schema
-            columns = ["id", "symbol", "quantity", "price", "action", "timestamp"]
+            columns = [
+                "symbol",
+                "time_executed",
+                "execution_price",
+                "total_quantity",
+                "action",
+                "account_id",
+            ]
             return pd.DataFrame(result, columns=columns)
         return pd.DataFrame()
     except Exception as e:
-        print(f"Error getting recent trades: {e}")
+        print(f"Error getting recent executed orders: {e}")
         return pd.DataFrame()
 
 
-def get_trades_for_symbol(symbol: str, limit: int = 100) -> pd.DataFrame:
-    """Return trades for a specific symbol."""
+def get_executed_orders_for_symbol(symbol: str, limit: int = 100) -> pd.DataFrame:
+    """Return executed orders for a specific symbol.
+
+    Queries the orders table for orders matching the symbol with status='EXECUTED',
+    sorted by time_executed descending.
+
+    Args:
+        symbol: Stock ticker symbol (e.g., 'AAPL')
+        limit: Maximum number of orders to return (default: 100)
+
+    Returns:
+        DataFrame with columns: symbol, time_executed, execution_price,
+        total_quantity, action, account_id
+    """
     try:
         query = """
-        SELECT * FROM trades 
-        WHERE symbol = :symbol 
-        ORDER BY timestamp DESC 
+        SELECT symbol, time_executed, execution_price, total_quantity, action, account_id
+        FROM orders 
+        WHERE symbol = :symbol AND status = 'EXECUTED' AND time_executed IS NOT NULL
+        ORDER BY time_executed DESC 
         LIMIT :limit
         """
         result = execute_sql(
-            query, {"symbol": symbol, "limit": limit}, fetch_results=True
+            query, {"symbol": symbol.upper(), "limit": limit}, fetch_results=True
         )
         if result:
-            columns = ["id", "symbol", "quantity", "price", "action", "timestamp"]
+            columns = [
+                "symbol",
+                "time_executed",
+                "execution_price",
+                "total_quantity",
+                "action",
+                "account_id",
+            ]
             return pd.DataFrame(result, columns=columns)
         return pd.DataFrame()
     except Exception as e:
-        print(f"Error getting trades for {symbol}: {e}")
+        print(f"Error getting executed orders for {symbol}: {e}")
         return pd.DataFrame()
 
 

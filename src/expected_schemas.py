@@ -1,7 +1,7 @@
 """
 Generated EXPECTED_SCHEMAS dictionary from SSOT baseline.
-Auto-generated on September 30, 2025
-This provides compatibility with verify_schemas.py and other validation scripts.
+Auto-generated on January 02, 2026
+This provides compatibility with verify_database.py and other validation scripts.
 """
 from typing import Dict, Any, List
 
@@ -36,20 +36,6 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "primary_keys": ['id'],
         "description": "Auto-generated from accounts table"
     },
-    "chart_metadata": {
-        "required_fields": {
-            "created_at": "timestamp",
-            "file_path": "text",
-            "interval": "text",
-            "min_trade_size": "numeric",
-            "period": "text",
-            "symbol": "text",
-            "theme": "text",
-            "trade_count": "integer",
-        },
-        "primary_keys": ['symbol', 'period', 'interval', 'theme'],
-        "description": "Auto-generated from chart_metadata table"
-    },
     "daily_prices": {
         "required_fields": {
             "close": "numeric",
@@ -80,16 +66,20 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
     },
     "discord_messages": {
         "required_fields": {
+            "attachments": "text",
             "author": "text",
             "author_id": "bigint",
             "channel": "text",
             "content": "text",
             "created_at": "timestamp",
+            "error_reason": "text",
             "is_reply": "boolean",
             "mentions": "text",
             "message_id": "text",
             "num_chars": "integer",
             "num_words": "integer",
+            "parse_status": "text",
+            "prompt_version": "text",
             "reply_to_id": "bigint",
             "sentiment_score": "numeric",
             "tickers_detected": "text",
@@ -100,16 +90,42 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "primary_keys": ['message_id'],
         "description": "Auto-generated from discord_messages table"
     },
-    "discord_processing_log": {
+    "discord_parsed_ideas": {
         "required_fields": {
-            "channel": "text",
-            "created_at": "timestamp",
+            "action": "text",
+            "author_id": "text",
+            "channel_id": "text",
+            "confidence": "numeric",
+            "context_summary": "text",
+            "direction": "text",
+            "expiry": "date",
+            "id": "text",
+            "idea_index": "integer",
+            "idea_summary": "text",
+            "idea_text": "text",
+            "instrument": "text",
+            "is_noise": "boolean",
+            "label_scores": "json",
+            "labels": "array",
+            "levels": "json",
+            "local_idea_index": "integer",
             "message_id": "text",
-            "processed_date": "date",
-            "processed_file": "text",
+            "model": "text",
+            "option_type": "text",
+            "parsed_at": "timestamptz",
+            "premium": "numeric",
+            "primary_symbol": "text",
+            "prompt_version": "text",
+            "raw_json": "json",
+            "soft_chunk_index": "integer",
+            "source_created_at": "timestamptz",
+            "strike": "numeric",
+            "symbols": "array",
+            "time_horizon": "text",
+            "trigger_condition": "text",
         },
-        "primary_keys": ['message_id', 'channel'],
-        "description": "Auto-generated from discord_processing_log table"
+        "primary_keys": ['id'],
+        "description": "Auto-generated from discord_parsed_ideas table"
     },
     "discord_trading_clean": {
         "required_fields": {
@@ -125,6 +141,74 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "primary_keys": ['message_id'],
         "description": "Auto-generated from discord_trading_clean table"
     },
+    "event_contract_positions": {
+        "required_fields": {
+            "at": "text",
+            "contract_year_month": "text",
+            "created_at": "timestamptz",
+            "currency": "text",
+            "date_opened": "date",
+            "description": "text",
+            "exchange": "text",
+            "exp_date": "date",
+            "page_number": "integer",
+            "position_id": "text",
+            "quantity_buy": "integer",
+            "quantity_sell": "integer",
+            "settlement_price": "numeric",
+            "source_file": "text",
+            "subtype": "text",
+            "symbol": "text",
+            "trade_price": "numeric",
+            "trade_type": "text",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ['position_id'],
+        "description": "Auto-generated from event_contract_positions table"
+    },
+    "event_contract_trades": {
+        "required_fields": {
+            "at": "text",
+            "contract_year_month": "text",
+            "created_at": "timestamptz",
+            "currency_code": "text",
+            "description": "text",
+            "exchange": "text",
+            "exp_date": "date",
+            "page_number": "integer",
+            "qty_long": "integer",
+            "qty_short": "integer",
+            "source_file": "text",
+            "subtype": "text",
+            "symbol": "text",
+            "trade_date": "date",
+            "trade_id": "text",
+            "trade_price": "numeric",
+            "trade_type": "text",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ['trade_id'],
+        "description": "Auto-generated from event_contract_trades table"
+    },
+    "institutional_holdings": {
+        "required_fields": {
+            "company_name": "text",
+            "created_at": "timestamptz",
+            "cusip": "text",
+            "filing_date": "date",
+            "id": "integer",
+            "is_call": "boolean",
+            "is_put": "boolean",
+            "manager_cik": "text",
+            "manager_name": "text",
+            "share_type": "text",
+            "shares": "bigint",
+            "ticker": "text",
+            "value_usd": "bigint",
+        },
+        "primary_keys": ['id'],
+        "description": "Auto-generated from institutional_holdings table"
+    },
     "orders": {
         "required_fields": {
             "account_id": "text",
@@ -133,7 +217,6 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "canceled_quantity": "numeric",
             "child_brokerage_order_ids": "json",
             "created_at": "timestamp",
-            "diary": "text",
             "execution_price": "numeric",
             "expiry_date": "date",
             "filled_quantity": "numeric",
@@ -144,9 +227,6 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "option_strike": "numeric",
             "option_ticker": "text",
             "order_type": "text",
-            "parent_brokerage_order_id": "text",
-            "quote_currency_code": "text",
-            "state": "text",
             "status": "text",
             "stop_price": "numeric",
             "symbol": "text",
@@ -158,7 +238,6 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "total_quantity": "numeric",
             "updated_at": "timestamp",
             "user_id": "text",
-            "user_secret": "text",
         },
         "primary_keys": ['brokerage_order_id'],
         "description": "Auto-generated from orders table"
@@ -174,13 +253,12 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "exchange_code": "text",
             "exchange_name": "text",
             "figi_code": "text",
-            "is_quotable": "boolean",
-            "is_tradable": "boolean",
             "logo_url": "text",
             "mic_code": "text",
             "open_pnl": "numeric",
             "price": "numeric",
             "quantity": "numeric",
+            "raw_symbol": "text",
             "symbol": "text",
             "symbol_description": "text",
             "symbol_id": "text",
@@ -197,7 +275,7 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "processed_for_twitter": "boolean",
             "updated_at": "timestamp",
         },
-        "primary_keys": ['message_id'],
+        "primary_keys": ['message_id', 'channel'],
         "description": "Auto-generated from processing_status table"
     },
     "realtime_prices": {
@@ -260,6 +338,31 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "primary_keys": ['id'],
         "description": "Auto-generated from symbols table"
     },
+    "trade_history": {
+        "required_fields": {
+            "account_id": "text",
+            "brokerage_order_id": "text",
+            "cost_basis": "numeric",
+            "created_at": "timestamptz",
+            "execution_price": "numeric",
+            "holding_pct": "numeric",
+            "id": "integer",
+            "portfolio_weight": "numeric",
+            "position_qty_after": "numeric",
+            "position_qty_before": "numeric",
+            "quantity": "numeric",
+            "realized_pnl": "numeric",
+            "realized_pnl_pct": "numeric",
+            "source": "text",
+            "symbol": "text",
+            "total_value": "numeric",
+            "trade_date": "timestamptz",
+            "trade_type": "text",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ['id'],
+        "description": "Auto-generated from trade_history table"
+    },
     "twitter_data": {
         "required_fields": {
             "author": "text",
@@ -272,6 +375,7 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
             "discord_message_id": "text",
             "discord_sent_date": "timestamptz",
             "like_count": "integer",
+            "media_urls": "json",
             "message_id": "text",
             "quote_count": "integer",
             "reply_count": "integer",
@@ -291,8 +395,8 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
 
 # Schema metadata for reference
 SCHEMA_METADATA = {
-    "generated_at": "2025-09-19",
-    "source_files": ['000_baseline.sql', '015_primary_key_alignment.sql', '016_complete_rls_policies.sql', '017_timestamp_field_migration.sql', '018_cleanup_schema_drift.sql'],
-    "table_count": 16,
-    "total_columns": 184
+    "generated_at": "2026-01-02",
+    "source_files": ['000_baseline.sql', '015_primary_key_alignment.sql', '016_complete_rls_policies.sql', '017_timestamp_field_migration.sql', '018_cleanup_schema_drift.sql', '019_data_quality_cleanup.sql', '020_drop_positions_redundant_columns.sql', '021_fix_processing_status_composite_key.sql', '022_add_attachments_column.sql', '023_event_contract_tables.sql', '024_account_balances_unique_constraint.sql', '025_drop_backup_tables.sql', '026_add_twitter_media_column.sql', '027_institutional_holdings.sql', '028_add_raw_symbol_to_positions.sql', '029_fix_account_balances_pk.sql', '030_discord_message_chunks.sql', '031_stock_mentions.sql', '032_add_chunk_metadata.sql', '033_stock_mentions_v2.sql', '034_add_primary_symbol_column.sql', '035_chunk_segmentation_fields.sql', '036_llm_tagging_columns.sql', '037_gold_label_columns.sql', '038_discord_idea_units.sql', '039_add_parse_status_to_discord_messages.sql', '040_create_discord_parsed_ideas.sql', '041_fix_parsed_ideas_message_id_type.sql', '042_add_chunk_indexing_columns.sql', '043_add_parsed_ideas_foreign_key.sql', '044_drop_duplicate_indexes.sql', '045_consolidate_rls_policies.sql', '046_drop_remaining_duplicate_indexes.sql', '047_document_trade_history.sql', '048_drop_unused_nlp_indexes.sql', '049_drop_legacy_tables.sql'],
+    "table_count": 19,
+    "total_columns": 270
 }

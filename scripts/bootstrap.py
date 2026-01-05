@@ -205,31 +205,15 @@ class BootstrapManager:
                 )
                 return False
 
-            # Run migration script
-            migration_script = self.scripts_dir / "migrate_sqlite.py"
-            if not migration_script.exists():
-                logger.error(f"❌ Migration script not found: {migration_script}")
-                return False
-
-            cmd = [sys.executable, str(migration_script)]
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=self.project_root
+            # Note: Legacy SQLite migration no longer supported
+            # The system now requires PostgreSQL from the start
+            # Migration script (migrate_sqlite.py) has been removed
+            logger.warning("⚠️  SQLite → PostgreSQL migration is no longer supported.")
+            logger.warning("   The system requires PostgreSQL/Supabase from the start.")
+            logger.warning(
+                "   Please configure DATABASE_URL in .env with PostgreSQL connection."
             )
-
-            if result.returncode == 0:
-                logger.info("✅ Database migration completed successfully")
-                if result.stdout:
-                    logger.info(result.stdout)
-
-                # Create migration completion flag
-                self.migration_flag.write_text(
-                    f"Migration completed on {datetime.now()}"
-                )
-                logger.info("✅ Migration flag created")
-                return True
-            else:
-                logger.error(f"❌ Migration failed: {result.stderr}")
-                return False
+            return False
 
         except Exception as e:
             logger.error(f"❌ Migration error: {e}")

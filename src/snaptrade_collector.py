@@ -7,10 +7,9 @@ dual database writes, and optional Parquet snapshots.
 
 import json
 import logging
-import traceback
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 
@@ -494,6 +493,12 @@ class SnapTradeCollector:
                 # Extract basic order fields
                 brokerage_order_id = order.get("brokerage_order_id")
                 status = order.get("status")
+
+                # Map invalid status values to valid ones
+                # SnapTrade sometimes returns "NONE" for pending orders
+                if status == "NONE" or not status:
+                    status = "PENDING"
+
                 action = order.get("action")
 
                 # Extract symbol (sometimes present as string)
@@ -558,6 +563,14 @@ class SnapTradeCollector:
                     option_strike = option_symbol.get("strike")
                     option_right = option_symbol.get("right")
 
+                # Ensure child_brokerage_order_ids is proper JSON array or None
+                if child_brokerage_order_ids and len(child_brokerage_order_ids) > 0:
+                    child_orders_json = child_brokerage_order_ids
+                else:
+                    child_orders_json = (
+                        None  # Use None instead of empty list to be explicit
+                    )
+
                 orders.append(
                     {
                         "brokerage_order_id": brokerage_order_id,
@@ -588,7 +601,7 @@ class SnapTradeCollector:
                         "time_updated": time_updated,
                         "time_executed": time_executed,
                         "expiry_date": expiry_date,
-                        "child_brokerage_order_ids": child_brokerage_order_ids,  # Pass as Python list
+                        "child_brokerage_order_ids": child_orders_json,  # Proper JSON or None
                         "option_ticker": option_ticker,
                         "option_expiry": option_expiry,
                         "option_strike": (
@@ -597,6 +610,8 @@ class SnapTradeCollector:
                         "option_right": option_right,
                         "account_id": account_id,
                         "sync_timestamp": datetime.now(timezone.utc),
+                        # Removed unused fields: state, user_secret, parent_brokerage_order_id,
+                        # quote_currency_code, diary (all were always NULL)
                     }
                 )
             except Exception as e:
@@ -611,11 +626,14 @@ class SnapTradeCollector:
 
     def upsert_symbols_table(self, symbols_data: List[Dict]) -> bool:
         """
-        Upsert symbols into the symbols table.
-        Only upserts symbols with valid (non-empty, not 'unknown') tickers.
+        Upsert symbols into the symbols table with comprehensive field updates.
+
+        Uses INSERT ... ON CONFLICT (id) DO UPDATE to backfill all symbol metadata.
+        This ensures existing symbols get updated with new information while
+        preventing duplicate entries.
 
         Args:
-            symbols_data: List of symbol dictionaries
+            symbols_data: List of symbol dictionaries with complete metadata
 
         Returns:
             True if successful, False otherwise
@@ -633,24 +651,42 @@ class SnapTradeCollector:
                 if not ticker or str(ticker).lower() in ("unknown", "none", ""):
                     logger.debug(f"⏭️ Skipping symbol with invalid ticker: {ticker}")
                     continue
+
                 execute_sql(
                     """
-                    INSERT INTO symbols (id, ticker, description, asset_type, type_code, 
-                                       exchange_code, exchange_name, exchange_mic, figi_code,
-                                       raw_symbol, logo_url, base_currency_code, is_supported,
-                                       is_quotable, is_tradable, created_at, updated_at)
-                    VALUES (:id, :ticker, :description, :asset_type, :type_code, :exchange_code, 
-                           :exchange_name, :exchange_mic, :figi_code, :raw_symbol, :logo_url, 
-                           :base_currency_code, :is_supported, :is_quotable, :is_tradable, 
-                           :created_at, :updated_at)
+                    INSERT INTO symbols (
+                        id, ticker, raw_symbol, description, asset_type, type_code, 
+                        exchange_code, exchange_name, exchange_mic, figi_code,
+                        logo_url, base_currency_code, is_supported,
+                        is_quotable, is_tradable, created_at, updated_at
+                    )
+                    VALUES (
+                        :id, :ticker, :raw_symbol, :description, :asset_type, :type_code,
+                        :exchange_code, :exchange_name, :exchange_mic, :figi_code,
+                        :logo_url, :base_currency_code, :is_supported,
+                        :is_quotable, :is_tradable, :created_at, :updated_at
+                    )
                     ON CONFLICT (ticker) DO UPDATE SET
-                        id = EXCLUDED.id,
-                        description = EXCLUDED.description,
+                        id = COALESCE(EXCLUDED.id, symbols.id),
+                        raw_symbol = COALESCE(EXCLUDED.raw_symbol, symbols.raw_symbol),
+                        description = COALESCE(EXCLUDED.description, symbols.description),
+                        asset_type = COALESCE(EXCLUDED.asset_type, symbols.asset_type),
+                        type_code = COALESCE(EXCLUDED.type_code, symbols.type_code),
+                        exchange_code = COALESCE(EXCLUDED.exchange_code, symbols.exchange_code),
+                        exchange_name = COALESCE(EXCLUDED.exchange_name, symbols.exchange_name),
+                        exchange_mic = COALESCE(EXCLUDED.exchange_mic, symbols.exchange_mic),
+                        figi_code = COALESCE(EXCLUDED.figi_code, symbols.figi_code),
+                        logo_url = COALESCE(EXCLUDED.logo_url, symbols.logo_url),
+                        base_currency_code = COALESCE(EXCLUDED.base_currency_code, symbols.base_currency_code),
+                        is_supported = EXCLUDED.is_supported,
+                        is_quotable = EXCLUDED.is_quotable,
+                        is_tradable = EXCLUDED.is_tradable,
                         updated_at = EXCLUDED.updated_at
-                """,
+                    """,
                     {
                         "id": symbol.get("id"),
                         "ticker": symbol.get("ticker"),
+                        "raw_symbol": symbol.get("raw_symbol"),
                         "description": symbol.get("description"),
                         "asset_type": symbol.get("asset_type"),
                         "type_code": symbol.get("type_code"),
@@ -658,12 +694,11 @@ class SnapTradeCollector:
                         "exchange_name": symbol.get("exchange_name"),
                         "exchange_mic": symbol.get("exchange_mic"),
                         "figi_code": symbol.get("figi_code"),
-                        "raw_symbol": symbol.get("raw_symbol"),
                         "logo_url": symbol.get("logo_url"),
                         "base_currency_code": symbol.get("base_currency_code"),
-                        "is_supported": symbol.get("is_supported"),
-                        "is_quotable": symbol.get("is_quotable"),
-                        "is_tradable": symbol.get("is_tradable"),
+                        "is_supported": symbol.get("is_supported", True),
+                        "is_quotable": symbol.get("is_quotable", True),
+                        "is_tradable": symbol.get("is_tradable", True),
                         "created_at": symbol.get("created_at"),
                         "updated_at": symbol.get("updated_at"),
                     },
@@ -818,10 +853,11 @@ class SnapTradeCollector:
             logger.info("🔄 Collecting balances...")
             balances_df = self.get_balances(account_id)
             if not balances_df.empty:
+                # CRITICAL: PK order is (currency_code, snapshot_date, account_id) in live DB
                 self.write_to_database(
                     balances_df,
                     "account_balances",
-                    conflict_columns=["account_id", "currency_code", "snapshot_date"],
+                    conflict_columns=["currency_code", "snapshot_date", "account_id"],
                 )
                 if write_parquet:
                     self.write_parquet_snapshot(balances_df, "balances")
@@ -842,10 +878,17 @@ class SnapTradeCollector:
                         f"Positions missing account_id: {missing_account}"
                     )
                 else:
+                    # Drop symbol metadata columns that belong in symbols table
+                    # Positions table only stores symbol (ticker) and account_id as composite PK
+                    positions_for_db = positions_df.drop(
+                        columns=["raw_symbol", "type_code"], errors="ignore"
+                    )
+
+                    # FIXED: PK order is (symbol, account_id) in live DB - must match exactly
                     self.write_to_database(
-                        positions_df,
+                        positions_for_db,
                         "positions",
-                        conflict_columns=["account_id", "symbol"],
+                        conflict_columns=["symbol", "account_id"],
                     )
                     if write_parquet:
                         self.write_parquet_snapshot(positions_df, "positions")
@@ -894,20 +937,31 @@ class SnapTradeCollector:
         return results
 
     def _extract_symbols_from_positions(self, positions_df: pd.DataFrame) -> List[Dict]:
-        """Extract symbol metadata from positions DataFrame."""
+        """Extract symbol metadata from positions DataFrame with complete field mapping."""
         symbols = []
 
         for _, row in positions_df.iterrows():
             try:
                 symbol_val = str(row["symbol"]) if row["symbol"] is not None else None
                 if symbol_val and symbol_val.lower() not in ("unknown", "none", ""):
+                    # Use actual symbol_id from SnapTrade, not fake prefixed ID
+                    symbol_id = row.get("symbol_id")
+                    if not symbol_id:
+                        # Fallback: use ticker as ID if symbol_id not available
+                        symbol_id = row["symbol"]
+
                     symbol_data = {
-                        "id": f"pos_{row['symbol']}",
-                        "ticker": row[
-                            "symbol"
-                        ],  # Canonical ticker for conflict resolution
+                        "id": symbol_id,  # Actual SnapTrade symbol ID
+                        "ticker": row["symbol"],  # Ticker (may have exchange suffix)
+                        "raw_symbol": row.get("raw_symbol")
+                        or row["symbol"],  # Plain ticker
                         "description": row.get("symbol_description"),
-                        "asset_type": row.get("asset_type"),
+                        "asset_type": row.get("asset_type"),  # Like "Common Stock"
+                        "type_code": row.get("type_code"),  # Like "cs", "etf"
+                        "exchange_code": row.get("exchange_code"),
+                        "exchange_name": row.get("exchange_name"),
+                        "exchange_mic": row.get("mic_code"),
+                        "figi_code": row.get("figi_code"),
                         "logo_url": row.get("logo_url"),
                         "base_currency_code": row.get("currency"),
                         "is_supported": True,
@@ -916,7 +970,7 @@ class SnapTradeCollector:
                         "created_at": datetime.now(timezone.utc),
                         "updated_at": datetime.now(timezone.utc),
                     }
-                symbols.append(symbol_data)
+                    symbols.append(symbol_data)
             except Exception as e:
                 logger.warning(f"Error extracting symbol from position: {e}")
                 continue
@@ -924,25 +978,43 @@ class SnapTradeCollector:
         return symbols
 
     def _extract_symbols_from_orders(self, orders_df: pd.DataFrame) -> List[Dict]:
-        """Extract symbol metadata from orders DataFrame."""
+        """Extract symbol metadata from orders DataFrame with complete field mapping."""
+        import re
+
         symbols = []
+        # UUID pattern to filter out invalid symbol IDs from SnapTrade API
+        uuid_pattern = re.compile(
+            r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+            re.IGNORECASE,
+        )
 
         for _, row in orders_df.iterrows():
             try:
-                # Use symbol field (canonical normalized ticker) instead of extracted_symbol
+                # Use symbol field (canonical normalized ticker)
                 symbol_val = str(row["symbol"]) if row["symbol"] is not None else None
-                if symbol_val and symbol_val.lower() not in ("unknown", "none", ""):
-                    symbol_data = {
-                        "id": f"ord_{row['symbol']}",
-                        "ticker": row[
-                            "symbol"
-                        ],  # Canonical ticker for conflict resolution
-                        "is_supported": True,
-                        "is_quotable": True,
-                        "is_tradable": True,
-                        "created_at": datetime.now(timezone.utc),
-                        "updated_at": datetime.now(timezone.utc),
-                    }
+
+                # Skip invalid symbols: unknown, none, empty, or UUID-like strings
+                if not symbol_val or symbol_val.lower() in ("unknown", "none", ""):
+                    continue
+
+                if uuid_pattern.match(symbol_val):
+                    logger.debug(f"Skipping UUID-like symbol from order: {symbol_val}")
+                    continue
+
+                # For orders, we may not have full symbol metadata
+                # Use the symbol as both ID and ticker if no symbol_id available
+                symbol_data = {
+                    "id": row[
+                        "symbol"
+                    ],  # Use ticker as ID for orders (will merge with position data on UPSERT)
+                    "ticker": row["symbol"],
+                    "raw_symbol": row["symbol"],  # Assume no suffix in orders
+                    "is_supported": True,
+                    "is_quotable": True,
+                    "is_tradable": True,
+                    "created_at": datetime.now(timezone.utc),
+                    "updated_at": datetime.now(timezone.utc),
+                }
                 symbols.append(symbol_data)
             except Exception as e:
                 logger.warning(f"Error extracting symbol from order: {e}")
@@ -1068,6 +1140,7 @@ class SnapTradeCollector:
 
         Args:
             position: Position data from SnapTrade API
+            account_id: Account ID to associate with the position
 
         Returns:
             dict: Enhanced position data with extracted symbol info
@@ -1079,7 +1152,9 @@ class SnapTradeCollector:
         extracted_symbol = "UNKNOWN"
         symbol_id = None
         symbol_description = ""
+        raw_symbol = ""  # Plain symbol without exchange suffix
         asset_type = "Unknown"
+        type_code = ""  # Asset type code from SnapTrade
         exchange_code = ""
         exchange_name = ""
         mic_code = ""
@@ -1095,15 +1170,19 @@ class SnapTradeCollector:
                 # Extract from innermost symbol object
                 innermost_symbol = inner_symbol.get("symbol")
                 if innermost_symbol:
-                    extracted_symbol = innermost_symbol
-                    symbol_id = inner_symbol.get("id")
+                    extracted_symbol = innermost_symbol  # This is the ticker
+                    symbol_id = inner_symbol.get("id")  # Actual SnapTrade symbol ID
                     symbol_description = inner_symbol.get("description", "")
                     logo_url = inner_symbol.get("logo_url", "")
                     figi_code = inner_symbol.get("figi_code", "")
 
-                    # Extract asset type
+                    # Extract raw_symbol (plain ticker without exchange suffix)
+                    raw_symbol = inner_symbol.get("raw_symbol", innermost_symbol)
+
+                    # Extract asset type with code
                     type_info = inner_symbol.get("type", {})
                     if isinstance(type_info, dict):
+                        type_code = type_info.get("code", "")  # Like "cs", "etf", etc.
                         asset_type = type_info.get("description") or type_info.get(
                             "code", "Unknown"
                         )
@@ -1116,10 +1195,12 @@ class SnapTradeCollector:
                         mic_code = exchange_info.get("mic_code", "")
                 else:
                     # Fallback to raw_symbol if nested structure incomplete
-                    extracted_symbol = symbol_data.get("raw_symbol", "UNKNOWN")
+                    raw_symbol = symbol_data.get("raw_symbol", "")
+                    extracted_symbol = raw_symbol or "UNKNOWN"
             else:
                 # Simple string symbol
                 extracted_symbol = str(symbol_data) if symbol_data else "UNKNOWN"
+                raw_symbol = extracted_symbol
 
         # Calculate quantities - prefer units, fallback to fractional_units
         quantity = position.get("units")
@@ -1141,23 +1222,24 @@ class SnapTradeCollector:
             currency_code = currency_info
 
         return {
-            "symbol": extracted_symbol,
-            "symbol_id": symbol_id,
+            "symbol": extracted_symbol,  # Ticker (may have exchange suffix)
+            "symbol_id": symbol_id,  # Actual SnapTrade ID
+            "raw_symbol": raw_symbol,  # Plain ticker without suffix
             "symbol_description": symbol_description,
             "quantity": quantity,
             "price": price,
             "equity": equity,
             "average_buy_price": position.get("average_purchase_price"),
             "open_pnl": position.get("open_pnl"),
-            "asset_type": asset_type,
+            "asset_type": asset_type,  # Description like "Common Stock"
+            "type_code": type_code,  # Code like "cs", "etf"
             "currency": currency_code,
             "logo_url": logo_url,
             "exchange_code": exchange_code,
             "exchange_name": exchange_name,
             "mic_code": mic_code,
             "figi_code": figi_code,
-            "is_quotable": is_quotable,
-            "is_tradable": is_tradable,
+            # Removed redundant boolean fields: is_quotable, is_tradable (always true)
             "account_id": account_id,  # Use the provided account_id parameter
         }
 

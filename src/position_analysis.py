@@ -162,6 +162,11 @@ def analyze_position_history(
     return analysis
 
 
+import logging
+
+logger = logging.getLogger(__name__)
+
+
 def get_current_position_size(symbol: str) -> float:
     """Get current position size for a symbol from positions table."""
     try:
@@ -183,7 +188,7 @@ def get_current_position_size(symbol: str) -> float:
                 return 0.0
         return 0.0
     except Exception as e:
-        print(f"Error getting current position: {e}")
+        logger.error(f"Error getting current position for {symbol}: {e}")
         return 0.0
 
 
@@ -208,7 +213,7 @@ def get_current_price(symbol: str) -> float:
                 return 0.0
         return 0.0
     except Exception as e:
-        print(f"Error getting current price: {e}")
+        logger.error(f"Error getting current price for {symbol}: {e}")
         return 0.0
 
 
@@ -242,7 +247,7 @@ def get_stored_positions():
             return [dict(zip(columns, row)) for row in result]
         return []
     except Exception as e:
-        print(f"Error getting stored positions: {e}")
+        logger.error(f"Error getting stored positions: {e}")
         return []
 
 

@@ -12,6 +12,8 @@ from pathlib import Path
 from sqlalchemy import create_engine, event, text
 from sqlalchemy.exc import DisconnectionError, SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.engine import CursorResult, Row
+from typing import Any, Dict, List, Optional, Union, overload, Literal
 
 from src.config import get_database_url, settings
 
@@ -66,7 +68,7 @@ def get_sync_engine():
 
             # Add connection event listeners for better error handling
             @event.listens_for(_sync_engine, "connect")
-            def set_connection_options(dbapi_connection, connection_record):
+            def set_connection_options(dbapi_connection, _connection_record):
                 """Configure connection-specific options."""
                 # PostgreSQL-specific optimizations
                 with dbapi_connection.cursor() as cursor:
@@ -186,10 +188,181 @@ def get_connection():
     return engine.connect()
 
 
-# Legacy compatibility function
-def get_engine():
-    """Legacy compatibility function - use get_sync_engine() instead."""
-    return get_sync_engine()
+class transaction:
+    """
+    Context manager for executing multiple SQL statements in a single transaction.
+
+    Use this when you need advisory locks to protect concurrent operations,
+    or when multiple statements must be atomic (all succeed or all fail).
+
+    Example:
+        with transaction() as conn:
+            conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": 123})
+            conn.execute(text("DELETE FROM table WHERE id = :id"), {"id": 456})
+            conn.execute(text("INSERT INTO table ..."), {...})
+        # Lock released and transaction committed on exit
+
+    The connection auto-commits on successful exit and rolls back on exception.
+    Advisory locks (pg_advisory_xact_lock) are released when the transaction ends.
+    """
+
+    def __init__(self):
+        self._conn = None
+        self._engine = None
+
+    def __enter__(self):
+        self._engine = get_sync_engine()
+        self._conn = self._engine.begin()
+        return self._conn.__enter__()
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._conn.__exit__(exc_type, exc_val, exc_tb)
+
+
+def save_parsed_ideas_atomic(
+    message_id: str,
+    ideas: list,
+    status: str,
+    prompt_version: str,
+    error_reason: str = None,
+) -> int:
+    """
+    CANONICAL atomic helper for saving parsed ideas with reparse safety.
+
+    ALL code paths that write to discord_parsed_ideas MUST use this function
+    to prevent the "separate transactions" bug.
+
+    This function:
+    1. Acquires advisory lock on message_id (prevents concurrent workers)
+    2. Deletes ALL existing ideas for this message_id
+    3. Inserts fresh ideas
+    4. Updates parse_status on discord_messages
+    5. Commits all operations in a SINGLE transaction
+
+    Args:
+        message_id: The message ID being processed
+        ideas: List of idea dicts (each has message_id, idea_index, idea_text, etc.)
+        status: Parse status (ok, error, noise, skipped)
+        prompt_version: Version string for tracking schema changes
+        error_reason: Error message if status='error'
+
+    Returns:
+        Number of ideas inserted
+
+    Raises:
+        Exception: If any database operation fails (entire transaction rolled back)
+    """
+    import json
+
+    if not message_id:
+        return 0
+
+    # Convert message_id to a numeric lock key
+    try:
+        lock_key = int(message_id)
+    except ValueError:
+        lock_key = hash(message_id) & 0x7FFFFFFFFFFFFFFF
+
+    inserted = 0
+
+    with transaction() as conn:
+        # Step 0: Acquire advisory lock (held until transaction ends)
+        conn.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key}
+        )
+
+        # Step 1: Delete existing ideas for this message
+        conn.execute(
+            text(
+                "DELETE FROM discord_parsed_ideas WHERE message_id = CAST(:message_id AS text)"
+            ),
+            {"message_id": str(message_id)},
+        )
+
+        # Step 2: Insert fresh ideas (if any)
+        for idea in ideas:
+            insert_query = text(
+                """
+                INSERT INTO discord_parsed_ideas (
+                    message_id, idea_index, soft_chunk_index, local_idea_index,
+                    idea_text, idea_summary, context_summary,
+                    primary_symbol, symbols, instrument, direction,
+                    action, time_horizon, trigger_condition,
+                    levels, option_type, strike, expiry, premium,
+                    labels, label_scores, is_noise,
+                    author_id, channel_id, model, prompt_version, confidence,
+                    raw_json, source_created_at
+                ) VALUES (
+                    :message_id, :idea_index, :soft_chunk_index, :local_idea_index,
+                    :idea_text, :idea_summary, :context_summary,
+                    :primary_symbol, :symbols, :instrument, :direction,
+                    :action, :time_horizon, :trigger_condition,
+                    :levels, :option_type, :strike, :expiry, :premium,
+                    :labels, :label_scores, :is_noise,
+                    :author_id, :channel_id, :model, :prompt_version, :confidence,
+                    :raw_json, :source_created_at
+                )
+            """
+            )
+
+            params = {
+                "message_id": str(idea.get("message_id", message_id)),
+                "idea_index": idea.get("idea_index", 0),
+                "soft_chunk_index": idea.get("soft_chunk_index", 0),
+                "local_idea_index": idea.get(
+                    "local_idea_index", idea.get("idea_index", 0)
+                ),
+                "idea_text": idea.get("idea_text", ""),
+                "idea_summary": idea.get("idea_summary"),
+                "context_summary": idea.get("context_summary"),
+                "primary_symbol": idea.get("primary_symbol"),
+                "symbols": idea.get("symbols", []),
+                "instrument": idea.get("instrument"),
+                "direction": idea.get("direction"),
+                "action": idea.get("action"),
+                "time_horizon": idea.get("time_horizon"),
+                "trigger_condition": idea.get("trigger_condition"),
+                "levels": json.dumps(idea.get("levels", [])),
+                "option_type": idea.get("option_type"),
+                "strike": idea.get("strike"),
+                "expiry": idea.get("expiry"),
+                "premium": idea.get("premium"),
+                "labels": idea.get("labels", []),
+                "label_scores": json.dumps(idea.get("label_scores", {})),
+                "is_noise": idea.get("is_noise", False),
+                "author_id": idea.get("author_id"),
+                "channel_id": idea.get("channel_id"),
+                "model": idea.get("model", "unknown"),
+                "prompt_version": idea.get("prompt_version", prompt_version),
+                "confidence": idea.get("confidence"),
+                "raw_json": json.dumps(idea.get("raw_json", {})),
+                "source_created_at": idea.get("source_created_at"),
+            }
+
+            conn.execute(insert_query, params)
+            inserted += 1
+
+        # Step 3: Update message status (inside same transaction)
+        conn.execute(
+            text(
+                """
+                UPDATE discord_messages
+                SET parse_status = :status,
+                    prompt_version = :prompt_version,
+                    error_reason = :error_reason
+                WHERE message_id = CAST(:message_id AS text)
+            """
+            ),
+            {
+                "message_id": str(message_id),
+                "status": status,
+                "prompt_version": prompt_version,
+                "error_reason": error_reason,
+            },
+        )
+
+    # Transaction committed, lock released
+    return inserted
 
 
 def retry_on_connection_error(max_retries=3, delay=1):
@@ -499,7 +672,35 @@ def validate_timezone_aware(params):
                     check_datetime_param(f"[{i}].{key}", value)
 
 
-def execute_sql(query: str, params=None, fetch_results=False):
+@overload
+def execute_sql(
+    query: str,
+    params: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+    fetch_results: Literal[True] = ...,
+) -> List[Row[Any]]: ...
+
+
+@overload
+def execute_sql(
+    query: str,
+    params: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+    fetch_results: Literal[False] = ...,
+) -> CursorResult[Any]: ...
+
+
+@overload
+def execute_sql(
+    query: str,
+    params: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+    fetch_results: bool = False,
+) -> Union[List[Row[Any]], CursorResult[Any]]: ...
+
+
+def execute_sql(
+    query: str,
+    params: Optional[Union[Dict[str, Any], List[Dict[str, Any]]]] = None,
+    fetch_results: bool = False,
+) -> Union[List[Row[Any]], CursorResult[Any]]:
     """
     Execute SQL query using PostgreSQL with enhanced type safety and timezone validation.
 
@@ -713,7 +914,31 @@ def initialize_database():
 
 
 def mark_message_processed(message_id: str, channel: str, processing_type: str):
-    """Mark a message as processed for a specific type."""
+    """Mark a message as processed for a specific type.
+
+    This function is critical for the resumable processing pipeline:
+    - Sets boolean flags (processed_for_cleaning or processed_for_twitter) in processing_status table
+    - Raw messages in discord_messages are NEVER deleted, only marked as processed
+    - Uses composite primary key (message_id, channel) for multi-channel support
+    - ON CONFLICT safe: Can be called multiple times safely (idempotent)
+
+    Processing Types:
+    - "cleaning": Message has been cleaned and stored in discord_*_clean tables
+    - "twitter": Message has been analyzed for Twitter links and data extracted
+
+    Deduplication Guarantee:
+    - Once marked, get_unprocessed_messages() will skip this message
+    - Ensures each message is processed exactly once per processing type
+    - Makes the pipeline resumable after interruptions
+
+    Uses composite primary key (message_id, channel) to track processing
+    status separately for each message-channel combination.
+
+    Args:
+        message_id: Discord message ID (globally unique)
+        channel: Discord channel name
+        processing_type: Either "cleaning" or "twitter"
+    """
     try:
         if processing_type == "cleaning":
             column = "processed_for_cleaning"
@@ -722,11 +947,12 @@ def mark_message_processed(message_id: str, channel: str, processing_type: str):
         else:
             raise ValueError(f"Invalid processing type: {processing_type}")
 
-        # PostgreSQL-only query with ON CONFLICT using named placeholders
+        # PostgreSQL-only query with ON CONFLICT using composite key (message_id, channel)
+        # This ensures idempotent operation - can be called multiple times safely
         query = f"""
         INSERT INTO processing_status (message_id, channel, {column}, updated_at)
         VALUES (:message_id, :channel, TRUE, CURRENT_TIMESTAMP)
-        ON CONFLICT (message_id) DO UPDATE SET
+        ON CONFLICT (message_id, channel) DO UPDATE SET
         {column} = TRUE,
         updated_at = CURRENT_TIMESTAMP
         """
@@ -742,7 +968,39 @@ def mark_message_processed(message_id: str, channel: str, processing_type: str):
 def get_unprocessed_messages(
     channel: str | None = None, processing_type: str = "cleaning"
 ):
-    """Get messages that haven't been processed yet."""
+    """Get messages that haven't been processed yet.
+
+    This function is the core of the resumable processing pipeline:
+    - Queries discord_messages LEFT JOIN processing_status
+    - Returns only messages where the processing flag is NULL or FALSE
+    - Ensures each message is processed exactly once per processing type
+
+    How It Works:
+    1. LEFT JOIN ensures we see all discord_messages
+    2. Filter WHERE flag IS NULL (never processed) OR flag IS FALSE (failed)
+    3. Messages with flag = TRUE are automatically excluded (already processed)
+
+    This enables:
+    - Resumable operations: After interruption, only unprocessed messages are returned
+    - Safe re-runs: Already-processed messages are skipped automatically
+    - No deletion needed: Raw messages remain in discord_messages forever
+
+    Deduplication Guarantee:
+    - Primary: message_id (globally unique Discord ID)
+    - Secondary: Composite key (message_id, channel) in processing_status
+    - Result: Each message processed exactly once per channel per type
+
+    Checks processing_status table using composite key (message_id, channel)
+    to determine which messages need processing for a specific channel.
+
+    Args:
+        channel: Discord channel name to filter by (optional - None returns all)
+        processing_type: Either "cleaning" or "twitter"
+
+    Returns:
+        List of tuples: (message_id, author, content, channel, timestamp)
+        Empty list if no unprocessed messages or on error
+    """
     try:
         if processing_type == "cleaning":
             column = "processed_for_cleaning"
@@ -751,15 +1009,18 @@ def get_unprocessed_messages(
         else:
             raise ValueError(f"Invalid processing type: {processing_type}")
 
-        # PostgreSQL-only query
+        # PostgreSQL-only query with proper composite key join
+        # LEFT JOIN ensures we see messages even if not in processing_status yet
+        # Filter WHERE flag IS NULL (never seen) OR FALSE (marked for reprocessing)
         query = f"""
         SELECT dm.message_id, dm.author, dm.content, dm.channel, dm.timestamp
         FROM discord_messages dm
-        LEFT JOIN processing_status ps ON dm.message_id = ps.message_id
-        WHERE (ps.{column} IS NULL OR ps.{column} = :status)
+        LEFT JOIN processing_status ps 
+            ON dm.message_id = ps.message_id AND dm.channel = ps.channel
+        WHERE (ps.{column} IS NULL OR ps.{column} IS FALSE)
         """
 
-        params = {"status": "FALSE"}  # PostgreSQL FALSE value
+        params = {}
 
         if channel:
             query += " AND dm.channel = :channel"

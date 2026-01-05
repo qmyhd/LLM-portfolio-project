@@ -5,11 +5,24 @@ Database Schema Parser
 
 Parses SQL DDL files to generate Python schema definitions, eliminating
 the triple maintenance problem where schema info is duplicated across:
-- 000_baseline.sql (actual DDL)
-- verify_schemas.py (EXPECTED_SCHEMAS)
-- refresh_local_schema.py (SUPABASE_SCHEMA_DDL)
+- SQL migrations (000_baseline.sql + 015-020_*.sql)
+- Python validation (expected_schemas.py)
+- Documentation (EXPECTED_SCHEMAS.md)
 
-This creates a single source of truth from the SQL files.
+**Processing Model**:
+- Reads ALL schema/*.sql files in numerical order (000, 015, 016, 017, 018, 019, 020)
+- Starts with baseline (000_baseline.sql) for CREATE TABLE statements
+- Applies subsequent migrations (ALTER TABLE, DROP COLUMN, etc.)
+- Generates final schema reflecting all applied migrations
+
+Output formats:
+- expected_schemas.py (Python dict for verify_database.py)
+- generated_schemas.py (Pydantic dataclasses - deprecated)
+
+This creates a single source of truth from the SQL migration files.
+
+**Important**: If you manually edit expected_schemas.py, those changes will be
+overwritten on next run. Instead, create a numbered migration SQL file.
 """
 
 import re
@@ -50,7 +63,7 @@ class EnhancedSchemaParser:
             "tables": self.tables,
             "indexes": self.indexes,
             "constraints": self.constraints,
-            "generated_at": "2025-09-19",  # Current date
+            "generated_at": datetime.now().strftime("%Y-%m-%d"),  # Current date
             "source_files": [f.name for f in schema_files],
         }
 
@@ -228,17 +241,35 @@ class EnhancedSchemaParser:
             if not column_def:
                 continue
 
-            # Skip constraint definitions that start with CONSTRAINT keyword
+            # Handle constraint definitions that start with CONSTRAINT keyword
             if column_def.upper().startswith("CONSTRAINT"):
+                logger.debug(f"Found CONSTRAINT in {table_name}: {column_def[:80]}...")
                 # Extract constraint name and definition for tracking
                 constraint_match = re.match(
-                    r"CONSTRAINT\s+(\w+)\s+(.*)", column_def, re.IGNORECASE
+                    r'CONSTRAINT\s+"?(\w+)"?\s+(.*)',
+                    column_def,
+                    re.IGNORECASE | re.DOTALL,
                 )
                 if constraint_match:
                     constraint_name = constraint_match.group(1)
                     constraint_def = constraint_match.group(2)
 
-                    if "UNIQUE" in constraint_def.upper():
+                    # Handle PRIMARY KEY constraints (CONSTRAINT "name" PRIMARY KEY (col1, col2))
+                    if "PRIMARY KEY" in constraint_def.upper():
+                        pk_match = re.search(
+                            r"PRIMARY KEY\s*\((.*?)\)", constraint_def, re.IGNORECASE
+                        )
+                        if pk_match:
+                            pk_columns = [
+                                col.strip().strip("\"'")
+                                for col in pk_match.group(1).split(",")
+                            ]
+                            self.tables[table_name]["primary_keys"].extend(pk_columns)
+                            logger.info(
+                                f"Found named PK constraint on {table_name}: {pk_columns}"
+                            )
+
+                    elif "UNIQUE" in constraint_def.upper():
                         # Extract unique constraint columns
                         unique_match = re.search(
                             r"UNIQUE\s*\((.*?)\)", constraint_def, re.IGNORECASE
@@ -340,14 +371,65 @@ class EnhancedSchemaParser:
 
     def _parse_alter_tables(self, content: str):
         """Parse ALTER TABLE statements to modify existing schema."""
-        # ADD COLUMN - make sure we don't match ADD CONSTRAINT
-        add_column_pattern = r"ALTER TABLE\s+(?:public\.)?(\w+)\s+ADD\s+COLUMN\s+(\w+)\s+(\w+(?:\[\])?(?:\([^)]+\))?)\s*(.*?);"
+        # FIRST: Handle multi-column ADD COLUMN statements (comma-separated)
+        # Pattern: ALTER TABLE x ADD COLUMN col1 TYPE, ADD COLUMN col2 TYPE;
+        multi_add_pattern = r"ALTER TABLE\s+(?:public\.)?(\w+)\s+((?:ADD\s+COLUMN\s+(?:IF NOT EXISTS\s+)?\w+\s+\w+(?:\[\])?(?:\([^)]+\))?[^,;]*,?\s*)+);"
+
+        for match in re.finditer(multi_add_pattern, content, re.IGNORECASE | re.DOTALL):
+            table_name = match.group(1).lower()
+            columns_block = match.group(2)
+
+            # Parse each ADD COLUMN clause within the block
+            single_add_pattern = r"ADD\s+COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)\s+(\w+(?:\[\])?(?:\([^)]+\))?)\s*([^,;]*)"
+
+            for col_match in re.finditer(
+                single_add_pattern, columns_block, re.IGNORECASE
+            ):
+                column_name = col_match.group(1).lower()
+                data_type = col_match.group(2).upper()
+                constraints_def = col_match.group(3) if col_match.group(3) else ""
+
+                if table_name not in self.tables:
+                    self.tables[table_name] = {
+                        "columns": {},
+                        "primary_keys": [],
+                        "unique_constraints": [],
+                        "foreign_keys": [],
+                        "indexes": [],
+                    }
+
+                nullable = "NOT NULL" not in constraints_def.upper()
+                default_match = re.search(
+                    r"DEFAULT\s+(\S+)", constraints_def, re.IGNORECASE
+                )
+                default_value = (
+                    default_match.group(1).strip() if default_match else None
+                )
+
+                self.tables[table_name]["columns"][column_name] = {
+                    "data_type": data_type,
+                    "nullable": nullable,
+                    "default": default_value,
+                    "constraints": [],
+                }
+                logger.debug(f"Added column {table_name}.{column_name} ({data_type})")
+
+        # THEN: Handle single-column ADD COLUMN statements (original pattern)
+        # Updated to handle IF NOT EXISTS
+        add_column_pattern = r"ALTER TABLE\s+(?:public\.)?(\w+)\s+ADD\s+COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)\s+(\w+(?:\[\])?(?:\([^)]+\))?)\s*(.*?);"
 
         for match in re.finditer(add_column_pattern, content, re.IGNORECASE):
             table_name = match.group(1).lower()
             column_name = match.group(2).lower()
             data_type = match.group(3).upper()
             constraints_def = match.group(4)
+
+            # Skip if already added by multi-column pattern
+            if (
+                table_name in self.tables
+                and column_name in self.tables[table_name]["columns"]
+            ):
+                continue
 
             if table_name not in self.tables:
                 self.tables[table_name] = {
@@ -371,10 +453,8 @@ class EnhancedSchemaParser:
                 "constraints": [],
             }
 
-        # DROP COLUMN
-        drop_column_pattern = (
-            r"ALTER TABLE\s+(?:public\.)?(\w+)\s+DROP\s+(?:COLUMN\s+)?(\w+);"
-        )
+        # DROP COLUMN (handles IF EXISTS clause)
+        drop_column_pattern = r"ALTER TABLE\s+(?:IF EXISTS\s+)?(?:public\.)?(\w+)\s+DROP\s+(?:COLUMN\s+)?(?:IF EXISTS\s+)?(\w+);"
 
         for match in re.finditer(drop_column_pattern, content, re.IGNORECASE):
             table_name = match.group(1).lower()
@@ -1137,12 +1217,12 @@ def _convert_to_python_type(pg_type: str) -> str:
 
 
 def generate_expected_schemas(schema_data: Dict[str, Any]) -> str:
-    """Generate EXPECTED_SCHEMAS dictionary format for verify_schemas.py compatibility."""
+    """Generate EXPECTED_SCHEMAS dictionary format for verify_database.py compatibility."""
     code_lines = [
         '"""',
         "Generated EXPECTED_SCHEMAS dictionary from SSOT baseline.",
         f"Auto-generated on {datetime.now().strftime('%B %d, %Y')}",
-        "This provides compatibility with verify_schemas.py and other validation scripts.",
+        "This provides compatibility with verify_database.py and other validation scripts.",
         '"""',
         "from typing import Dict, Any, List",
         "",
@@ -1203,8 +1283,8 @@ def main():
     parser.add_argument(
         "--output",
         choices=["dataclass", "expected", "both"],
-        default="dataclass",
-        help="Output type: dataclass for src/generated_schemas.py, expected for EXPECTED_SCHEMAS, both for both files",
+        default="expected",
+        help="Output type: expected for src/expected_schemas.py (default), dataclass for src/generated_schemas.py (deprecated), both for both files",
     )
     args = parser.parse_args()
 

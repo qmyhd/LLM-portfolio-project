@@ -9,6 +9,8 @@ import pandas as pd
 import yfinance as yf
 from discord.ext import commands
 
+from src.bot.ui.embed_factory import EmbedFactory, EmbedCategory, build_embed
+
 # Use absolute imports instead of sys.path manipulation
 from src.db import get_connection
 from src.position_analysis import (
@@ -43,7 +45,7 @@ class FIFOPositionTracker:
         self.buy_queue.append((shares, price, date))
 
     def process_sell(
-        self, shares_sold: float, sell_price: float, sell_date: datetime
+        self, shares_sold: float, sell_price: float, _sell_date: datetime
     ) -> float:
         """
         Process a sell order using FIFO method and calculate realized P/L.
@@ -51,7 +53,7 @@ class FIFOPositionTracker:
         Args:
             shares_sold: Number of shares being sold
             sell_price: Price per share for the sale
-            sell_date: Date of the sale
+            _sell_date: Date of the sale (reserved for future use)
 
         Returns:
             Total realized P/L for the sale (positive = profit, negative = loss)
@@ -123,8 +125,11 @@ def discord_dark_style():
     return mpf.make_mpf_style(base_mpf_style="charles", marketcolors=mc, rc=rc)
 
 
-# Discord theme only
-STYLES = {"discord": discord_dark_style()}
+# Available chart themes: discord (dark), yahoo (classic)
+STYLES = {
+    "discord": discord_dark_style(),
+    "yahoo": mpf.make_mpf_style(base_mpf_style="yahoo"),  # Built-in yahoo style
+}
 
 # Period/interval mapping with moving averages
 PERIOD_CONFIG = {
@@ -179,11 +184,13 @@ def get_moving_averages(period: str, interval: str) -> list:
 
 
 def get_chart_type(interval: str) -> str:
-    """Determine chart type based on interval"""
-    if interval in ["30m", "1h"]:
-        return "candle"  # candlestick for intraday
-    else:  # daily intervals and above
-        return "renko"  # renko for daily+
+    """Determine chart type based on interval - always uses candlestick.
+
+    Per user preference, we always use candlestick charts for better
+    readability of OHLC data across all timeframes.
+    """
+    # Always use candlestick charts for all intervals
+    return "candle"
 
 
 def should_show_volume(period: str) -> bool:
@@ -493,65 +500,6 @@ def create_cost_basis_line(
         return None, None
 
 
-def save_chart_metadata_to_db(
-    symbol: str,
-    period: str,
-    interval: str,
-    theme: str,
-    file_path: str,
-    trade_count: int,
-    min_trade_size: float,
-):
-    """
-    Save chart metadata to the chart_metadata table.
-
-    Args:
-        symbol: Stock ticker symbol
-        period: Time period for the chart
-        interval: Data interval used
-        theme: Chart theme applied
-        file_path: Full path to the saved chart file
-        trade_count: Number of trades plotted on the chart
-        min_trade_size: Minimum trade size filter applied
-    """
-    try:
-        from src.db import get_sync_engine
-        from sqlalchemy import text
-
-        current_timestamp = datetime.now()
-        engine = get_sync_engine()
-
-        with engine.begin() as conn:
-            conn.execute(
-                text(
-                    """
-                INSERT INTO chart_metadata 
-                (symbol, period, interval, theme, file_path, created_at, trade_count, min_trade_size)
-                VALUES (:symbol, :period, :interval, :theme, :file_path, :created_at, :trade_count, :min_trade_size)
-                ON CONFLICT (symbol, period, interval, theme) DO UPDATE SET
-                    file_path = EXCLUDED.file_path,
-                    created_at = EXCLUDED.created_at,
-                    trade_count = EXCLUDED.trade_count,
-                    min_trade_size = EXCLUDED.min_trade_size
-                """
-                ),
-                {
-                    "symbol": symbol,
-                    "period": period,
-                    "interval": interval,
-                    "theme": theme,
-                    "file_path": file_path,
-                    "created_at": current_timestamp,
-                    "trade_count": trade_count,
-                    "min_trade_size": min_trade_size,
-                },
-            )
-
-        print(f"✅ Saved chart metadata for {symbol} to database")
-    except Exception as e:
-        print(f"Error saving chart metadata: {e}")
-
-
 def create_chart_directory(symbol: str) -> Path:
     """
     Create and return the directory path for storing charts organized by symbol.
@@ -591,31 +539,55 @@ def register(bot: commands.Bot):
         ctx,
         symbol: Optional[str] = None,
         period: str = "1mo",
-        theme: str = "discord",
+        theme: str = "yahoo",
         min_trade: float = 0.0,
         interval: Optional[str] = None,
     ):
         """
-        Create a stock chart with specified parameters.
+        Create a stock chart with trade annotations and cost-basis lines.
 
-        Args:
-            symbol: Stock ticker symbol (required)
-            period: Time period (5d, 1mo, 3mo, 6mo, 1y, 2y, 10y)
-            theme: Chart theme (discord only)
-            min_trade: Minimum trade threshold (unused for now)
-            interval: Override default interval (30m, 1h, 1d, 5d, 1wk, 1mo, 3mo)
+        **Usage:**
+        `!chart SYMBOL [period] [theme] [min_trade] [interval]`
+
+        **Parameters:**
+        • symbol - Stock ticker (required), e.g. AAPL, TSLA
+        • period - Time period: 5d, 1mo, 3mo, 6mo, 1y, 2y, 10y, max
+        • theme  - Chart style: yahoo (classic), discord (dark)
+        • min_trade - Minimum trade size filter (default: 0)
+        • interval - Override interval: 30m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+
+        **Period → Default Interval → Moving Averages:**
+        • 5d  → 30m interval (no MAs, intraday)
+        • 1mo → 1d interval (20-day MA)
+        • 3mo → 1h interval (21, 50 MAs)
+        • 6mo → 1d interval (10, 21, 50 MAs)
+        • 1y  → 1d interval (21, 50, 100 MAs)
+        • 2y  → 1wk interval (4, 13, 26 week MAs)
+
+        **⚠️ Intraday Data Limits:**
+        • 30m, 1h intervals: Only last **60 days** available from yfinance
+        • For older data, use 1d or higher intervals
+
+        **Features:**
+        • 📈 Candlestick charts for all timeframes
+        • 📊 Volume bars for periods ≥1 year
+        • 🔺🔻 Trade markers (buy/sell) with FIFO P/L
+        • 🟡 Cost-basis line from positions
+        • 🔄 Falls back to cached prices if API fails
         """
         # Argument validation
         if symbol is None:
             await ctx.send(
-                "❌ **Error**: Symbol is required!\n\n**Usage Examples:**\n"
-                "`!chart AAPL` - Default 1mo chart\n"
+                "❌ **Error**: Symbol is required!\n\n"
+                "**Usage Examples:**\n"
+                "`!chart AAPL` - 1mo chart with yahoo theme\n"
                 "`!chart TSLA 3mo` - 3 month chart\n"
-                "`!chart NVDA 1y` - 1 year chart\n"
-                "`!chart AAPL 1y discord 0.0 5d` - 1 year chart with 5d interval\n\n"
-                "**Available periods:** 5d, 1mo, 3mo, 6mo, 1y, 2y, 10y, max\n"
-                "**Available themes:** discord\n"
-                "**Available intervals:** 30m, 1h, 1d, 5d, 1wk, 1mo, 3mo"
+                "`!chart NVDA 1y discord` - 1 year dark theme\n"
+                "`!chart AAPL 1y yahoo 0.0 5d` - 1y with 5-day interval\n\n"
+                "**Periods:** 5d, 1mo, 3mo, 6mo, 1y, 2y, 10y, max\n"
+                "**Themes:** yahoo (classic), discord (dark)\n"
+                "**Intervals:** 30m, 1h, 1d, 5d, 1wk, 1mo, 3mo\n\n"
+                "⚠️ **Note:** Intraday data (30m, 1h) only available for last 60 days"
             )
             return
 
@@ -678,24 +650,98 @@ def register(bot: commands.Bot):
                 start_date, end_date = calculate_chart_date_range(period)
 
                 # Download price data with enhanced error handling
-                try:
-                    data = yf.download(symbol, period=period, interval=final_interval)
+                data = None
+                data_source = "yfinance"
 
-                    if data is None or data.empty:
-                        await ctx.send(
-                            f"❌ **Market Data Error**: Could not find price data for **{symbol}**\n"
-                            f"• Symbol may be invalid or delisted\n"
-                            f"• Market may be closed for this symbol\n"
-                            f"• Try checking the symbol spelling or using a different symbol"
-                        )
-                        return
+                try:
+                    # Always use auto_adjust=False to suppress deprecation warnings
+                    # and get raw OHLC data without dividend/split adjustments
+                    data = yf.download(
+                        symbol,
+                        period=period,
+                        interval=final_interval,
+                        auto_adjust=False,  # Explicit to avoid future warnings
+                        progress=False,  # Suppress progress bar in bot context
+                    )
+
+                    # Verify OHLC columns exist before processing
+                    required_cols = ["Open", "High", "Low", "Close"]
+                    if data is not None and not data.empty:
+                        missing_cols = [
+                            c for c in required_cols if c not in data.columns
+                        ]
+                        if missing_cols:
+                            raise ValueError(f"Missing OHLC columns: {missing_cols}")
+
+                        # Ensure index is sorted (critical for mplfinance)
+                        data = data.sort_index()
+
+                        # Coerce all columns to numeric, coercing errors to NaN
+                        for col in data.columns:
+                            data[col] = pd.to_numeric(data[col], errors="coerce")
+
+                        # Drop rows with NaN in critical OHLC columns
+                        data = data.dropna(subset=required_cols)
 
                 except Exception as yf_error:
+                    # Log error but try fallback to cached data
+                    print(f"yfinance error for {symbol}: {yf_error}")
+                    data = None
+
+                # Fallback to cached daily_prices if yfinance failed or returned empty
+                if data is None or data.empty:
+                    try:
+                        from src.db import execute_sql
+
+                        # Query cached prices from daily_prices table
+                        cached_result = execute_sql(
+                            """
+                            SELECT date, open, high, low, close, volume
+                            FROM daily_prices
+                            WHERE symbol = :symbol
+                            ORDER BY date DESC
+                            LIMIT 500
+                            """,
+                            params={"symbol": symbol},
+                            fetch_results=True,
+                        )
+
+                        if cached_result:
+                            # Convert to DataFrame with proper structure for mplfinance
+                            data = pd.DataFrame(
+                                cached_result,
+                                columns=[
+                                    "Date",
+                                    "Open",
+                                    "High",
+                                    "Low",
+                                    "Close",
+                                    "Volume",
+                                ],
+                            )
+                            data["Date"] = pd.to_datetime(data["Date"])
+                            data.set_index("Date", inplace=True)
+                            data = data.sort_index()
+
+                            # Verify OHLC columns are numeric
+                            for col in ["Open", "High", "Low", "Close", "Volume"]:
+                                data[col] = pd.to_numeric(data[col], errors="coerce")
+                            data = data.dropna(subset=["Open", "High", "Low", "Close"])
+
+                            if not data.empty:
+                                data_source = "cached"
+
+                    except Exception as cache_error:
+                        print(f"Cache fallback error for {symbol}: {cache_error}")
+
+                # Final check - if still no data, send error
+                if data is None or data.empty:
                     await ctx.send(
-                        f"❌ **yfinance API Error**: Failed to fetch data for **{symbol}**\n"
-                        f"• Error: {str(yf_error)}\n"
-                        f"• This may be a temporary API issue\n"
-                        f"• Please try again in a few moments"
+                        f"❌ **Market Data Error**: Could not find price data for **{symbol}**\n"
+                        f"• Symbol may be invalid or delisted\n"
+                        f"• Market may be closed for this symbol\n"
+                        f"• No cached data available\n"
+                        f"• Try checking the symbol spelling or using a different symbol"
                     )
                     return
 
@@ -724,13 +770,15 @@ def register(bot: commands.Bot):
                     addplot_list.append(cost_basis_plot)
 
                 # Prepare plot arguments
+                # Build title with data source indicator
+                title_suffix = " [cached]" if data_source == "cached" else ""
                 plot_kwargs = {
                     "type": chart_type,
                     "style": style,
                     "volume": show_volume,
                     "returnfig": True,  # Get figure and axes for custom annotations
                     "figsize": (12, 8),
-                    "title": f"{symbol} - {period.upper()} Chart ({theme} theme)",
+                    "title": f"{symbol} - {period.upper()} Chart ({theme} theme){title_suffix}",
                 }
 
                 # Add moving averages if specified
@@ -848,18 +896,6 @@ def register(bot: commands.Bot):
                     )
                     return
 
-                # Log chart metadata to database if save was successful
-                if chart_saved_successfully:
-                    save_chart_metadata_to_db(
-                        symbol=symbol,
-                        period=period,
-                        interval=final_interval,
-                        theme=theme,
-                        file_path=str(chart_filepath),
-                        trade_count=trade_count,
-                        min_trade_size=min_trade,
-                    )
-
                 # Prepare response message with trade info and chart metadata
                 trade_info = ""
                 if not trade_data.empty:
@@ -891,17 +927,23 @@ def register(bot: commands.Bot):
                 chart_info = f" | Saved: {chart_filename}"
 
                 # Send chart with enhanced messaging
-                await ctx.send(
-                    f"📈 **{symbol}** - {period.upper()} Chart ({theme} theme){trade_info}{position_info}{chart_info}",
-                    file=discord.File(chart_filepath),
+                file = discord.File(chart_filepath, filename=chart_filename)
+                embed = build_embed(
+                    category=EmbedCategory.CHART,
+                    title=f"{symbol} - {period.upper()} Chart",
+                    description=f"Theme: {theme}{trade_info}{position_info}",
+                    image_url=f"attachment://{chart_filename}",
+                    footer_hint=f"Saved: {chart_filename}",
                 )
+                await ctx.send(embed=embed, file=file)
 
         except Exception as e:
             await ctx.send(
-                f"❌ **Unexpected Error** creating chart for **{symbol}**\n"
-                f"• Error: {str(e)}\n"
-                f"• Please check the symbol and try again\n"
-                f"• If the problem persists, contact support"
+                embed=EmbedFactory.error(
+                    title=f"Chart Error: {symbol}",
+                    description=str(e),
+                    error_details="Please check the symbol and try again.",
+                )
             )
 
         finally:
@@ -932,11 +974,11 @@ def register(bot: commands.Bot):
         """
         if symbol is None:
             await ctx.send(
-                "❌ **Error**: Symbol is required!\n\n"
-                "**Usage Examples:**\n"
-                "`!position AAPL` - 1 year position analysis\n"
-                "`!position TSLA 6mo` - 6 month position analysis\n"
-                "`!position NVDA max` - All-time position analysis"
+                embed=EmbedFactory.error(
+                    title="Missing Symbol",
+                    description="Symbol is required!",
+                    error_details="Usage Examples:\n`!position AAPL` - 1 year position analysis\n`!position TSLA 6mo` - 6 month position analysis",
+                )
             )
             return
 
@@ -947,8 +989,11 @@ def register(bot: commands.Bot):
         valid_periods = ["1mo", "3mo", "6mo", "1y", "2y", "max"]
         if period not in valid_periods:
             await ctx.send(
-                f"❌ **Error**: Invalid period '{period}'\n\n"
-                "**Available periods:** " + ", ".join(valid_periods)
+                embed=EmbedFactory.error(
+                    title="Invalid Period",
+                    description=f"Invalid period '{period}'",
+                    error_details="Available periods: " + ", ".join(valid_periods),
+                )
             )
             return
 
@@ -963,15 +1008,33 @@ def register(bot: commands.Bot):
                 # Check if report indicates an error or no data
                 if report.startswith("❌"):
                     await ctx.send(
-                        f"📊 **No Position Data Found for {symbol}**\n\n"
-                        f"• No trades found in the {period} period\n"
-                        f"• Use `!chart {symbol}` to see price movement\n"
-                        f"• Try a longer period if you have older trades"
+                        embed=EmbedFactory.create(
+                            title=f"No Position Data Found for {symbol}",
+                            description=(
+                                f"• No trades found in the {period} period\n"
+                                f"• Use `!chart {symbol}` to see price movement\n"
+                                f"• Try a longer period if you have older trades"
+                            ),
+                            category=EmbedCategory.WARNING,
+                        )
                     )
                     return
 
                 # Send the position analysis report
-                await ctx.send(report)
+                # Parse the report title from the first line if possible, or use generic
+                lines = report.strip().split("\n")
+                title = (
+                    lines[0].replace("**", "").strip()
+                    if lines
+                    else f"Position Analysis: {symbol}"
+                )
+                content = "\n".join(lines[1:]) if len(lines) > 1 else report
+
+                await ctx.send(
+                    embed=EmbedFactory.create(
+                        title=title, description=content, category=EmbedCategory.CHART
+                    )
+                )
 
                 # Also provide a suggestion for chart viewing
                 await ctx.send(

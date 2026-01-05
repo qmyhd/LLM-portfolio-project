@@ -5,11 +5,17 @@ from discord.ext import commands as dpy_cmds  # rename the import
 
 __all__ = ["create_bot"]
 
+
 def create_bot(command_prefix: str = "!", twitter_client=None):
     intents = discord.Intents.default()
     intents.message_content = True
 
     bot = dpy_cmds.Bot(command_prefix=command_prefix, intents=intents)
+
+    # Set up custom help command
+    from .help import setup_help
+
+    setup_help(bot)
 
     from .commands import register_commands  # ok – this no longer shadows dpy_cmds
     from .events import register_events

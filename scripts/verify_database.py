@@ -383,6 +383,131 @@ class DatabaseSchemaVerifier:
             },
         }
 
+    def verify_rls_status(self) -> Dict[str, Any]:
+        """
+        Verify Row-Level Security (RLS) is enabled on all tables.
+
+        Queries pg_catalog.pg_class to check relrowsecurity flag for each table.
+        All operational tables should have RLS enabled for security compliance.
+
+        Returns:
+            Dict with RLS status for each table and summary statistics
+        """
+        results = {
+            "timestamp": datetime.now().isoformat(),
+            "schema_checked": "public",  # Document which schema is checked
+            "tables_checked": 0,
+            "tables_with_rls": 0,
+            "tables_without_rls": 0,
+            "table_status": {},
+            "missing_rls": [],
+            "summary": {},
+        }
+
+        if not self.inspector:
+            results["summary"] = {
+                "status": "failed",
+                "error": "Database not connected",
+            }
+            return results
+
+        try:
+            # Query PostgreSQL system catalog for RLS status
+            query = text(
+                """
+                SELECT 
+                    c.relname AS table_name,
+                    c.relrowsecurity AS rls_enabled,
+                    COALESCE(pol_count.count, 0) AS policy_count
+                FROM pg_catalog.pg_class c
+                LEFT JOIN (
+                    SELECT tablename, COUNT(*) as count
+                    FROM pg_catalog.pg_policies
+                    WHERE schemaname = 'public'
+                    GROUP BY tablename
+                ) pol_count ON c.relname = pol_count.tablename
+                WHERE c.relnamespace = (
+                    SELECT oid FROM pg_catalog.pg_namespace WHERE nspname = 'public'
+                )
+                AND c.relkind = 'r'  -- Only regular tables
+                ORDER BY c.relname
+            """
+            )
+
+            with self.engine.connect() as conn:
+                result = conn.execute(query)
+                db_rls_status = {
+                    row[0]: {"enabled": row[1], "policies": row[2]} for row in result
+                }
+
+            # Check each expected table
+            for table_name in self.expected_schemas.keys():
+                results["tables_checked"] += 1
+
+                if table_name in db_rls_status:
+                    rls_info = db_rls_status[table_name]
+                    rls_enabled = rls_info["enabled"]
+                    policy_count = rls_info["policies"]
+
+                    results["table_status"][table_name] = {
+                        "rls_enabled": rls_enabled,
+                        "policy_count": policy_count,
+                        "status": "✅ Enabled" if rls_enabled else "❌ Disabled",
+                    }
+
+                    if rls_enabled:
+                        results["tables_with_rls"] += 1
+                    else:
+                        results["tables_without_rls"] += 1
+                        results["missing_rls"].append(table_name)
+
+                    if self.verbose:
+                        status_symbol = "✅" if rls_enabled else "❌"
+                        logger.info(
+                            f"  {status_symbol} {table_name}: RLS={'enabled' if rls_enabled else 'DISABLED'}, "
+                            f"Policies={policy_count}"
+                        )
+                else:
+                    results["table_status"][table_name] = {
+                        "rls_enabled": None,
+                        "policy_count": 0,
+                        "status": "⚠️  Table not found",
+                        "error": "Table does not exist in database",
+                    }
+                    if self.verbose:
+                        logger.warning(
+                            f"  ⚠️  {table_name}: Table not found in database"
+                        )
+
+            # Generate summary
+            all_have_rls = results["tables_without_rls"] == 0
+            results["summary"] = {
+                "status": "success" if all_have_rls else "failed",
+                "all_tables_have_rls": all_have_rls,
+                "compliance_percentage": (
+                    round(
+                        (results["tables_with_rls"] / results["tables_checked"]) * 100,
+                        1,
+                    )
+                    if results["tables_checked"] > 0
+                    else 0
+                ),
+                "message": (
+                    f"✅ All {results['tables_with_rls']} tables have RLS enabled"
+                    if all_have_rls
+                    else f"❌ {results['tables_without_rls']} table(s) missing RLS: {', '.join(results['missing_rls'])}"
+                ),
+            }
+
+        except SQLAlchemyError as e:
+            logger.error(f"Error verifying RLS status: {e}")
+            results["summary"] = {
+                "status": "error",
+                "error": str(e),
+            }
+
+        return results
+
     def verify_basic(self) -> Dict[str, Any]:
         """Basic verification: connectivity and table existence."""
         results = {
@@ -495,11 +620,35 @@ class DatabaseSchemaVerifier:
         results["column_verification"] = column_results
         results["constraint_verification"] = constraint_results
 
+        # RLS verification (if not checking specific table)
+        if not specific_table:
+            if self.verbose:
+                logger.info("\n🔒 Verifying Row-Level Security (RLS) status...")
+            rls_results = self.verify_rls_status()
+            results["rls_verification"] = rls_results
+
+            # Add RLS issues to total count
+            if not rls_results["summary"].get("all_tables_have_rls", True):
+                total_issues += rls_results["tables_without_rls"]
+
         # Summary
         results["summary"] = {
             "status": "success" if total_issues == 0 else "failed",
             "tables_checked": len(tables_to_check),
             "total_issues": total_issues,
+            # Include table existence info from table_results (for print_basic_results)
+            "total_expected_tables": results.get("table_verification", {}).get(
+                "expected_count", 0
+            ),
+            "existing_tables": len(
+                results.get("table_verification", {}).get("existing_tables", [])
+            ),
+            "missing_tables": len(
+                results.get("table_verification", {}).get("missing_tables", [])
+            ),
+            "extra_tables": len(
+                results.get("table_verification", {}).get("extra_tables", [])
+            ),
             "has_missing_columns": any(
                 len(cr.get("missing_columns", [])) > 0 for cr in column_results.values()
             ),
@@ -511,6 +660,15 @@ class DatabaseSchemaVerifier:
                 for cr in constraint_results.values()
             ),
         }
+
+        # Add RLS summary if checked
+        if not specific_table and "rls_verification" in results:
+            results["summary"]["has_rls_issues"] = not results["rls_verification"][
+                "summary"
+            ].get("all_tables_have_rls", True)
+            results["summary"]["rls_compliance"] = results["rls_verification"][
+                "summary"
+            ].get("compliance_percentage", 0)
 
         return results
 
@@ -719,6 +877,26 @@ def print_comprehensive_results(results: Dict[str, Any], verbose: bool):
 
     if not constraint_issues:
         print(f"   ✅ All constraints verified successfully")
+
+    # Show RLS verification if available
+    rls_verification = results.get("rls_verification")
+    if rls_verification:
+        rls_summary = rls_verification.get("summary", {})
+        schema_checked = rls_verification.get("schema_checked", "public")
+
+        print(f"\n🔒 ROW-LEVEL SECURITY (RLS) VERIFICATION")
+        print(f"   Schema Checked: {schema_checked}")
+        print(f"   Tables Checked: {rls_verification.get('tables_checked', 0)}")
+        print(f"   Tables with RLS: {rls_verification.get('tables_with_rls', 0)}")
+        print(f"   Tables without RLS: {rls_verification.get('tables_without_rls', 0)}")
+        print(f"   Compliance: {rls_summary.get('compliance_percentage', 0):.1f}%")
+
+        if rls_verification.get("missing_rls"):
+            print(f"\n   ❌ Tables Missing RLS Policies:")
+            for table in rls_verification["missing_rls"]:
+                print(f"      • {table}")
+        else:
+            print(f"   ✅ All tables have RLS enabled")
 
 
 def print_performance_results(results: Dict[str, Any], verbose: bool):
