@@ -125,12 +125,7 @@ CREATE TABLE IF NOT EXISTS "public"."orders" (
     "option_expiry" date,
     "option_strike" numeric,
     "option_right" text,
-    "diary" text,
-    "parent_brokerage_order_id" text,
-    "state" text,
-    "user_secret" text,
     "sync_timestamp" text DEFAULT CURRENT_TIMESTAMP,
-    "quote_currency_code" text,
     CONSTRAINT "orders_status_check" CHECK (("status" = ANY (ARRAY['PENDING'::text, 'EXECUTED'::text, 'CANCELED'::text, 'REJECTED'::text, 'EXPIRED'::text, 'FILLED'::text, 'PARTIAL'::text]))),
     CONSTRAINT "orders_action_check" CHECK (("action" = ANY (ARRAY['BUY'::text, 'SELL'::text, 'BUY_OPEN'::text, 'SELL_CLOSE'::text, 'BUY_TO_COVER'::text, 'SELL_SHORT'::text])))
 );
@@ -361,8 +356,9 @@ CREATE TABLE IF NOT EXISTS "public"."schema_migrations" (
 ALTER TABLE ONLY "public"."accounts"
     ADD CONSTRAINT "accounts_pkey" PRIMARY KEY ("id");
 
+-- CORRECTED: PK order updated to match live DB after migrations 015 & 017
 ALTER TABLE ONLY "public"."account_balances"
-    ADD CONSTRAINT "account_balances_pkey" PRIMARY KEY ("account_id", "currency_code", "snapshot_date");
+    ADD CONSTRAINT "account_balances_pkey" PRIMARY KEY ("currency_code", "snapshot_date", "account_id");
 
 ALTER TABLE ONLY "public"."positions"
     ADD CONSTRAINT "positions_pkey" PRIMARY KEY ("symbol", "account_id");
@@ -373,11 +369,13 @@ ALTER TABLE ONLY "public"."orders"
 ALTER TABLE ONLY "public"."symbols"
     ADD CONSTRAINT "symbols_pkey" PRIMARY KEY ("id");
 
+-- CORRECTED: PK order updated to match live DB after migration 017
 ALTER TABLE ONLY "public"."daily_prices"
-    ADD CONSTRAINT "daily_prices_pkey" PRIMARY KEY ("symbol", "date");
+    ADD CONSTRAINT "daily_prices_pkey" PRIMARY KEY ("date", "symbol");
 
+-- CORRECTED: PK order updated to match live DB after migration 017
 ALTER TABLE ONLY "public"."realtime_prices"
-    ADD CONSTRAINT "realtime_prices_pkey" PRIMARY KEY ("symbol", "timestamp");
+    ADD CONSTRAINT "realtime_prices_pkey" PRIMARY KEY ("timestamp", "symbol");
 
 ALTER TABLE ONLY "public"."stock_metrics"
     ADD CONSTRAINT "stock_metrics_pkey" PRIMARY KEY ("date", "symbol");
@@ -478,10 +476,7 @@ COMMENT ON COLUMN "public"."orders"."option_ticker" IS 'Underlying ticker for op
 COMMENT ON COLUMN "public"."orders"."option_expiry" IS 'Option expiration date stored as DATE type - enables proper date calculations';
 COMMENT ON COLUMN "public"."orders"."option_strike" IS 'Option strike price';
 COMMENT ON COLUMN "public"."orders"."option_right" IS 'Option type: CALL or PUT';
-COMMENT ON COLUMN "public"."orders"."diary" IS 'Trade diary notes and annotations';
-COMMENT ON COLUMN "public"."orders"."parent_brokerage_order_id" IS 'Parent order ID for multi-leg strategies';
-COMMENT ON COLUMN "public"."orders"."state" IS 'Order state for lifecycle tracking';
-COMMENT ON COLUMN "public"."orders"."user_secret" IS 'Legacy user secret field for backwards compatibility';
+
 
 COMMENT ON COLUMN "public"."discord_messages"."user_id" IS 'Additional user identifier for Discord message correlation';
 COMMENT ON COLUMN "public"."discord_messages"."author_id" IS 'Discord user ID stored as BIGINT - snowflake format for efficient operations';
