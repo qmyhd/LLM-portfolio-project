@@ -84,8 +84,10 @@ Twitter/X API + yfinance → Real-time market sentiment & brokerage data
 - **Database Engine**: PostgreSQL-only with SQLAlchemy 2.0, Supabase pooler optimization (port 6543)
 - **Configuration**: Pydantic-based settings with comprehensive environment variable mapping
 - **Error Handling**: Hardened retry patterns with intelligent exception filtering
-- **Bot System**: Modular Discord commands with Twitter integration and advanced charting
-- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 017_timestamp_field_migration.sql)
+- **Bot System**: Modular Discord commands with Twitter integration, advanced charting, and centralized UI design system
+- **UI System**: Standardized embed factory with color coding, interactive views (portfolio filters, help dropdown), and pagination
+- **NLP Pipeline**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
+- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 048_drop_unused_nlp_indexes.sql, 24 tables)
 
 ## 📁 Project Map & Service Purposes
 
@@ -106,8 +108,7 @@ src/
 │   └── twitter_analysis.py           # Twitter/X integration and sentiment analysis
 │
 ├── 💾 Database Management  
-│   ├── db.py                         # Advanced SQLAlchemy engine: get_connection() → PostgreSQL/SQLite with pooling
-
+│   ├── db.py                         # Advanced SQLAlchemy engine: get_connection() → PostgreSQL with pooling
 │   └── config.py                     # Unified configuration: Pydantic settings with field mapping
 │
 ├── 🧠 Processing Engine
@@ -116,39 +117,63 @@ src/
 │   ├── position_analysis.py          # Advanced position tracking and analytics
 │   └── chart_enhancements.py         # Enhanced charting with position overlays
 │
+├── 🧪 NLP Pipeline (OpenAI Structured Outputs)
+│   └── nlp/
+│       ├── openai_parser.py          # LLM parser with model routing (triage → main → escalation)
+│       │                              # Includes candidate_tickers hint + post-validation
+│       ├── schemas.py                # Pydantic schemas: ParsedIdea, MessageParseResult, 13 TradingLabels
+│       ├── soft_splitter.py          # Deterministic message splitting for long content
+│       └── preclean.py               # Ticker accuracy: ALIAS_MAP, RESERVED_SIGNAL_WORDS (80+ terms)
+│                                      # extract_candidate_tickers(), validate_llm_tickers()
+│
 └── 🤖 Bot Infrastructure
     └── bot/
         ├── bot.py                     # Discord bot entry point
         ├── events.py                  # Event handlers in events.py
-        └── commands/                  # Commands in commands/ subdirectory
-            ├── chart.py               # Advanced charting with FIFO position tracking
-            ├── history.py             # Message history fetching with deduplication  
-            ├── process.py             # Channel data processing and statistics
-            ├── twitter_cmd.py         # Twitter data analysis commands
-            └── eod.py                 # End-of-day stock data queries
+        ├── help.py                    # Interactive help with dropdown categories
+        ├── commands/                  # Commands in commands/ subdirectory
+        │   ├── chart.py               # Advanced charting with FIFO position tracking
+        │   ├── history.py             # Message history fetching with deduplication  
+        │   ├── process.py             # Channel data processing and statistics
+        │   ├── snaptrade_cmd.py       # Portfolio, orders, movers, and brokerage status
+        │   ├── twitter_cmd.py         # Twitter data analysis commands
+        │   └── eod.py                 # End-of-day stock data queries
+        └── ui/                        # Centralized UI design system
+            ├── embed_factory.py       # Standardized embed builder with color coding
+            ├── pagination.py          # Base class for paginated views
+            ├── portfolio_view.py      # Interactive portfolio with filters
+            └── help_view.py           # Dropdown-based help navigation
 ```
 
 ### Schemas & Migration
 ```
 schema/
-├── 000_baseline.sql                  # SSOT baseline schema with 16 confirmed tables
-├── 014_security_and_performance_fixes.sql # Security and performance improvements
-├── 015_primary_key_alignment.sql     # Primary key alignment with live database
-├── 016_complete_rls_policies.sql     # Complete RLS policy implementation
-├── 017_timestamp_field_migration.sql # Modern PostgreSQL timestamp/date type migration
-└── archive/                          # Archived legacy migration files (001-013)
+├── 000_baseline.sql                  # SSOT baseline schema with 18 confirmed tables
+├── 015-026_*.sql                     # Core migrations (RLS, timestamps, cleanup, Twitter)
+├── 027_institutional_holdings.sql    # Institutional holdings table
+├── 028_add_raw_symbol_to_positions.sql # Raw symbol column
+├── 029_fix_account_balances_pk.sql   # Account balances PK fix
+├── 030-038_*.sql                     # Discord chunks, stock mentions, LLM tagging columns
+├── 039_add_parse_status_to_discord_messages.sql # NLP parse status tracking
+├── 040_create_discord_parsed_ideas.sql # Core NLP parsed ideas table
+├── 041_fix_parsed_ideas_message_id_type.sql # Fix message_id type to bigint
+└── 042_add_chunk_indexing_columns.sql # Add soft_chunk_index, local_idea_index, unique constraint
 
 scripts/
 ├── bootstrap.py                      # Comprehensive database setup and migration
 ├── deploy_database.py                # Unified database deployment system
 ├── schema_parser.py                  # Schema parsing and dataclass generation
-├── verify_schemas.py                 # Schema validation (validated 16 tables)
-└── validate_timestamp_migration.py   # Timestamp migration validation
+├── verify_database.py                # Unified schema validation (24 tables, FKs, constraints)
+└── nlp/                              # NLP processing scripts
+    ├── parse_messages.py             # Live message parsing with OpenAI
+    ├── build_batch.py                # Batch API request builder
+    ├── run_batch.py                  # Submit batch jobs to OpenAI
+    └── ingest_batch.py               # Ingest batch results to database
 ```
 
 ### Data Conventions
-- **Dual persistence**: CSV files in `data/raw/` + SQLite tables for historical data
-- **Database fallback**: Automatic SQLite fallback when PostgreSQL unavailable via `get_database_url()`
+- **PostgreSQL-only**: All data persists to Supabase PostgreSQL with CSV backup for historical data
+- **Database requirement**: PostgreSQL/Supabase connection required via `get_database_url()` (no SQLite fallback)
 - **Symbol extraction**: Robust regex patterns for `$TICKER` format, handles complex API responses
 - **Sentiment scoring**: TextBlob integration with numerical values (-1.0 to 1.0)
 
@@ -200,12 +225,10 @@ cp .env.example .env  # Edit with your API keys
 ```bash
 # Database initialization and migration
 make init-db      # Create tables + enable RLS policies
-make migrate      # SQLite → PostgreSQL migration  
 make verify-migration  # Check migration status
 
 # Manual database operations (if Makefile unavailable)
-python scripts/init_database.py         # Initialize with RLS policies
-python scripts/migrate_sqlite.py        # Migrate SQLite → PostgreSQL
+python scripts/deploy_database.py       # Deploy schema to Supabase PostgreSQL
 
 # pgloader migration (requires pgloader installed)
 # Bootstrap handles this automatically, but for manual:
@@ -308,35 +331,37 @@ TWITTER_BEARER_TOKEN=your_bearer_token
 - **Real-time writes**: All operations use `execute_sql()` → Supabase PostgreSQL with connection pooling
 - **🚨 KEY REQUIREMENT**: Must use `SUPABASE_SERVICE_ROLE_KEY` in connection string to bypass RLS policies
 
-### Key Tables (17 confirmed)
+### Key Tables (20+ confirmed)
 ```sql
 -- SnapTrade Integration (5 core tables) 
-accounts, balances, positions, orders, holdings
+accounts, account_balances, positions, orders, symbols
 
 -- Market Data & Analytics
-price_history, stock_metrics, position_analysis
+daily_prices, realtime_prices, stock_metrics
 
 -- Discord/Social Integration
-discord_messages, discord_message_analysis
+discord_messages, discord_market_clean, discord_trading_clean, discord_processing_log
+
+-- NLP Parsed Ideas (NEW)
+discord_parsed_ideas  -- Unique constraint: (message_id, soft_chunk_index, local_idea_index)
 
 -- Twitter/X Integration  
-twitter_posts, twitter_analysis
+twitter_data
 
 -- System Configuration
-trading_settings, data_refresh_log, migration_history
+processing_status, schema_migrations
 
--- Additional Tables
-symbols, user_preferences, portfolio_snapshots
+-- Event Contracts & Institutional
+event_contract_trades, event_contract_positions, institutional_holdings
 ```
 
-### Migration Pipeline
+### Schema Validation
 ```bash
-# Complete migration from SQLite to PostgreSQL
-python scripts/migrate_sqlite.py --all
+# Verify database schema compliance
+python scripts/verify_database.py --verbose
 
-# Verify migration status
+# Validate post-migration status
 python scripts/validate_post_migration.py
-python scripts/verify_schemas.py --verbose
 ```
 
 ### pgloader Migration System (Advanced)
@@ -427,8 +452,8 @@ python -c "from src.db import execute_sql; print(execute_sql('SELECT COUNT(*) FR
 # Configuration validation
 python -c "from src.config import settings; print(settings().model_dump())"
 
-# Schema validation (validated all 16 tables including Position dataclass)
-python scripts/verify_schemas.py --verbose
+# Schema validation (validated all 24 tables including foreign keys and constraints)
+python scripts/verify_database.py --verbose
 ```
 
 ### 📊 Health Monitoring & System Checks
@@ -477,12 +502,23 @@ conn = get_connection()  # Should return SQLite connection
 ```bash
 # In Discord channels:
 !history [limit]              # Fetch message history with deduplication
-!process [channel_type]       # Process current channel messages
-!stats                        # Show channel statistics  
+!process [channel_type]       # Process current channel messages (raw ingestion + cleaning)
+!backfill [channel_type]      # One-time historical data collection
 !chart SYMBOL [period] [type] # Generate advanced charts with position tracking
 !twitter [SYMBOL]             # Show Twitter data and sentiment analysis
 !EOD                          # Interactive end-of-day stock data lookup
+!peekraw [limit]              # Debug: Show raw message JSON
 ```
+
+### Data Flow: !process vs NLP Parsing
+```
+!process command:     Discord → discord_messages → discord_*_clean (ticker extraction, sentiment)
+                      ↓ (Raw ingestion + basic cleaning)
+                      
+parse_messages.py:    discord_messages → OpenAI LLM → discord_parsed_ideas (structured ideas)
+                      ↓ (Advanced NLP parsing)
+```
+Both are needed! `!process` populates `discord_messages`, which NLP parsing then consumes.
 
 ### Bot Architecture
 - **Command registration**: Each command file in `commands/` has `register(bot)` function
@@ -580,6 +616,22 @@ from src.market_data import get_positions, get_recent_trades
 ### Text Processing
 ```python
 from src.message_cleaner import extract_ticker_symbols, calculate_sentiment, clean_text
+```
+
+### NLP Pipeline (Ticker Accuracy)
+```python
+from src.nlp.preclean import (
+    extract_candidate_tickers,      # Deterministic pre-LLM ticker extraction
+    validate_llm_tickers,           # Post-validate LLM output against candidates
+    is_reserved_signal_word,        # Check if word is trading terminology  
+    apply_alias_mapping,            # Company names → ticker symbols
+    is_bot_command,                 # Detect bot commands (!help, !!chart, etc.)
+    RESERVED_SIGNAL_WORDS,          # 80+ trading terms that never become tickers
+    ALIAS_MAP,                      # ~100 company→ticker mappings
+)
+
+from src.nlp.openai_parser import process_message, parse_message
+from src.nlp.schemas import ParsedIdea, MessageParseResult, TradingLabels
 ```
 
 ### Database Operations

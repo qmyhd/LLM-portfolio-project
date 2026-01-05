@@ -10,8 +10,7 @@ Primary market data collection module with yfinance integration and CSV handling
 
 **Key Functions:**
 - `fetch_realtime_prices(symbols=None)` → DataFrame: Get current market prices
-- `append_discord_message_to_csv(message, csv_path)`: Log Discord messages to CSV
-- `extract_symbol_from_data(data, fallback_key='symbol')` → str: Extract ticker symbols from nested data
+- `extract_symbol_from_data(data, fallback_key='symbol')` → str: Extract ticker from nested data
 - `save_positions_to_csv(positions_data, csv_path)`: Save portfolio positions
 - `save_orders_to_csv(orders_data, csv_path)`: Save order history
 
@@ -19,7 +18,7 @@ Primary market data collection module with yfinance integration and CSV handling
 
 **Class: `SnapTradeCollector`**
 
-Dedicated SnapTrade API integration with enhanced field extraction and dual database persistence.
+SnapTrade API integration with field extraction and database persistence.
 
 **Constructor:**
 ```python
@@ -27,11 +26,11 @@ SnapTradeCollector(user_id: str = "default_user", enable_parquet: bool = False)
 ```
 
 **Key Methods:**
-- `get_accounts()` → DataFrame: Retrieve account information with full field extraction
+- `get_accounts()` → DataFrame: Retrieve account information
 - `get_balances()` → DataFrame: Get account balances and cash positions  
-- `get_positions()` → DataFrame: Current portfolio positions with calculated equity
+- `get_positions()` → DataFrame: Current portfolio positions
 - `get_orders()` → DataFrame: Order history with execution details
-- `get_all_data()` → Dict: Comprehensive data collection from all endpoints
+- `get_all_data()` → Dict: Data collection from all endpoints
 - `upsert_accounts_table(accounts_data)` → bool: Database persistence for accounts
 - `upsert_balances_table(balances_data)` → bool: Database persistence for balances
 - `upsert_positions_table(positions_data)` → bool: Database persistence for positions
@@ -45,7 +44,7 @@ SnapTradeCollector(user_id: str = "default_user", enable_parquet: bool = False)
 
 #### `src.message_cleaner`
 
-Discord message cleaning and processing module with centralized logic.
+Discord message cleaning and processing.
 
 **Key Functions:**
 - `extract_ticker_symbols(text)` → List[str]: Extract $TICKER symbols from text
@@ -60,49 +59,29 @@ Production wrapper for Discord message processing.
 
 **Key Functions:**
 - `process_channel_data(channel_name, channel_type="general")` → Dict: Fetch → clean → write pipeline
-- `get_channel_stats(channel_name=None)` → Dict: Statistics for processed channels
+- `parse_messages_with_llm(message_ids=None, limit=100)` → Dict: LLM parsing pipeline
 
 ### Database Management
 
 #### `src.db`
 
-Unified database abstraction layer supporting SQLite and PostgreSQL with SQLAlchemy.
-
-**Key Functions:**
-- PostgreSQL-only: All database operations now use Supabase PostgreSQL exclusively (SQLite fallback removed)
-- `get_connection(path=DB_PATH)`: Get database connection with fallback logic
-- `execute_sql(query, params=None, fetch_results=False)`: Execute SQL with parameter binding
-- `get_table_info(table_name)` → List: Get table schema information
-- `table_exists(table_name)` → bool: Check if table exists
-
-#### `src.db`
-
-Advanced SQLAlchemy engine management with connection pooling.
+PostgreSQL database engine with SQLAlchemy 2.0 and connection pooling.
 
 **Key Functions:**
 - `get_sync_engine()`: Get synchronous SQLAlchemy engine with pooling
 - `get_async_engine()`: Get asynchronous SQLAlchemy engine  
 - `get_connection()`: Get database connection from engine
+- `execute_sql(query, params=None, fetch_results=False)`: Execute SQL with parameter binding
 - `execute_query(query, params=None)`: Execute query with connection management
-- `test_connection()` → Dict: Comprehensive connection testing
+- `test_connection()` → Dict: Connection testing
 - `healthcheck()` → bool: Database health verification
-- `get_database_size()` → str: Get database size information
-
-#### `src.supabase_writers`
-
-**Class: `DirectSupabaseWriter`**
-
-Direct real-time data writers for Supabase integration.
-
-**Methods:**
-- `write_position_data(positions_data)` → bool: Write position data to Supabase
-- `write_order_data(orders_data)` → bool: Write order data to Supabase  
-- `write_discord_message(message_data)` → bool: Write Discord message data
-- `write_price_data(price_data)` → bool: Write market price data
+- `get_database_size()` → str: Database size information
+- `get_table_info(table_name)` → List: Table schema information
+- `table_exists(table_name)` → bool: Check if table exists
 
 #### `src.market_data`
 
-Consolidated portfolio and trade data queries (replaces portfolio.py + trades.py).
+Portfolio and trade data queries.
 
 **Key Functions:**
 - `get_positions()` → DataFrame: All current portfolio positions from latest sync
@@ -115,7 +94,7 @@ Consolidated portfolio and trade data queries (replaces portfolio.py + trades.py
 
 #### `src.message_cleaner`
 
-Text processing and ticker symbol extraction with sentiment analysis.
+Text processing and ticker extraction with sentiment analysis.
 
 **Key Functions:**
 - `extract_ticker_symbols(text)` → List[str]: Extract $TICKER symbols using regex
@@ -128,7 +107,7 @@ Text processing and ticker symbol extraction with sentiment analysis.
 
 #### `src.twitter_analysis`
 
-Twitter/X integration with sentiment analysis and URL extraction.
+Twitter/X integration with sentiment analysis.
 
 **Key Functions:**
 - `detect_twitter_links(text)` → List[str]: Extract Twitter/X URLs from text
@@ -141,7 +120,7 @@ Twitter/X integration with sentiment analysis and URL extraction.
 
 #### `src.journal_generator`
 
-LLM integration for automated journal generation with dual output formats.
+LLM integration for journal generation with dual output formats.
 
 **Key Functions:**
 - `main(force_refresh=False, output_dir=None)`: Primary journal generation entry point
@@ -179,7 +158,7 @@ Event handlers for Discord message processing.
 
 **Class: `FIFOPositionTracker`**
 
-Advanced charting with FIFO position tracking and technical analysis.
+FIFO position tracking for P/L calculation.
 
 **Methods:**
 - `add_buy(shares, price, date)`: Add buy order to position queue
@@ -214,7 +193,7 @@ Twitter data analysis commands.
 
 #### `src.config`
 
-Centralized configuration management with Pydantic validation.
+Configuration management with Pydantic validation.
 
 **Class: `Settings`**
 
@@ -246,7 +225,7 @@ Centralized configuration management with Pydantic validation.
 
 #### `src.retry_utils`
 
-Hardened retry decorator with intelligent exception handling.
+Retry decorator with exception handling.
 
 **Decorator:**
 ```python
@@ -274,7 +253,7 @@ Database logging utilities with Twitter integration.
 
 **Class: `CSVCleaner`**
 
-Robust CSV cleaning with data validation and sanitization.
+CSV cleaning with data validation.
 
 **Constructor:**
 ```python
@@ -282,7 +261,7 @@ CSVCleaner(table_name: str)
 ```
 
 **Methods:**
-- `clean_csv(csv_path, output_path=None)` → DataFrame: Comprehensive CSV cleaning
+- `clean_csv(csv_path, output_path=None)` → DataFrame: CSV cleaning
 - `_clean_numeric_column(series, col_name)` → Series: Safe numeric conversion
 - `_clean_orders_table(df)` → DataFrame: Orders-specific cleaning rules
 - `_clean_discord_table(df)` → DataFrame: Discord messages cleaning
@@ -298,13 +277,13 @@ CSVCleaner(table_name: str)
 
 #### `src.position_analysis`
 
-Advanced position tracking and analytics.
+Position tracking and analytics.
 
 **Key Functions:**
-- `analyze_position_history(symbol, start_date, end_date)` → Dict: Complete position analysis
+- `analyze_position_history(symbol, start_date, end_date)` → Dict: Position analysis
 - `get_current_position_size(symbol)` → float: Current position size
 - `calculate_unrealized_pnl(symbol)` → float: Unrealized profit/loss
-- `generate_position_report(symbol)` → str: Comprehensive position report
+- `generate_position_report(symbol)` → str: Position report
 
 #### `src.chart_enhancements`
 
@@ -400,14 +379,9 @@ GEMINI_API_KEY=AIza...
 
 ### Database URLs
 ```ini
-# SQLite (Local Development)
-DATABASE_URL=sqlite:///data/database/price_history.db
-
 # PostgreSQL (Production)
 DATABASE_URL=postgresql://user:password@localhost:5432/portfolio_db
 
 # Supabase (Cloud)
 DATABASE_URL=postgresql://user:password@db.supabase.co:5432/postgres
 ```
-
-This API reference provides comprehensive documentation for all modules, classes, and functions in the LLM Portfolio Journal system.

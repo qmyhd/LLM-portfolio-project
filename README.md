@@ -138,8 +138,8 @@ Must use **`SUPABASE_SERVICE_ROLE_KEY`** (starts with `sb_secret_`) in connectio
 
 ### Production Architecture
 - **PostgreSQL/Supabase**: Enterprise database with RLS policies and connection pooling
-- **16 Tables**: Comprehensive schema for positions, orders, market data, and social sentiment
-- **Automated Migration**: Schema versioning and migration system included
+- **24 Tables**: Comprehensive schema for positions, orders, market data, NLP pipeline, and social sentiment
+- **Automated Migration**: Schema versioning and migration system (33 migrations)
 
 ## 💡 Usage Examples
 
