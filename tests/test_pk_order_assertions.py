@@ -14,36 +14,39 @@ from pathlib import Path
 def test_primary_key_order_assertions():
     """Test that asserts exact PK order per table equals live snapshot"""
 
-    # Live snapshot PK orders (from latest validation - 2025-01-27)
+    # Live snapshot PK orders (from latest validation - 2026-01-02)
+    # Note: 5 legacy tables dropped in migration 049_drop_legacy_tables.sql:
+    # - discord_message_chunks, discord_idea_units, stock_mentions,
+    # - discord_processing_log, chart_metadata
     LIVE_SNAPSHOT_PK_ORDERS = {
         "account_balances": ["currency_code", "snapshot_date", "account_id"],
         "accounts": ["id"],
-        "chart_metadata": ["symbol", "period", "interval", "theme"],
         "daily_prices": ["date", "symbol"],
         "discord_market_clean": ["message_id"],
         "discord_messages": ["message_id"],
-        "discord_processing_log": ["message_id", "channel"],
+        "discord_parsed_ideas": ["id"],
         "discord_trading_clean": ["message_id"],
+        "event_contract_positions": ["id"],
+        "event_contract_trades": ["id"],
+        "institutional_holdings": ["id"],
         "orders": ["brokerage_order_id"],
         "positions": ["symbol", "account_id"],
-        "processing_status": ["message_id"],
+        "processing_status": ["message_id", "channel"],
         "realtime_prices": ["timestamp", "symbol"],
         "schema_migrations": ["version"],
         "stock_metrics": ["date", "symbol"],  # CRITICAL: Must be (date, symbol)
         "symbols": ["id"],
+        "trade_history": ["id"],
         "twitter_data": ["tweet_id"],
     }
 
     print("🔍 Testing Primary Key Order Assertions...")
     print("=" * 50)
 
-    # For now, just validate the expected structure
-    # This can be extended later when the generated schemas have table metadata
-
     expected_table_count = len(LIVE_SNAPSHOT_PK_ORDERS)
     print(f"✅ Expected {expected_table_count} tables with defined PK orders")
 
-    # Validate critical table PK orders
+    # Validate critical table PK orders with assertions
     critical_tables = {
         "stock_metrics": ["date", "symbol"],
         "daily_prices": ["date", "symbol"],
@@ -51,24 +54,23 @@ def test_primary_key_order_assertions():
     }
 
     for table, expected_pk in critical_tables.items():
-        if table in LIVE_SNAPSHOT_PK_ORDERS:
-            actual_pk = LIVE_SNAPSHOT_PK_ORDERS[table]
-            if actual_pk == expected_pk:
-                print(f"✅ {table}: Critical PK order correct {actual_pk}")
-            else:
-                print(f"❌ {table}: Critical PK order mismatch!")
-                print(f"   Expected: {expected_pk}")
-                print(f"   Actual:   {actual_pk}")
-                return False
-        else:
-            print(f"❌ {table}: Critical table missing from live snapshot")
-            return False
+        # Assert table exists in snapshot
+        assert (
+            table in LIVE_SNAPSHOT_PK_ORDERS
+        ), f"Critical table '{table}' missing from live snapshot"
+
+        actual_pk = LIVE_SNAPSHOT_PK_ORDERS[table]
+
+        # Assert PK order matches
+        assert (
+            actual_pk == expected_pk
+        ), f"{table}: Critical PK order mismatch! Expected {expected_pk}, got {actual_pk}"
+        print(f"✅ {table}: Critical PK order correct {actual_pk}")
 
     print(
         f"\n✅ Primary key order assertions validated for all {len(critical_tables)} critical tables"
     )
     print("✅ All critical PK orders match expected baseline + migration state")
-    return True
 
 
 def main():
@@ -76,13 +78,16 @@ def main():
     print("🚀 Primary Key Order Assertion Test Suite")
     print("=" * 60)
 
-    success = test_primary_key_order_assertions()
-
-    if success:
+    try:
+        test_primary_key_order_assertions()
         print("\n✅ PRIMARY KEY ORDER TESTS: ALL PASSED")
         return 0
-    else:
+    except AssertionError as e:
+        print(f"\n❌ ASSERTION FAILED: {e}")
         print("\n❌ PRIMARY KEY ORDER TESTS: FAILURES DETECTED")
+        return 1
+    except Exception as e:
+        print(f"\n❌ ERROR: {e}")
         return 1
 
 

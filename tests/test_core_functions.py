@@ -2,7 +2,13 @@ import json
 import shutil
 import tempfile
 import unittest
+import sys
 from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 import pandas as pd
 
@@ -40,9 +46,12 @@ class TestTickerExtraction(unittest.TestCase):
         self.assertEqual(extract_ticker_symbols(text), ["$AAPL", "$NVDA"])
 
     def test_ticker_with_numbers(self):
-        """Test tickers with numbers are not included (per regex limit of A-Z)"""
+        """Test tickers handle class suffixes like .B correctly, numbers reject the numeric part"""
         text = "$AAPL and $BRK.B and $123 and $ABC1"
-        self.assertEqual(extract_ticker_symbols(text), ["$AAPL", "$BRK"])
+        # $BRK.B is valid (Berkshire Hathaway Class B)
+        # $123 is rejected (starts with number)
+        # $ABC1 extracts $ABC (valid 3-letter portion)
+        self.assertEqual(extract_ticker_symbols(text), ["$AAPL", "$BRK.B", "$ABC"])
 
     def test_duplicate_tickers(self):
         """Test duplicate tickers are only returned once"""

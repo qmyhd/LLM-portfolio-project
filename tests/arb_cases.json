@@ -1,0 +1,196 @@
+[
+  {
+    "name": "Profit Boost Calculator Reference (50% boost on +280)",
+    "type": "hedge",
+    "description": "Golden test case matching the Profit Boost Calculator website. With 100% hedge (optimal), both outcomes yield equal profit.",
+    "inputs": {
+      "odds1": 280,
+      "stake1": 10,
+      "odds2": -280,
+      "hedge_pct": 100,
+      "boost_pct": 50
+    },
+    "expected": {
+      "effective_american1": "+420",
+      "odds1_decimal_boosted": 5.2,
+      "optimal_stake2": 38.32,
+      "actual_stake2": 38.32,
+      "total_stake": 48.32,
+      "profit_if_1_wins": 3.68,
+      "profit_if_2_wins": 3.68,
+      "guaranteed_profit": 3.68,
+      "roi_pct": 7.62
+    }
+  },
+  {
+    "name": "No Boost Hedge (pure hedge without profit boost)",
+    "type": "hedge",
+    "description": "Hedging without any boost - locks in bookmaker vig as loss if odds are fair",
+    "inputs": {
+      "odds1": 150,
+      "stake1": 50,
+      "odds2": -170,
+      "hedge_pct": 100,
+      "boost_pct": 0
+    },
+    "expected": {
+      "odds1_decimal_boosted": 2.5,
+      "payout1": 125.0,
+      "optimal_stake2": 78.70
+    }
+  },
+  {
+    "name": "Partial Hedge (50%) - Unequal Outcomes",
+    "type": "hedge",
+    "description": "Only hedging 50% means profits are unequal between outcomes",
+    "inputs": {
+      "odds1": 280,
+      "stake1": 10,
+      "odds2": -280,
+      "hedge_pct": 50,
+      "boost_pct": 50
+    },
+    "expected": {
+      "actual_stake2": 19.16,
+      "total_stake": 29.16,
+      "profit_if_1_wins": 22.84,
+      "profit_if_2_wins": -3.16
+    }
+  },
+  {
+    "name": "Large Boost (100%) - Double Profit on Odds",
+    "type": "hedge",
+    "description": "100% boost doubles the profit portion of odds",
+    "inputs": {
+      "odds1": 200,
+      "stake1": 25,
+      "odds2": -200,
+      "hedge_pct": 100,
+      "boost_pct": 100
+    },
+    "expected": {
+      "effective_american1": "+400",
+      "odds1_decimal_boosted": 5.0,
+      "payout1": 125.0,
+      "optimal_stake2": 83.33,
+      "total_stake": 108.33,
+      "guaranteed_profit": 16.67
+    }
+  },
+  {
+    "name": "Both Positive Odds Cross-Book Hedge",
+    "type": "hedge",
+    "description": "Cross-book arb where both sides have positive odds (rare but profitable)",
+    "inputs": {
+      "odds1": 150,
+      "stake1": 100,
+      "odds2": 180,
+      "hedge_pct": 100,
+      "boost_pct": 0
+    },
+    "expected": {
+      "odds1_decimal_boosted": 2.5,
+      "odds2_decimal": 2.8,
+      "payout1": 250.0,
+      "optimal_stake2": 89.29,
+      "guaranteed_profit": 60.71
+    }
+  },
+  {
+    "name": "Zero Hedge (No Hedge Placed)",
+    "type": "hedge",
+    "description": "hedge_pct=0 means no hedge, all profit/loss rides on bet 1",
+    "inputs": {
+      "odds1": 280,
+      "stake1": 10,
+      "odds2": -280,
+      "hedge_pct": 0,
+      "boost_pct": 50
+    },
+    "expected": {
+      "actual_stake2": 0.0,
+      "total_stake": 10.0,
+      "profit_if_1_wins": 42.0,
+      "profit_if_2_wins": -10.0
+    }
+  },
+  {
+    "name": "Symmetric Arb",
+    "type": "arbitrage",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "edge_pct": 2.16,
+      "guaranteed_profit": 2.16,
+      "stake1": 53.49,
+      "stake2": 46.51
+    }
+  },
+  {
+    "name": "True Arb (+105/+105)",
+    "type": "arbitrage",
+    "inputs": {
+      "odds1": 105,
+      "odds2": 105,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "edge_pct": 2.44,
+      "guaranteed_profit": 2.50,
+      "stake1": 50.00,
+      "stake2": 50.00
+    }
+  },
+  {
+    "name": "Biased Arb (75% to Bet 1)",
+    "type": "arbitrage",
+    "inputs": {
+      "odds1": -110,
+      "odds2": 120,
+      "total_stake": 100.0,
+      "bias_to_bet1": 75.0
+    },
+    "expected": {
+      "edge_pct": 2.16,
+      "stake1": 76.74,
+      "stake2": 23.26
+    }
+  },
+  {
+    "name": "Boosted Arb (25% boost on Bet 1)",
+    "type": "arbitrage",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0,
+      "is_boosted1": true,
+      "boost_pct1": 25.0
+    },
+    "expected": {
+      "effective_american1": "+114",
+      "edge_pct": 0.81,
+      "guaranteed_profit": 0.81
+    }
+  },
+  {
+    "name": "No Arb Standard Vig (-110/-110)",
+    "type": "arbitrage",
+    "description": "Standard vig scenario - no arb exists, guaranteed loss",
+    "inputs": {
+      "odds1": -110,
+      "odds2": -110,
+      "total_stake": 100.0,
+      "bias_to_bet1": 50.0
+    },
+    "expected": {
+      "has_arb": false,
+      "edge_pct": -4.55
+    }
+  }
+]

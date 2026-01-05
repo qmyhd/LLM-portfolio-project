@@ -6,6 +6,13 @@ This shows how the safely_extract_response_data function works with different re
 
 import json
 import logging
+import sys
+from pathlib import Path
+
+# Add project root to Python path
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
 
 # Setup logging
 logging.basicConfig(

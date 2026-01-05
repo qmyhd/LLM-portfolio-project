@@ -16,6 +16,11 @@ import importlib.util
 from pathlib import Path
 from typing import List, Tuple, Dict, Any
 
+# Add project root to Python path
+project_root = Path(__file__).resolve().parents[1]
+if str(project_root) not in sys.path:
+    sys.path.insert(0, str(project_root))
+
 # TOML parsing with fallback for different Python versions
 try:
     # Python 3.11+
