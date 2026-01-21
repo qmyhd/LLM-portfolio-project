@@ -495,7 +495,14 @@ def main():
 
     if build_stats.get("chunks_generated", 0) == 0:
         logger.info("No chunks to process. Done.")
-        print_summary(build_stats, None, None, get_pending_stats(), args.dry_run)
+        # Create proper integrity structure for early exit
+        early_integrity = {
+            "passed": True,
+            "duplicate_ideas": 0,
+            "orphan_ideas": 0,
+            "parse_status_counts": get_pending_stats(),
+        }
+        print_summary(build_stats, None, None, early_integrity, args.dry_run)
         return
 
     logger.info(f"Built batch file with {build_stats['chunks_generated']} chunks")

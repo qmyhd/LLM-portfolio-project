@@ -107,13 +107,14 @@ def get_message_metadata(message_ids: List[int]) -> Dict[int, Dict[str, Any]]:
     if not message_ids:
         return {}
 
-    # Build query with IN clause
-    placeholders = ", ".join(str(mid) for mid in message_ids)
+    # Build query with IN clause - message_id is TEXT type, so quote values
+    placeholders = ", ".join(f"'{mid}'" for mid in message_ids)
+    # Note: discord_messages uses 'channel' column, but discord_parsed_ideas uses 'channel_id'
     query = f"""
         SELECT 
             message_id,
             author,
-            channel_id,
+            channel,
             created_at
         FROM discord_messages
         WHERE message_id IN ({placeholders})
@@ -127,7 +128,9 @@ def get_message_metadata(message_ids: List[int]) -> Dict[int, Dict[str, Any]]:
     return {
         row[0]: {
             "author": row[1],
-            "channel_id": str(row[2]) if row[2] else None,
+            "channel_id": (
+                str(row[2]) if row[2] else None
+            ),  # Stored as channel_id in parsed_ideas
             "created_at": row[3].isoformat() if row[3] else None,
         }
         for row in result

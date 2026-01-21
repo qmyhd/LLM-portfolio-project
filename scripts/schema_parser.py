@@ -1122,19 +1122,33 @@ def _get_python_type(col_info, table_name, col_name, type_mapping, jsonb_array_f
 
 def _table_name_to_class_name(table_name: str) -> str:
     """Convert table name to Python class name."""
-    # Handle special cases
+    # Handle special cases - current 19 tables as of migration 049
     name_mapping = {
+        # SnapTrade/Brokerage (6 tables)
+        "accounts": "Account",
         "account_balances": "AccountBalance",
+        "positions": "Position",
+        "orders": "Order",
+        "symbols": "Symbol",
+        "trade_history": "TradeHistory",
+        # Market Data (3 tables)
         "daily_prices": "DailyPrice",
         "realtime_prices": "RealtimePrice",
         "stock_metrics": "StockMetrics",
+        # Discord/Social (4 tables)
         "discord_messages": "DiscordMessage",
         "discord_market_clean": "DiscordMarketClean",
         "discord_trading_clean": "DiscordTradingClean",
-        "discord_processing_log": "DiscordProcessingLog",
-        "processing_status": "ProcessingStatus",
+        "discord_parsed_ideas": "DiscordParsedIdea",
+        # Twitter (1 table)
         "twitter_data": "TwitterData",
-        "chart_metadata": "ChartMetadata",
+        # Event Contracts (2 tables)
+        "event_contract_positions": "EventContractPosition",
+        "event_contract_trades": "EventContractTrade",
+        # Institutional (1 table)
+        "institutional_holdings": "InstitutionalHolding",
+        # System (2 tables)
+        "processing_status": "ProcessingStatus",
         "schema_migrations": "SchemaMigration",
     }
 
@@ -1147,22 +1161,33 @@ def _table_name_to_class_name(table_name: str) -> str:
 
 def _get_table_description(table_name: str) -> str:
     """Get description for table."""
+    # Current 19 tables as of migration 049
     descriptions = {
+        # SnapTrade/Brokerage (6 tables)
         "accounts": "SnapTrade account information",
         "account_balances": "Account balance information",
         "positions": "SnapTrade position data",
         "orders": "Trading orders with comprehensive tracking",
         "symbols": "Symbol metadata and trading information",
+        "trade_history": "Trade history records",
+        # Market Data (3 tables)
         "daily_prices": "Daily OHLCV price data",
         "realtime_prices": "Real-time price updates",
         "stock_metrics": "Financial metrics and ratios",
+        # Discord/Social (4 tables)
         "discord_messages": "Discord message data with analysis",
         "discord_market_clean": "Cleaned market-related Discord messages",
         "discord_trading_clean": "Cleaned trading-related Discord messages",
-        "discord_processing_log": "Processing status for Discord messages",
-        "processing_status": "Processing status tracking",
+        "discord_parsed_ideas": "LLM-parsed trading ideas from Discord",
+        # Twitter (1 table)
         "twitter_data": "Twitter/X data from Discord shared links",
-        "chart_metadata": "Chart generation metadata (natural key)",
+        # Event Contracts (2 tables)
+        "event_contract_positions": "Event contract position data",
+        "event_contract_trades": "Event contract trade records",
+        # Institutional (1 table)
+        "institutional_holdings": "Institutional holdings data (13F)",
+        # System (2 tables)
+        "processing_status": "Processing status tracking",
         "schema_migrations": "Schema version tracking",
     }
     return descriptions.get(table_name, f"Generated from {table_name} table")

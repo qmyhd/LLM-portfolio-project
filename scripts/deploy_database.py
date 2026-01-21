@@ -310,12 +310,12 @@ class UnifiedDatabaseDeployer:
         errors = []
 
         # Core tables that need RLS (as specified in user requirements)
+        # Note: discord_processing_log was dropped in migration 049
         tables_with_rls = [
             "accounts",
             "account_balances",
             "positions",
             "symbols",
-            "discord_processing_log",
             "schema_migrations",
         ]
 
