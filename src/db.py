@@ -783,23 +783,38 @@ def check_database_tables():
 
     Returns:
         bool: True if all tables exist, False otherwise
+
+    Note:
+        Current schema has 19 tables as of migration 049 (Jan 2026).
+        Legacy tables dropped: discord_processing_log, chart_metadata,
+        discord_message_chunks, discord_idea_units, stock_mentions.
     """
     required_tables = {
+        # SnapTrade/Brokerage (6 tables)
         "accounts",
         "account_balances",
         "positions",
         "orders",
         "symbols",
+        "trade_history",
+        # Market Data (3 tables)
         "realtime_prices",
         "daily_prices",
         "stock_metrics",
+        # Discord/Social (4 tables)
         "discord_messages",
         "discord_market_clean",
         "discord_trading_clean",
-        "discord_processing_log",
+        "discord_parsed_ideas",
+        # Twitter (1 table)
         "twitter_data",
+        # Event Contracts (2 tables)
+        "event_contract_positions",
+        "event_contract_trades",
+        # Institutional (1 table)
+        "institutional_holdings",
+        # System (2 tables)
         "processing_status",
-        "chart_metadata",
         "schema_migrations",
     }
 

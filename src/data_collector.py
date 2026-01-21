@@ -205,12 +205,12 @@ def get_cached_price(symbol: str) -> dict | None:
                 "timestamp": result[0][3],
             }
 
-        # Try positions.current_price
+        # Try positions.price (current_price column is NULL, use price instead)
         result = execute_sql(
             """
-            SELECT current_price, prev_price, price_updated_at
+            SELECT COALESCE(current_price, price) as current, prev_price, price_updated_at
             FROM positions 
-            WHERE symbol = :symbol AND current_price IS NOT NULL
+            WHERE symbol = :symbol AND (current_price IS NOT NULL OR price IS NOT NULL)
             LIMIT 1
             """,
             params={"symbol": symbol},

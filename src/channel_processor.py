@@ -165,7 +165,7 @@ def parse_messages_with_llm(
         # Parse specific messages
         placeholders = ", ".join([f"'{mid}'" for mid in message_ids])
         query = f"""
-            SELECT message_id, content, author, channel_id, created_at
+            SELECT message_id, content, author, channel, created_at
             FROM discord_messages
             WHERE message_id IN ({placeholders})
         """
@@ -173,7 +173,7 @@ def parse_messages_with_llm(
     else:
         # Parse pending messages
         query = """
-            SELECT message_id, content, author, channel_id, created_at
+            SELECT message_id, content, author, channel, created_at
             FROM discord_messages
             WHERE parse_status = 'pending'
             AND content IS NOT NULL
@@ -191,7 +191,7 @@ def parse_messages_with_llm(
     logger.info(f"Parsing {len(messages)} messages with LLM")
 
     for row in messages:
-        message_id, content, author, channel_id, created_at = row
+        message_id, content, author, channel, created_at = row
 
         try:
             # Normalize text first
@@ -216,7 +216,7 @@ def parse_messages_with_llm(
                 text=cleaned_text,
                 message_id=message_id,
                 author_id=str(author) if author else None,
-                channel_id=str(channel_id) if channel_id else None,
+                channel_id=str(channel) if channel else None,
                 created_at=created_at.isoformat() if created_at else None,
                 skip_triage=skip_triage,
                 force_long_context=force_long_context,
