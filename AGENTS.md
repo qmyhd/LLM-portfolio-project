@@ -9,59 +9,6 @@
 Sophisticated data-driven portfolio journal system with integrated LLM generation:
 - **Data Sources**: SnapTrade API + Discord bot
 
-## 🚨 CRITICAL FIXES & TROUBLESHOOTING
-
-### **Recently Resolved Issues (Sept 2025)**
-
-#### **1. Supabase Connection & RLS Policy Issues**
-**Problem**: Database operations failing with RLS policy blocks or transaction issues  
-**Root Cause**: Using direct PostgreSQL password instead of Supabase service role key  
-**Solution**: Update `.env` DATABASE_URL to use `SUPABASE_SERVICE_ROLE_KEY`:  
-```bash
-# ❌ Wrong (direct password): 
-DATABASE_URL=postgresql://postgres.project:directpassword@...
-
-# ✅ Correct (service role key):
-DATABASE_URL=postgresql://postgres.project:sb_secret_YOUR_KEY@...
-```
-**Verification**: `python -c "from src.config import get_database_url; print('✅' if 'sb_secret_' in get_database_url() else '❌')"`
-
-#### **2. INSERT Operations Not Persisting** 
-**Problem**: `execute_sql()` INSERT operations returning success but data not persisting (COUNT = 0)  
-**Root Cause**: `execute_query()` only auto-committed DDL operations, not DML (INSERT/UPDATE/DELETE)  
-**Solution**: Modified `src/db.py` to auto-commit both DDL and DML write operations  
-**Fix Applied**: Added `is_dml_write` check for INSERT/UPDATE/DELETE operations
-
-#### **3. Schema Mismatches in SnapTrade Integration**
-**Problem**: Orders table insert failing with "column does not exist" errors  
-**Root Cause**: Code attempting to insert `universal_symbol`, `extracted_symbol` columns not in actual schema  
-**Solution**: Removed non-existent column references from `src/snaptrade_collector.py`  
-**Tables Affected**: Orders table (32 actual columns vs 36 expected)
-
-#### **4. Account-Position Relationship Failures**
-**Problem**: 165/166 positions linked to fake "default_account" instead of real accounts  
-**Root Cause**: `extract_position_data()` method not receiving `account_id` parameter  
-**Solution**: Modified method signature and propagated `account_id` from `get_positions()` call  
-**Result**: All positions now correctly linked to real Robinhood account
-
-#### **5. Symbol Table Population Failures**
-**Problem**: Symbols table empty despite positions containing valid tickers  
-**Root Cause**: Case-sensitive filtering (`!= "Unknown"` vs `"UNKNOWN"` in data)  
-**Solution**: Changed to case-insensitive comparison (`symbol_val.lower() != "unknown"`)  
-**Result**: 177 symbols successfully extracted from positions + orders
-
-### **Critical Verification Commands**
-```bash
-# 1. Verify Supabase service role key usage
-python -c "from src.config import get_database_url; print('Service role:' if 'sb_secret_' in get_database_url() else 'Direct password')"
-
-# 2. Test data operations work end-to-end
-python -c "from src.snaptrade_collector import SnapTradeCollector; print(f'Success: {SnapTradeCollector().collect_all_data(write_parquet=False)[\"success\"]}')"
-
-# 3. Verify data integrity
-python -c "from src.db import execute_sql; r=execute_sql('SELECT COUNT(*) FROM positions p JOIN accounts a ON p.account_id=a.id', fetch_results=True); print(f'Linked positions: {r[0][0]}')"
-```
-
 ## ⚠️ Important Notes for Agents
 
 ### Copilot Toolsets & MCP Helpers
@@ -87,7 +34,7 @@ Twitter/X API + yfinance → Real-time market sentiment & brokerage data
 - **Bot System**: Modular Discord commands with Twitter integration, advanced charting, and centralized UI design system
 - **UI System**: Standardized embed factory with color coding, interactive views (portfolio filters, help dropdown), and pagination
 - **NLP Pipeline**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
-- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 048_drop_unused_nlp_indexes.sql, 24 tables)
+- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 049_drop_legacy_tables.sql, 19 tables as of Jan 2026)
 
 ## 📁 Project Map & Service Purposes
 
@@ -163,7 +110,7 @@ scripts/
 ├── bootstrap.py                      # Comprehensive database setup and migration
 ├── deploy_database.py                # Unified database deployment system
 ├── schema_parser.py                  # Schema parsing and dataclass generation
-├── verify_database.py                # Unified schema validation (24 tables, FKs, constraints)
+├── verify_database.py                # Unified schema validation (19 tables, FKs, constraints)
 └── nlp/                              # NLP processing scripts
     ├── parse_messages.py             # Live message parsing with OpenAI
     ├── build_batch.py                # Batch API request builder
@@ -331,28 +278,28 @@ TWITTER_BEARER_TOKEN=your_bearer_token
 - **Real-time writes**: All operations use `execute_sql()` → Supabase PostgreSQL with connection pooling
 - **🚨 KEY REQUIREMENT**: Must use `SUPABASE_SERVICE_ROLE_KEY` in connection string to bypass RLS policies
 
-### Key Tables (20+ confirmed)
+### Key Tables (19 active as of migration 049)
 ```sql
--- SnapTrade Integration (5 core tables) 
-accounts, account_balances, positions, orders, symbols
+-- SnapTrade Integration (6 tables) 
+accounts, account_balances, positions, orders, symbols, trade_history
 
--- Market Data & Analytics
+-- Market Data & Analytics (3 tables)
 daily_prices, realtime_prices, stock_metrics
 
--- Discord/Social Integration
-discord_messages, discord_market_clean, discord_trading_clean, discord_processing_log
+-- Discord/Social Integration (4 tables)
+discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas
 
--- NLP Parsed Ideas (NEW)
-discord_parsed_ideas  -- Unique constraint: (message_id, soft_chunk_index, local_idea_index)
-
--- Twitter/X Integration  
+-- Twitter/X Integration (1 table)
 twitter_data
 
--- System Configuration
+-- Event Contracts & Institutional (3 tables)
+event_contract_trades, event_contract_positions, institutional_holdings
+
+-- System Configuration (2 tables)
 processing_status, schema_migrations
 
--- Event Contracts & Institutional
-event_contract_trades, event_contract_positions, institutional_holdings
+-- DROPPED in migration 049:
+-- discord_processing_log, chart_metadata, discord_message_chunks, discord_idea_units, stock_mentions
 ```
 
 ### Schema Validation
@@ -452,7 +399,7 @@ python -c "from src.db import execute_sql; print(execute_sql('SELECT COUNT(*) FR
 # Configuration validation
 python -c "from src.config import settings; print(settings().model_dump())"
 
-# Schema validation (validated all 24 tables including foreign keys and constraints)
+# Schema validation (validates 19 tables including foreign keys and constraints)
 python scripts/verify_database.py --verbose
 ```
 

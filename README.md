@@ -1,35 +1,36 @@
 # LLM Portfolio Journal
 
-A sophisticated data-driven portfolio journal that integrates brokerage data, market information, and social sentiment analysis to generate comprehensive trading insights using Large Language Models.
+A data-driven portfolio journal integrating brokerage data, market information, and social sentiment analysis to generate trading insights using Large Language Models.
 
-> **🤖 AI Coding Agents**: See [AGENTS.md](AGENTS.md) - the canonical guide for AI development  
-> **🏗️ Architecture Details**: See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - comprehensive system architecture  
-> **📚 All Documentation**: See [docs/README.md](docs/README.md) - complete navigation hub
+**Documentation:**
+- [AGENTS.md](AGENTS.md) - AI contributor guide
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System architecture
+- [docs/README.md](docs/README.md) - Documentation hub
 
 ---
 
-## ✨ Features
+## Features
 
-- **📊 Multi-Source Data Integration**: SnapTrade API, Discord bot, Twitter/X analysis, and real-time market data
-- **💾 PostgreSQL Database Architecture**: Enterprise Supabase/PostgreSQL with advanced connection pooling and RLS policies
-- **🤖 AI-Powered Insights**: Dual-engine LLM integration (Gemini/OpenAI) with custom prompt engineering
-- **📈 Advanced Analytics**: FIFO position tracking, P/L calculations, and sophisticated charting capabilities
-- **💬 Social Sentiment Analysis**: Real-time Discord message processing with ticker extraction and sentiment scoring
-- **🔄 Automated ETL Pipeline**: Comprehensive data cleaning, validation, and transformation workflows
-- **🛡️ Enterprise Reliability**: Retry mechanisms, error handling, and graceful degradation patterns
-- **📱 Interactive Discord Bot**: Real-time commands for data processing, analytics, and chart generation
+- Multi-source data integration: SnapTrade API, Discord bot, Twitter/X, market data
+- PostgreSQL database with Supabase, connection pooling, and RLS policies
+- Dual LLM engine (Gemini/OpenAI) with prompt engineering
+- FIFO position tracking, P/L calculations, charting
+- Discord message processing with ticker extraction and sentiment scoring
+- Automated ETL pipeline with validation and transformation
+- Retry mechanisms, error handling, graceful degradation
+- Interactive Discord bot for data processing and analytics
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Prerequisites
 - Python 3.9+ with virtual environment
-- **PostgreSQL/Supabase database** (required - SQLite support removed)
+- PostgreSQL/Supabase database (required)
 - Discord bot token (optional)
 - API keys for SnapTrade, OpenAI/Gemini (optional)
 
 ### Installation
 ```bash
-# 1. CRITICAL: Validate deployment readiness
+# 1. Validate deployment readiness
 python tests/validate_deployment.py
 
 # 2. Automated setup with health checks
@@ -44,45 +45,14 @@ python generate_journal.py --force
 
 ### Core Commands
 ```bash
-# Generate journal with fresh data
-python generate_journal.py --force
-
-# Run Discord bot for real-time data
-python -m src.bot.bot
-
-# Run comprehensive tests
-make test
+python generate_journal.py --force   # Generate journal with fresh data
+python -m src.bot.bot                # Run Discord bot
+make test                            # Run tests
 ```
-
-## 📖 Documentation
-
-### For Users
-- **[Installation Guide](#installation)**: Complete setup instructions
-- **[Usage Examples](#usage-examples)**: Common workflows and commands  
-- **[Configuration](#configuration)**: Environment variables and settings
-- **[API Reference](docs/API_REFERENCE.md)**: Detailed API documentation
-
-### For Developers & AI Agents  
-- **[AGENTS.md](AGENTS.md)** - **🎯 CANONICAL AI CONTRIBUTOR GUIDE**
-  - Complete setup procedures with bootstrap automation
-  - Essential code patterns and database architecture
-  - Development workflows and testing strategies
-  - Critical environment variables and dependencies
-
-- **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** - **🏗️ CANONICAL ARCHITECTURE REFERENCE**
-  - System design and component relationships  
-  - Data flow and processing pipelines
-  - Database schema and migration patterns
-  - Performance optimizations and monitoring
-
-- **[docs/README.md](docs/README.md)** - **📚 COMPLETE DOCUMENTATION NAVIGATION**
-  - Consolidated access to all project documentation
-  - Quick reference guides and troubleshooting
-  - Development and deployment workflows
 
 ---
 
-## 🔧 Configuration
+## Configuration
 
 Copy the example environment file and configure your API keys:
 ```bash
@@ -91,14 +61,9 @@ cp .env.example .env
 
 ### Required Environment Variables
 ```ini
-# Database (PostgreSQL/Supabase required)
+# Database (PostgreSQL/Supabase)
 DATABASE_URL=postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres
-DATABASE_DIRECT_URL=postgresql://postgres.[project]:[service-role-key]@[region].supabase.com:5432/postgres
 SUPABASE_SERVICE_ROLE_KEY=sb_secret_your_service_role_key
-
-# Alternative Supabase format
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
 
 # LLM APIs (choose one)
 GOOGLE_API_KEY=your_gemini_api_key      # Primary (free tier)
@@ -116,82 +81,104 @@ DISCORD_BOT_TOKEN=your_bot_token
 TWITTER_BEARER_TOKEN=your_bearer_token
 ```
 
-> **🔐 Security**: The `.env` file is git-ignored and never committed to version control.
+**Security**: The `.env` file is git-ignored and never committed.
 
-## �️ Database Architecture
+---
 
-The system uses **PostgreSQL-only** architecture with Supabase integration:
+## EC2 Environment Variables
 
-### Connection Configuration
+For running the Databento OHLCV backfill on EC2, configure these variables:
+
 ```ini
-# Primary connection via Supabase Transaction Pooler (recommended)
-DATABASE_URL=postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres
+# Databento API (required)
+DATABENTO_API_KEY=db-your_databento_api_key
 
-# Alternative Supabase format
-SUPABASE_URL=your_supabase_project_url
-SUPABASE_ANON_KEY=your_supabase_anon_key
-SUPABASE_SERVICE_ROLE_KEY=sb_secret_your_service_role_key
+# RDS PostgreSQL (1-year rolling storage)
+RDS_HOST=your-ohlcv-db.region.rds.amazonaws.com
+RDS_PORT=5432
+RDS_DB=postgres
+RDS_USER=postgres
+RDS_PASSWORD=your_rds_password
+
+# S3 Archive (full historical Parquet)
+S3_BUCKET_NAME=your-ohlcv-bucket
+S3_RAW_DAILY_PREFIX=ohlcv/daily/
+
+# AWS Credentials (if not using IAM role)
+AWS_ACCESS_KEY_ID=your_access_key
+AWS_SECRET_ACCESS_KEY=your_secret_key
+AWS_REGION=us-east-1
 ```
 
-### 🚨 Critical: Service Role Key Required
-Must use **`SUPABASE_SERVICE_ROLE_KEY`** (starts with `sb_secret_`) in connection string to bypass RLS policies for database operations.
-
-### Production Architecture
-- **PostgreSQL/Supabase**: Enterprise database with RLS policies and connection pooling
-- **24 Tables**: Comprehensive schema for positions, orders, market data, NLP pipeline, and social sentiment
-- **Automated Migration**: Schema versioning and migration system (33 migrations)
-
-## 💡 Usage Examples
-
-### Generate Trading Journal
+EC2 backfill workflow:
 ```bash
-# Basic journal generation
-python generate_journal.py
-
-# Force data refresh and generate journal
-python generate_journal.py --force
-
-# Custom output directory
-python generate_journal.py --output custom/path
-```
-
-### Discord Bot Commands
-```bash
-# Start the Discord bot
-python -m src.bot.bot
-
-# Available commands in Discord:
-!history [limit]              # Fetch message history
-!chart SYMBOL [period]        # Generate charts
-!twitter SYMBOL              # Twitter sentiment analysis
-!stats                       # Channel statistics
-```
-
-### Interactive Development
-Use Jupyter notebooks for exploration:
-```bash
-jupyter lab notebooks/01_generate_journal.ipynb
-```
-
-## 🧪 Testing & Validation
-
-Run comprehensive tests:
-```bash
-# Full test suite
-make test
-
-# Database schema validation
-python scripts/verify_database.py --mode comprehensive
-
-# Integration tests
-python test_integration.py
-
-# System health check
-python scripts/bootstrap.py  # Includes validation
+ssh ec2-user@your-ec2-host
+cd LLM-portfolio-project && git pull
+python scripts/backfill_ohlcv.py --daily
 ```
 
 ---
 
-## 📄 License
+## Database Architecture
+
+PostgreSQL-only architecture with Supabase integration:
+
+- **20 Tables**: Positions, orders, market data, NLP pipeline, social sentiment, OHLCV daily
+- **RLS Policies**: Row-level security enabled on all tables
+- **Service Role Key**: Must use `sb_secret_*` key in connection string to bypass RLS
+
+### Connection Configuration
+```ini
+# Supabase Transaction Pooler (recommended)
+DATABASE_URL=postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres
+
+# Direct connection
+DATABASE_DIRECT_URL=postgresql://postgres.[project]:[service-role-key]@[region].supabase.com:5432/postgres
+```
+
+---
+
+## Usage Examples
+
+### Generate Trading Journal
+```bash
+python generate_journal.py                    # Basic generation
+python generate_journal.py --force            # Force data refresh
+python generate_journal.py --output custom/   # Custom output directory
+```
+
+### Discord Bot Commands
+```bash
+python -m src.bot.bot
+
+# In Discord:
+!history [limit]       # Fetch message history
+!chart SYMBOL [period] # Generate charts
+!twitter SYMBOL        # Twitter sentiment
+!stats                 # Channel statistics
+```
+
+### OHLCV Backfill
+```bash
+python scripts/backfill_ohlcv.py --daily              # Last 5 days
+python scripts/backfill_ohlcv.py --full               # Full historical
+python scripts/backfill_ohlcv.py --start 2024-01-01   # Custom range
+python scripts/backfill_ohlcv.py --prune              # Remove old data
+```
+
+---
+
+## Testing
+
+```bash
+make test                                      # Full test suite
+python scripts/verify_database.py --mode comprehensive  # Schema validation
+python tests/test_integration.py               # Integration tests
+python scripts/bootstrap.py                    # System health check
+```
+
+---
+
+## License
 
 MIT License - see [LICENSE](LICENSE) file for details.

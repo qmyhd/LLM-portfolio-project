@@ -35,36 +35,33 @@ Database configuration, schema validation, and standardization reports.
 - `vulture_analysis.txt` - Dead code detection results
 - `keys_catalog.md` - Primary key strategy documentation
 
-## 📊 Current Database Status (October 8, 2025)
+## 📊 Current Database Status (January 16, 2026)
 
 ### ✅ **Database Infrastructure - PRODUCTION READY**
-- **Database**: PostgreSQL/Supabase with 24 operational tables
+- **Database**: PostgreSQL/Supabase with 19 operational tables
 - **Schema Pipeline**: Automated schema validation with type normalization
 - **Connection System**: Unified database interface via `src/db.py` with structured logging
 - **Schema Verification**: Comprehensive validation with zero type mismatches
-- **RLS Compliance**: 100% (24/24 tables with Row-Level Security enabled, 47 policies)
-- **Index Status**: 119 indexes, optimized (duplicates removed Dec 2025)
-- **Production Status**: All migrations completed through 046 (Dec 18, 2025)
+- **RLS Compliance**: 100% (19/19 tables with Row-Level Security enabled)
+- **Index Status**: Optimized (duplicates removed, legacy indexes dropped)
+- **Production Status**: All migrations completed through 049 (Jan 2026)
 
-### 🔴 **Recent Critical Fixes (December 18, 2025)**
-- ✅ **Fixed**: Dropped duplicate indexes that duplicated PKs (migrations 044, 046)
-- ✅ **Fixed**: Consolidated RLS policies - removed TO public, auth.role() checks (migration 045)
-- ✅ **Added**: FK relationship: discord_parsed_ideas → discord_messages (CASCADE)
-- ✅ **Added**: 5 new tables for NLP pipeline (chunks, idea_units, parsed_ideas, stock_mentions, trade_history)
-- ✅ **Updated**: Supabase Advisor shows no duplicate index or RLS policy warnings
+### 📋 **Recent Schema Updates (January 2026)**
+- ✅ **Migration 049**: Dropped 5 legacy tables (discord_processing_log, chart_metadata, discord_message_chunks, discord_idea_units, stock_mentions)
+- ✅ **Consolidated**: NLP pipeline now uses single discord_parsed_ideas table
+- ✅ **Updated**: All codebase references aligned with current 19-table schema
 
-See: `docs/SCHEMA_REPORT.md` for detailed schema documentation
+See: `docs/ARCHITECTURE.md` for detailed schema documentation
 
-### 🗄️ **Current Database Tables (24 operational)**
+### 🗄️ **Current Database Tables (19 operational)**
 
 | Category | Tables |
 |----------|--------|
 | **SnapTrade** | accounts, account_balances, positions, orders, symbols, trade_history |
-| **Discord** | discord_messages, discord_market_clean, discord_trading_clean, discord_processing_log |
-| **NLP Pipeline** | discord_message_chunks, discord_idea_units, discord_parsed_ideas, stock_mentions |
+| **Discord** | discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas |
 | **Market Data** | daily_prices, realtime_prices, stock_metrics |
 | **Event Contracts** | event_contract_trades, event_contract_positions |
-| **System** | twitter_data, processing_status, chart_metadata, schema_migrations, institutional_holdings |
+| **System** | twitter_data, processing_status, schema_migrations, institutional_holdings |
 
 ### 🚀 **Validation Commands**
 
@@ -84,8 +81,8 @@ python -m src.bot.bot
 
 ---
 
-*Last Updated: December 18, 2025*  
-*Database Status: ✅ Production Ready (24 operational tables, 119 indexes, 47 RLS policies)*  
+*Last Updated: January 16, 2026*  
+*Database Status: ✅ Production Ready (19 operational tables)*  
 *Schema: ✅ Zero type mismatches, 100% RLS compliance*  
 *System: ✅ Complete cleanup and production readiness achieved*  
 *APIs: ✅ SnapTrade, Discord, Twitter, LLM integration confirmed working*

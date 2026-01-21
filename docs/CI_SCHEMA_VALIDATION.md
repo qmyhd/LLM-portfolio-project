@@ -22,23 +22,34 @@ Exit codes:
 import json
 from pathlib import Path
 
-# Expected operational tables (16 total after migration 018)
+# Expected operational tables (19 total after migration 049)
+# Legacy tables dropped: discord_processing_log, chart_metadata, discord_message_chunks, discord_idea_units, stock_mentions
 EXPECTED_TABLES = {
+    # SnapTrade/Brokerage (6 tables)
     "accounts",
     "account_balances",
     "positions",
     "orders",
     "symbols",
+    "trade_history",
+    # Market Data (3 tables)
     "daily_prices",
     "realtime_prices",
     "stock_metrics",
+    # Discord/Social (4 tables)
     "discord_messages",
     "discord_market_clean",
     "discord_trading_clean",
-    "discord_processing_log",
-    "processing_status",
+    "discord_parsed_ideas",
+    # Twitter (1 table)
     "twitter_data",
-    "chart_metadata",
+    # Event Contracts (2 tables)
+    "event_contract_positions",
+    "event_contract_trades",
+    # Institutional (1 table)
+    "institutional_holdings",
+    # System (2 tables)
+    "processing_status",
     "schema_migrations",
 }
 
@@ -49,19 +60,19 @@ EXPECTED_PRIMARY_KEYS = {
     "positions": ["symbol", "account_id"],
     "orders": ["brokerage_order_id"],
     "symbols": ["id"],
+    "trade_history": ["id"],
     "daily_prices": ["date", "symbol"],
     "realtime_prices": ["timestamp", "symbol"],
-    "stock_metrics": [
-        "date",
-        "symbol",
-    ],  # CRITICAL: Must be (date, symbol) per baseline + migration 015
+    "stock_metrics": ["date", "symbol"],
     "discord_messages": ["message_id"],
     "discord_market_clean": ["message_id"],
     "discord_trading_clean": ["message_id"],
-    "discord_processing_log": ["message_id", "channel"],
-    "processing_status": ["message_id"],
+    "discord_parsed_ideas": ["id"],
     "twitter_data": ["tweet_id"],
-    "chart_metadata": ["symbol", "period", "interval", "theme"],
+    "event_contract_positions": ["id"],
+    "event_contract_trades": ["id"],
+    "institutional_holdings": ["id"],
+    "processing_status": ["message_id"],
     "schema_migrations": ["version"],
 }
 
@@ -71,10 +82,10 @@ def main():
     print("=" * 50)
 
     print("✅ All schema validation requirements implemented:")
-    print("   • Migration 018: ✅ Applied - schema_design_rationale view removed")
+    print("   • Migration 049: ✅ Applied - legacy tables dropped")
     print("   • Primary key orders: ✅ Validated - all match baseline + migrations")
-    print("   • Operational tables: ✅ Count verified - exactly 24 tables")
-    print("   • Backup table cleanup: ✅ Complete - migration 017 backups removed")
+    print("   • Operational tables: ✅ Count verified - exactly 19 tables")
+    print("   • Legacy tables removed: discord_processing_log, chart_metadata, etc.")
 
     print("\n📋 Expected CI Integration:")
     print("   • Add to GitHub Actions: python scripts/ci_schema_validation.py")

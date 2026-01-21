@@ -26,3 +26,5 @@ asyncpg>=0.29.0
 langchain-openai>=0.3.28
 pyarrow>=18.0.0
 scikit-learn>=1.3.0
+databento>=0.40.0
+boto3>=1.34.0
