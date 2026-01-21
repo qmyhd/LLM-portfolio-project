@@ -288,17 +288,17 @@ def register(bot: commands.Bot, twitter_client=None):
             )
 
     @bot.command(name="piechart", aliases=["pie", "allocation", "breakdown"])
-    async def show_portfolio_pie(ctx, top_n: int = 17):
+    async def show_portfolio_pie(ctx, top_n: int = 10):
         """Show a pie chart of your portfolio allocation by value.
 
         Usage:
-            !piechart      - Top 17 positions by value (default)
+            !piechart      - Top 10 positions by value (default)
             !pie 10        - Top 10 positions
             !allocation 25 - Top 25 positions
 
         Features:
             • Donut-style pie chart with Discord dark theme
-            • Shows position values and percentages
+            • Ticker symbols and company logos inside each slice
             • Aggregates smaller holdings into "Others"
             • Total portfolio value displayed in center
         """
@@ -382,23 +382,13 @@ def register(bot: commands.Bot, twitter_client=None):
             # Create embed with chart
             file = discord.File(buffer, filename=chart_filename)
 
-            # Build description with summary stats
-            description_lines = [
-                f"💰 **Total Value:** ${stats.get('total_equity', 0):,.2f}",
-                f"📊 **Positions:** {stats.get('num_positions', 0)} ({stats.get('num_winners', 0)} winners, {stats.get('num_losers', 0)} losers)",
-            ]
-
-            total_pnl = stats.get("total_pnl", 0)
-            pnl_emoji = "📈" if total_pnl >= 0 else "📉"
-            pnl_sign = "+" if total_pnl >= 0 else ""
-            description_lines.append(
-                f"{pnl_emoji} **Total P/L:** {pnl_sign}${total_pnl:,.2f} ({pnl_sign}{stats.get('overall_pnl_pct', 0):.1f}%)"
-            )
+            # Build description - only positions count (Total Value and P/L removed, chart shows them)
+            description = f"📊 **Positions:** {stats.get('num_positions', 0)} ({stats.get('num_winners', 0)} winners, {stats.get('num_losers', 0)} losers)"
 
             embed = build_embed(
                 category=EmbedCategory.CHART,
                 title="📊 Portfolio Allocation",
-                description="\n".join(description_lines),
+                description=description,
                 image_url=f"attachment://{chart_filename}",
                 footer_hint=f"Showing top {min(top_n, len(positions_data))} of {len(positions_data)} positions",
             )
@@ -414,232 +404,330 @@ def register(bot: commands.Bot, twitter_client=None):
             )
 
     @bot.command(name="orders", aliases=["recent_orders", "trades"])
-    async def show_recent_orders(ctx, limit: int = 15):
-        """Show your recent orders with enhanced analytics.
+    async def show_recent_orders(ctx, symbol_or_limit: str = None, limit: int = 10):
+        """Show your recent executed orders with card-style embeds.
 
         Usage:
-            !orders      - Last 15 orders with P/L analysis
-            !orders 30   - Last 30 orders
+            !orders              - Last 10 executed orders (card-style)
+            !orders 20           - Last 20 executed orders
+            !orders TSLA         - Executed orders for TSLA with position summary
+            !orders nvidia       - Executed orders for NVDA (company name resolved)
+            !orders AAPL 15      - Last 15 executed AAPL orders
 
-        Displays:
-            • Order action (BUY/SELL) with execution price
-            • Realized P/L % (for SELL orders against avg cost)
-            • Position % of current holdings
-            • Portfolio weight (% of total equity)
-            • Execution date and time
+        Features:
+            • Card-style embed per order with action, price, qty
+            • Only shows executed/filled orders (excludes pending/cancelled)
+            • Execution dates in EST timezone (e.g., "Nov 13, 2025")
+            • Position summary with company logo when filtering by symbol
+            • Accepts company names (nvidia, tesla) or tickers (NVDA, TSLA)
+            • Shows nearest Discord idea with 💡 timestamp
+            • Price change since trade (current vs execution price)
+            • Color-coded: green for buys, red for sells
+            • Dividend reinvestments (<$2 buys) hidden from default view
+              - Use !orders SYMBOL to see ALL orders including DRIP
+              - DRIP orders are annotated with 🟡 when shown
         """
         try:
             from src.db import execute_sql
-            from datetime import date, timedelta
-
-            # Enhanced query - join with positions to get avg_price and current holdings
-            result = execute_sql(
-                """
-                SELECT 
-                    o.symbol, o.action, o.status, 
-                    o.total_quantity, o.open_quantity, o.filled_quantity,
-                    o.execution_price, o.limit_price, o.stop_price,
-                    o.time_executed, o.time_placed, o.sync_timestamp,
-                    p.average_buy_price, p.quantity as position_qty, p.equity as position_equity
-                FROM orders o
-                LEFT JOIN positions p ON o.symbol = p.symbol
-                ORDER BY COALESCE(o.time_executed, o.time_placed, o.sync_timestamp) DESC
-                LIMIT :limit
-                """,
-                params={"limit": limit},
-                fetch_results=True,
+            from src.bot.formatting.orders_view import (
+                OrderFormatter,
+                format_money,
+                format_pct,
+                format_qty,
+                normalize_side,
+                get_order_color,
             )
+            from src.bot.ui.symbol_resolver import resolve_symbol, get_symbol_info
+            from src.bot.ui.logo_helper import get_logo_url
+            from datetime import date, timedelta
+            import yfinance as yf
+
+            # Parse arguments: determine if filtering by symbol or just limit
+            ticker_filter = None
+            company_description = None
+            effective_limit = 10
+
+            if symbol_or_limit is not None:
+                if symbol_or_limit.isdigit():
+                    # It's a limit number
+                    effective_limit = int(symbol_or_limit)
+                else:
+                    # It's a ticker symbol or company name - resolve it
+                    ticker_filter, company_description = resolve_symbol(symbol_or_limit)
+                    effective_limit = limit  # Use second arg as limit
+
+            # Build query based on filter - only show executed/filled orders
+            executed_statuses = ("EXECUTED", "FILLED", "PARTIALLY_FILLED")
+            if ticker_filter:
+                # Filter by symbol - also handle option-style symbols
+                result = execute_sql(
+                    """
+                    SELECT 
+                        o.symbol, o.action, o.status, o.order_type,
+                        o.total_quantity, o.open_quantity, o.filled_quantity,
+                        o.execution_price, o.limit_price, o.stop_price,
+                        o.time_executed, o.time_placed, o.created_at, o.sync_timestamp,
+                        o.brokerage_order_id,
+                        o.option_ticker, o.option_expiry, o.option_strike, o.option_right
+                    FROM orders o
+                    WHERE (o.symbol = :ticker OR o.symbol LIKE :ticker_pattern)
+                        AND UPPER(o.status) IN ('EXECUTED', 'FILLED', 'PARTIALLY_FILLED')
+                    ORDER BY COALESCE(o.time_executed, o.time_placed, o.sync_timestamp) DESC
+                    LIMIT :limit
+                    """,
+                    params={
+                        "ticker": ticker_filter,
+                        "ticker_pattern": f"{ticker_filter}%",
+                        "limit": effective_limit,
+                    },
+                    fetch_results=True,
+                )
+            else:
+                # All executed orders
+                result = execute_sql(
+                    """
+                    SELECT 
+                        o.symbol, o.action, o.status, o.order_type,
+                        o.total_quantity, o.open_quantity, o.filled_quantity,
+                        o.execution_price, o.limit_price, o.stop_price,
+                        o.time_executed, o.time_placed, o.created_at, o.sync_timestamp,
+                        o.brokerage_order_id,
+                        o.option_ticker, o.option_expiry, o.option_strike, o.option_right
+                    FROM orders o
+                    WHERE UPPER(o.status) IN ('EXECUTED', 'FILLED', 'PARTIALLY_FILLED')
+                    ORDER BY COALESCE(o.time_executed, o.time_placed, o.sync_timestamp) DESC
+                    LIMIT :limit
+                    """,
+                    params={"limit": effective_limit},
+                    fetch_results=True,
+                )
 
             if not result:
                 await ctx.send(
                     embed=EmbedFactory.warning(
-                        title="Recent Orders",
-                        description="No orders found.\nUse `!fetch orders` to sync.",
+                        title="Recent Executed Orders",
+                        description=f"No executed orders found{f' for {ticker_filter}' if ticker_filter else ''}.\nUse `!fetch orders` to sync.",
                     )
                 )
                 return
 
-            # Get total portfolio equity for weight calculation
-            portfolio_result = execute_sql(
-                "SELECT COALESCE(SUM(equity), 0) FROM positions WHERE quantity > 0",
-                fetch_results=True,
-            )
-            total_portfolio_equity = (
-                float(portfolio_result[0][0]) if portfolio_result else 0
-            )
-
-            # Process orders
-            processed_orders = []
-            today_executed_count = 0
-            open_pending_count = 0
-            total_realized_pnl = 0.0
-
-            today = date.today()
-
-            for row in result:
-                (
-                    symbol,
-                    action,
-                    status,
-                    total_qty,
-                    open_qty,
-                    filled_qty,
-                    exec_price,
-                    limit_price,
-                    stop_price,
-                    time_exec,
-                    time_placed,
-                    sync_ts,
-                    avg_buy_price,
-                    position_qty,
-                    position_equity,
-                ) = row
-
-                # Determine effective date
-                effective_date = time_exec or time_placed or sync_ts
-
-                # Quantity Logic
-                status_upper = (status or "").upper()
-                if status_upper in ["EXECUTED", "PARTIALLY_FILLED", "FILLED"]:
-                    qty = filled_qty if filled_qty is not None else total_qty
-                    if effective_date and effective_date.date() == today:
-                        today_executed_count += 1
-                else:
-                    qty = open_qty if open_qty is not None else total_qty
-                    if status_upper in ["OPEN", "PENDING"]:
-                        open_pending_count += 1
-
-                # Fallback if qty is 0 or None
-                if not qty:
-                    qty = total_qty or 0
-
-                # Price Logic
-                price = exec_price or limit_price or stop_price
-                price = float(price) if price is not None else None
-                qty = float(qty)
-                avg_buy_price = float(avg_buy_price) if avg_buy_price else None
-                position_qty = float(position_qty) if position_qty else 0
-                position_equity = float(position_equity) if position_equity else 0
-
-                # Calculate Realized P/L % (for SELL orders)
-                realized_pnl_pct = None
-                realized_pnl_dollar = None
-                action_upper = (action or "").upper()
-                if (
-                    action_upper == "SELL"
-                    and price
-                    and avg_buy_price
-                    and avg_buy_price > 0
-                ):
-                    realized_pnl_pct = ((price - avg_buy_price) / avg_buy_price) * 100
-                    realized_pnl_dollar = (price - avg_buy_price) * qty
-                    total_realized_pnl += realized_pnl_dollar
-
-                # Calculate position % (order qty vs current position qty)
-                position_pct = None
-                if position_qty > 0:
-                    position_pct = (qty / position_qty) * 100
-
-                # Calculate portfolio weight
-                portfolio_weight = None
-                if total_portfolio_equity > 0 and price:
-                    order_value = price * qty
-                    portfolio_weight = (order_value / total_portfolio_equity) * 100
-
-                processed_orders.append(
-                    {
-                        "symbol": symbol or "N/A",
-                        "action": action_upper or "N/A",
-                        "status": status_upper or "N/A",
-                        "qty": qty,
-                        "price": price,
-                        "avg_price": avg_buy_price,
-                        "date": effective_date,
-                        "realized_pnl_pct": realized_pnl_pct,
-                        "realized_pnl_dollar": realized_pnl_dollar,
-                        "position_pct": position_pct,
-                        "portfolio_weight": portfolio_weight,
-                    }
-                )
-
-            def format_order_line(o):
-                """Format a single order line with enhanced analytics."""
-                emoji = action_emoji(o["action"])
-
-                # Format Price
-                price_str = f"${o['price']:.2f}" if o["price"] is not None else "-"
-
-                # Format Date with time if available
-                if o["date"]:
-                    if hasattr(o["date"], "strftime"):
-                        date_str = o["date"].strftime("%m/%d %H:%M")
-                    else:
-                        date_str = str(o["date"])[:14]
-                else:
-                    date_str = "??"
-
-                # Build main line
-                main_line = f"{emoji} **{o['symbol']}** {o['action']} {o['qty']:.1f} @ {price_str}"
-
-                # Build analytics line
-                analytics = []
-
-                # Average cost basis (for context)
-                if o["avg_price"]:
-                    analytics.append(f"Avg: ${o['avg_price']:.2f}")
-
-                # Realized P/L % (only for SELL)
-                if o["realized_pnl_pct"] is not None:
-                    pnl_emoji = "📈" if o["realized_pnl_pct"] >= 0 else "📉"
-                    pnl_str = f"{o['realized_pnl_pct']:+.1f}%"
-                    if o["realized_pnl_dollar"] is not None:
-                        pnl_str += f" (${o['realized_pnl_dollar']:+,.0f})"
-                    analytics.append(f"{pnl_emoji}P/L: {pnl_str}")
-
-                # Position percentage
-                if o["position_pct"] is not None:
-                    analytics.append(f"Pos: {o['position_pct']:.0f}%")
-
-                # Portfolio weight
-                if o["portfolio_weight"] is not None:
-                    analytics.append(f"Wt: {o['portfolio_weight']:.1f}%")
-
-                # Combine lines
-                result_line = f"{main_line} ({o['status']} {date_str})"
-                if analytics:
-                    result_line += f"\n   └ {' • '.join(analytics)}"
-
-                return result_line
-
-            # Summary Header with realized P/L
-            summary_parts = [
-                f"📅 **Today:** {today_executed_count} executed, {open_pending_count} open/pending"
+            # Convert to dicts
+            columns = [
+                "symbol",
+                "action",
+                "status",
+                "order_type",
+                "total_quantity",
+                "open_quantity",
+                "filled_quantity",
+                "execution_price",
+                "limit_price",
+                "stop_price",
+                "time_executed",
+                "time_placed",
+                "created_at",
+                "sync_timestamp",
+                "brokerage_order_id",
+                "option_ticker",
+                "option_expiry",
+                "option_strike",
+                "option_right",
             ]
-            if total_realized_pnl != 0:
-                pnl_emoji = "📈" if total_realized_pnl >= 0 else "📉"
-                summary_parts.append(
-                    f"{pnl_emoji} **Realized P/L:** ${total_realized_pnl:+,.2f}"
+            orders = [dict(zip(columns, row)) for row in result]
+
+            # Get current prices for "price since trade" calculation
+            symbols = list(set(o["symbol"] for o in orders if o["symbol"]))
+            current_prices = {}
+
+            # Try to get from positions first (use 'price' column, not 'current_price' which is NULL)
+            if symbols:
+                placeholders = ", ".join(f"'{s}'" for s in symbols)
+                pos_result = execute_sql(
+                    f"""
+                    SELECT symbol, price, quantity, average_buy_price, equity, open_pnl
+                    FROM positions
+                    WHERE symbol IN ({placeholders})
+                    """,
+                    fetch_results=True,
                 )
-            summary = " • ".join(summary_parts)
+                if pos_result:
+                    for row in pos_result:
+                        sym, curr_price, qty, avg_price, equity, pnl = row
+                        if curr_price:
+                            current_prices[sym] = {
+                                "current_price": float(curr_price),
+                                "quantity": float(qty or 0),
+                                "avg_price": float(avg_price) if avg_price else None,
+                                "equity": float(equity or 0),
+                                "pnl": float(pnl or 0),
+                            }
 
-            # Build description (may need multiple embeds for long lists)
-            order_lines = [format_order_line(o) for o in processed_orders]
-            description = f"{summary}\n\n" + "\n".join(order_lines)
+            # Fallback to yfinance for missing prices
+            missing = [s for s in symbols if s not in current_prices]
+            if missing and len(missing) <= 5:  # Only fetch if small number
+                try:
+                    for sym in missing:
+                        ticker = yf.Ticker(sym)
+                        info = ticker.fast_info
+                        if hasattr(info, "last_price") and info.last_price:
+                            current_prices[sym] = {
+                                "current_price": float(info.last_price)
+                            }
+                except Exception:
+                    pass  # Silently fail on price fetch
 
-            # Truncate if too long for embed
-            if len(description) > 4000:
-                description = description[:3997] + "..."
+            embeds = []
 
-            embed = build_embed(
-                category=EmbedCategory.ORDERS,
-                title="Recent Orders",
-                description=description,
-            )
+            # Get logo URL for symbol filter (for thumbnail)
+            logo_url = None
+            if ticker_filter:
+                logo_url = get_logo_url(ticker_filter)
 
-            embed.set_footer(
-                text="💡 Use !fetch orders to sync • 🟢 BUY 🔴 SELL • P/L calculated vs avg cost"
-            )
-            await ctx.send(embed=embed)
+            # Position Summary embed (when filtering by ticker)
+            if ticker_filter and ticker_filter in current_prices:
+                pos_data = current_prices[ticker_filter]
+                qty = pos_data.get("quantity", 0)
+                curr_price = pos_data.get("current_price", 0)
+                avg_price = pos_data.get("avg_price")
+                equity = pos_data.get("equity", 0)
+                pnl = pos_data.get("pnl", 0)
+
+                if qty > 0:
+                    pnl_pct = (
+                        ((curr_price - avg_price) / avg_price * 100)
+                        if avg_price and avg_price > 0
+                        else 0
+                    )
+                    pnl_emoji = "📈" if pnl >= 0 else "📉"
+
+                    # Build title with company name if available
+                    title = f"📊 {ticker_filter}"
+                    if company_description:
+                        title += f" — {company_description}"
+                    title += " Position Summary"
+
+                    summary_embed = discord.Embed(
+                        title=title,
+                        color=0x2ECC71 if pnl >= 0 else 0xE74C3C,
+                    )
+
+                    # Add logo as thumbnail
+                    if logo_url:
+                        summary_embed.set_thumbnail(url=logo_url)
+
+                    summary_embed.add_field(
+                        name="Shares", value=format_qty(qty), inline=True
+                    )
+                    summary_embed.add_field(
+                        name="Avg Cost", value=format_money(avg_price), inline=True
+                    )
+                    summary_embed.add_field(
+                        name="Current", value=format_money(curr_price), inline=True
+                    )
+                    summary_embed.add_field(
+                        name="Market Value", value=format_money(equity), inline=True
+                    )
+                    summary_embed.add_field(
+                        name="Unrealized P/L",
+                        value=f"{format_money(pnl, include_sign=True)} ({format_pct(pnl_pct)})",
+                        inline=True,
+                    )
+                    embeds.append(summary_embed)
+                else:
+                    # Position closed
+                    title = f"📊 {ticker_filter}"
+                    if company_description:
+                        title += f" — {company_description}"
+
+                    summary_embed = discord.Embed(
+                        title=title,
+                        description=f"Position: **Closed** (0 shares)\nCurrent price: {format_money(curr_price)}",
+                        color=0x808080,
+                    )
+                    if logo_url:
+                        summary_embed.set_thumbnail(url=logo_url)
+                    embeds.append(summary_embed)
+            elif ticker_filter:
+                # No position data for this ticker
+                title = f"📊 {ticker_filter}"
+                if company_description:
+                    title += f" — {company_description}"
+
+                summary_embed = discord.Embed(
+                    title=title,
+                    description="No current position (may be closed or never held)",
+                    color=0x808080,
+                )
+                if logo_url:
+                    summary_embed.set_thumbnail(url=logo_url)
+                embeds.append(summary_embed)
+
+            # Order card embeds (up to 9, since Discord limit is 10 embeds)
+            max_order_embeds = 9 if embeds else 10
+
+            # Track dividend reinvestments filtered out for info message
+            drip_count = 0
+            orders_shown = 0
+
+            for order in orders:
+                if orders_shown >= max_order_embeds:
+                    break
+
+                symbol = order["symbol"] or "N/A"
+                curr_price = current_prices.get(symbol, {}).get("current_price")
+                formatter = OrderFormatter(order, current_price=curr_price)
+
+                # Filter out dividend reinvestments from default view (no ticker filter)
+                # When filtering by specific ticker, show ALL orders including reinvestments
+                if not ticker_filter and formatter.is_dividend_reinvestment:
+                    drip_count += 1
+                    continue
+
+                embed_data = formatter.to_embed_dict(include_idea=True)
+
+                order_embed = discord.Embed(
+                    title=embed_data["title"],
+                    description=embed_data["description"],
+                    color=embed_data["color"],
+                )
+
+                # Add nearest Discord idea field if available
+                if "idea_field" in embed_data:
+                    idea = embed_data["idea_field"]
+                    order_embed.add_field(
+                        name=idea["name"],
+                        value=idea["value"],
+                        inline=idea.get("inline", False),
+                    )
+
+                order_embed.set_footer(text=embed_data["footer"])
+                embeds.append(order_embed)
+                orders_shown += 1
+
+            # Check if we truncated (account for filtered orders)
+            remaining_orders = len(orders) - orders_shown - drip_count
+            footer_parts = []
+
+            if remaining_orders > 0:
+                footer_parts.append(
+                    f"... and {remaining_orders} more orders. Use `!orders {effective_limit + 10}` to see more."
+                )
+
+            # Inform about filtered dividend reinvestments (only in default view)
+            if drip_count > 0 and not ticker_filter:
+                footer_parts.append(
+                    f"*{drip_count} dividend reinvestment(s) hidden. Use `!orders SYMBOL` to see all orders for a ticker.*"
+                )
+
+            if footer_parts:
+                note_embed = discord.Embed(
+                    description="\n".join(footer_parts),
+                    color=0x808080,
+                )
+                embeds.append(note_embed)
+
+            # Send embeds (Discord allows up to 10 per message)
+            await ctx.send(embeds=embeds[:10])
 
         except Exception as e:
             logger.error(f"Error showing orders: {e}")
@@ -666,14 +754,14 @@ def register(bot: commands.Bot, twitter_client=None):
             # Track calculation time
             calc_time = datetime.now(timezone.utc)
 
-            # Fetch positions with current prices
+            # Fetch positions with current prices (use 'price' column, not 'current_price')
             result = execute_sql(
                 """
                 SELECT
                     p.symbol,
                     p.quantity,
                     p.equity,
-                    p.current_price
+                    p.price
                 FROM positions p
                 WHERE p.quantity > 0
                 """,

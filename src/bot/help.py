@@ -22,8 +22,8 @@ class PortfolioHelpCommand(commands.HelpCommand):
             "commands": {
                 "fetch": "Sync data from brokerage (positions/orders/balances)",
                 "portfolio": "Show current positions with P/L (interactive)",
-                "piechart": "Pie chart of portfolio allocation by value",
-                "orders": "Show recent orders grouped by date",
+                "piechart": "Pie chart with ticker symbols and logos inside each slice",
+                "orders": "Show executed orders (DRIP filtered, `!orders AAPL` to see all)",
                 "movers": "Top/bottom performers by daily and total P/L",
                 "status": "Data freshness and row counts",
             },
@@ -49,7 +49,7 @@ class PortfolioHelpCommand(commands.HelpCommand):
             "description": "Stock charts and technical analysis",
             "commands": {
                 "chart": "Generate stock chart with position overlay",
-                "piechart": "Portfolio allocation pie chart",
+                "piechart": "Portfolio allocation pie chart with in-slice labels",
             },
         },
         "🔧 Admin": {

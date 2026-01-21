@@ -12,6 +12,7 @@ from .embed_factory import (
     format_money,
     format_pnl,
     format_percent,
+    format_percent_colored,
     status_emoji,
     action_emoji,
     render_table,
@@ -19,6 +20,13 @@ from .embed_factory import (
 from .portfolio_view import PortfolioView
 from .help_view import HelpView, HelpSelect
 from .pagination import PaginatedView
+from .logo_helper import (
+    get_logo_url,
+    get_logo_image,
+    prefetch_logos,
+    clear_logo_cache,
+    get_cache_stats,
+)
 
 __all__ = [
     # Embed Factory
@@ -28,6 +36,7 @@ __all__ = [
     "format_money",
     "format_pnl",
     "format_percent",
+    "format_percent_colored",
     "status_emoji",
     "action_emoji",
     "render_table",
@@ -36,4 +45,10 @@ __all__ = [
     "HelpView",
     "HelpSelect",
     "PaginatedView",
+    # Logo Helper
+    "get_logo_url",
+    "get_logo_image",
+    "prefetch_logos",
+    "clear_logo_cache",
+    "get_cache_stats",
 ]

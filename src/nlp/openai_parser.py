@@ -243,10 +243,10 @@ def _extract_parsed_result(response: Response, result_type: type[T]) -> Optional
 # CONFIGURATION
 # =============================================================================
 
-# Preferred model names (unified gpt-5-mini for triage/main/summary, gpt-5.1 for long/escalation)
+# Preferred model names (gpt-5.1 for main parsing quality, gpt-5-mini for triage/summary)
 _PREFERRED_MODELS = {
     "triage": "gpt-5-mini-2025-08-07",
-    "main": "gpt-5-mini-2025-08-07",
+    "main": "gpt-5.1-2025-11-13",  # Upgraded for better parsing quality
     "escalation": "gpt-5.1-2025-11-13",
     "summary": "gpt-5-mini-2025-08-07",
     "long": "gpt-5.1-2025-11-13",
@@ -1441,6 +1441,149 @@ def process_message(
 # =============================================================================
 
 
+def _make_schema_strict(schema: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Make a JSON schema OpenAI Batch API strict-mode compliant.
+
+    OpenAI's Batch API with strict=true requires:
+    1. additionalProperties: false on ALL object definitions
+    2. ALL properties listed in 'required' array (no optional fields)
+    3. NO anyOf constructs - use type: ["string", "null"] instead
+    4. $ref cannot have sibling properties - inline completely
+    5. Remove 'default' values (OpenAI determines defaults)
+
+    Pydantic's model_json_schema() doesn't satisfy these by default.
+
+    Args:
+        schema: The JSON schema dict to modify
+
+    Returns:
+        Modified schema compliant with OpenAI strict mode
+    """
+    import copy
+
+    schema = copy.deepcopy(schema)
+
+    # Extract $defs for reference resolution
+    defs = schema.get("$defs", {})
+
+    def _resolve_ref(ref_path: str) -> Optional[Dict[str, Any]]:
+        """Resolve a $ref path like '#/$defs/Action' to its definition."""
+        if ref_path.startswith("#/$defs/"):
+            def_name = ref_path.split("/")[-1]
+            return copy.deepcopy(defs.get(def_name))
+        return None
+
+    def _inline_ref(obj: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Inline $ref definitions. If $ref has sibling properties (description, default),
+        merge them with the resolved definition. OpenAI strict mode doesn't allow
+        $ref with any siblings.
+        """
+        if "$ref" not in obj:
+            return obj
+
+        ref_path = obj["$ref"]
+        ref_def = _resolve_ref(ref_path)
+
+        if not ref_def:
+            return obj  # Can't resolve, leave as-is
+
+        # Collect sibling properties (anything besides $ref)
+        siblings = {k: v for k, v in obj.items() if k != "$ref"}
+
+        # Merge: ref_def properties take precedence, but keep siblings as fallback
+        # For description: prefer obj's description if present, else ref_def's
+        result = ref_def.copy()
+        for k, v in siblings.items():
+            if k not in result:
+                result[k] = v
+            elif k == "description" and v:
+                # Prefer the more specific description from the property
+                result[k] = v
+
+        return result
+
+    def _convert_anyof_to_nullable(obj: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert anyOf with null to type array format, inlining $ref enums."""
+        if "anyOf" not in obj:
+            return obj
+
+        anyof_items = obj["anyOf"]
+
+        # Check if this is a nullable pattern: anyOf: [{...}, {type: null}]
+        types = []
+        null_present = False
+        ref = None
+        ref_def = None
+        other_props = {}
+
+        for item in anyof_items:
+            if isinstance(item, dict):
+                if item.get("type") == "null":
+                    null_present = True
+                elif "$ref" in item:
+                    ref = item["$ref"]
+                    ref_def = _resolve_ref(ref)
+                elif "type" in item:
+                    types.append(item.get("type"))
+                    for k, v in item.items():
+                        if k != "type":
+                            other_props[k] = v
+
+        if null_present and (types or ref):
+            # Remove anyOf and rebuild
+            del obj["anyOf"]
+
+            if ref and ref_def:
+                # Inline the referenced definition and make nullable
+                if "enum" in ref_def:
+                    obj["type"] = ["string", "null"]
+                    obj["enum"] = ref_def["enum"] + [None]
+                    if "description" in ref_def and "description" not in obj:
+                        obj["description"] = ref_def["description"]
+                else:
+                    # Non-enum $ref - inline it
+                    for k, v in ref_def.items():
+                        if k not in obj:
+                            obj[k] = v
+            elif len(types) == 1:
+                obj["type"] = [types[0], "null"]
+                obj.update(other_props)
+            else:
+                obj["type"] = types + ["null"]
+                obj.update(other_props)
+
+        return obj
+
+    def _make_strict(obj: Any) -> Any:
+        if isinstance(obj, dict):
+            # Step 1: Inline any standalone $ref fields
+            obj = _inline_ref(obj)
+
+            # Step 2: Convert anyOf nullable patterns
+            obj = _convert_anyof_to_nullable(obj)
+
+            # Step 3: If object type, make strict-compliant
+            if obj.get("type") == "object":
+                obj["additionalProperties"] = False
+                if "properties" in obj:
+                    obj["required"] = list(obj["properties"].keys())
+
+            # Step 4: Remove 'default' (not allowed in strict mode)
+            obj.pop("default", None)
+
+            # Step 5: Recurse into all dict values
+            for key, value in list(obj.items()):
+                obj[key] = _make_strict(value)
+
+        elif isinstance(obj, list):
+            return [_make_strict(item) for item in obj]
+        return obj
+
+    return _make_strict(schema)
+
+
 def build_batch_request(
     message_id: Union[int, str], text: str, chunk_index: int = 0
 ) -> Dict[str, Any]:
@@ -1455,6 +1598,10 @@ def build_batch_request(
     Returns:
         Dict in Batch API format
     """
+    # Get Pydantic schema and make it strict-compliant for Batch API
+    raw_schema = MessageParseResult.model_json_schema()
+    strict_schema = _make_schema_strict(raw_schema)
+
     return {
         "custom_id": f"msg-{message_id}-chunk-{chunk_index}",
         "method": "POST",
@@ -1469,7 +1616,7 @@ def build_batch_request(
                 "type": "json_schema",
                 "json_schema": {
                     "name": "message_parse_result",
-                    "schema": MessageParseResult.model_json_schema(),
+                    "schema": strict_schema,
                     "strict": True,
                 },
             },

@@ -171,6 +171,34 @@ def format_percent(value: float, include_sign: bool = True) -> str:
     return f"{value:.2f}%"
 
 
+def format_percent_colored(value: float, use_emoji: bool = True) -> str:
+    """Format percentage with color indicator (emoji or text).
+
+    For Discord, uses emojis to visually indicate direction:
+    - Positive: 🟢 or 📈
+    - Negative: 🔴 or 📉
+    - Zero: ⚪ or ➡️
+
+    Examples:
+        format_percent_colored(15.5) -> "🟢 +15.50%"
+        format_percent_colored(-3.2) -> "🔴 -3.20%"
+        format_percent_colored(0) -> "⚪ 0.00%"
+    """
+    if value is None:
+        return "⚪ 0.00%" if use_emoji else "0.00%"
+
+    pct_str = f"{value:+.2f}%"
+
+    if not use_emoji:
+        return pct_str
+
+    if value > 0:
+        return f"🟢 {pct_str}"
+    elif value < 0:
+        return f"🔴 {pct_str}"
+    return f"⚪ {pct_str}"
+
+
 def render_table(
     headers: List[str],
     rows: List[List[str]],

@@ -3,15 +3,28 @@ Portfolio Pie Chart Generator
 
 Generates a pie chart visualization of portfolio holdings for Discord display.
 Uses Discord dark theme colors for consistent styling.
+
+Features:
+- Top 10 positions with company logos and tickers inside slices
+- "Others" aggregation for remaining positions
+- Logo + ticker placement inside each slice using patheffects for readability
+- Discord-friendly dark theme styling
 """
 
 import io
+import logging
+import math
+from datetime import datetime
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
+import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-import numpy as np
+import matplotlib.patheffects as path_effects
+from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+
+logger = logging.getLogger(__name__)
 
 # ── Discord Dark Style Constants ──────────────────────────────────────────
 FIG_BG = "#1e1f22"  # outer window – Discord dark grey‑black
@@ -42,22 +55,75 @@ PIE_COLORS = [
 ]
 
 
+def _fetch_logo_images(
+    symbols: List[str], size: Tuple[int, int] = (32, 32)
+) -> Dict[str, any]:
+    """
+    Fetch logo images for symbols using PIL.
+
+    Uses the centralized logo_helper with TTL caching and multi-provider fallback.
+
+    Args:
+        symbols: List of ticker symbols
+        size: Image size (width, height)
+
+    Returns:
+        Dict mapping symbol to PIL Image (or None if not found)
+    """
+    try:
+        from PIL import Image
+        from .logo_helper import get_logo_image, prefetch_logos
+    except ImportError:
+        logger.debug("PIL not available for logo fetching")
+        return {}
+
+    # Prefetch to warm cache
+    prefetch_logos(symbols[:10])
+
+    logos = {}
+    for symbol in symbols[:10]:  # Limit to top 10
+        try:
+            buffer = get_logo_image(symbol, size=size)
+            if buffer:
+                img = Image.open(buffer)
+                logos[symbol] = img
+            else:
+                logos[symbol] = None
+        except Exception as e:
+            logger.debug(f"Failed to fetch logo for {symbol}: {e}")
+            logos[symbol] = None
+
+    found = sum(1 for v in logos.values() if v is not None)
+    logger.info(f"Fetched {found}/{len(logos)} logo images")
+    return logos
+
+
 def generate_portfolio_pie_chart(
     positions: List[Dict],
-    top_n: int = 17,
+    top_n: int = 10,
     title: str = "Portfolio Top Holdings by Value",
     save_path: Optional[Path] = None,
     return_buffer: bool = True,
+    include_logos: bool = True,
 ) -> Tuple[Optional[io.BytesIO], str]:
     """
-    Generate a pie chart of top portfolio holdings by value.
+    Generate a pie chart of top portfolio holdings by value with in-slice labels.
+
+    Features:
+    - Top N positions (default 10) shown as individual slices
+    - Remaining positions aggregated into "Others" slice
+    - Ticker symbols and logos placed INSIDE each slice
+    - Wide slices: logo + ticker side-by-side
+    - Narrow slices: ticker only or smaller logo
+    - Discord dark theme styling
 
     Args:
         positions: List of position dicts with 'symbol' and 'equity' keys
-        top_n: Number of top positions to show (default 17)
+        top_n: Number of top positions to show (default 10)
         title: Chart title
         save_path: Optional path to save PNG file
         return_buffer: If True, return BytesIO buffer for Discord upload
+        include_logos: If True, fetch and display company logos inside slices
 
     Returns:
         Tuple of (BytesIO buffer or None, chart_filename)
@@ -101,90 +167,158 @@ def generate_portfolio_pie_chart(
     if not values:
         return None, ""
 
-    # Calculate percentages for display
+    # Calculate percentages for display and slice sizing
     percentages = [v / total_value * 100 for v in values]
 
-    # Create figure with Discord dark theme
-    fig, (ax_pie, ax_legend) = plt.subplots(
-        1, 2, figsize=(14, 8), gridspec_kw={"width_ratios": [2, 1]}, facecolor=FIG_BG
-    )
-    ax_pie.set_facecolor(PANEL_BG)
-    ax_legend.set_facecolor(PANEL_BG)
+    # Fetch logos for top positions (if enabled)
+    logo_images = {}
+    if include_logos:
+        top_symbols = [
+            pos.get("symbol") for pos in top_positions[:10] if pos.get("symbol")
+        ]
+        logo_images = _fetch_logo_images(top_symbols, size=(28, 28))
 
-    # Custom autopct function that only shows % for large slices
-    def make_autopct(values):
-        def autopct(pct):
-            if pct >= 3:  # Only show percentage if >= 3%
-                return f"{pct:.1f}%"
-            return ""
+    # Create figure with Discord dark theme - SINGLE subplot (no legend panel)
+    fig, ax = plt.subplots(figsize=(10, 10), facecolor=FIG_BG)
+    ax.set_facecolor(PANEL_BG)
 
-        return autopct
-
-    # Create pie chart
-    wedges, texts, autotexts = ax_pie.pie(
+    # Create pie chart WITHOUT autopct (we'll add custom labels inside slices)
+    wedges, _ = ax.pie(
         values,
-        labels=None,  # We'll add custom legend instead
-        autopct=make_autopct(values),
+        labels=None,  # No external labels
         colors=colors,
         startangle=90,
-        pctdistance=0.75,
-        wedgeprops=dict(width=0.6, edgecolor=FIG_BG, linewidth=2),  # Donut style
-        textprops=dict(color=TXT, fontsize=10, fontweight="bold"),
+        wedgeprops=dict(width=0.55, edgecolor=FIG_BG, linewidth=2),  # Donut style
     )
 
-    # Style the percentage labels
-    for autotext in autotexts:
-        autotext.set_color(TXT)
-        autotext.set_fontweight("bold")
-        autotext.set_fontsize(9)
-
-    # Add title to pie chart
-    ax_pie.set_title(title, color=TXT, fontsize=14, fontweight="bold", pad=20)
+    # Add title
+    ax.set_title(title, color=TXT, fontsize=16, fontweight="bold", pad=20)
 
     # Add total value in center of donut
-    ax_pie.text(
+    ax.text(
         0,
         0,
         f"Total\n${total_value:,.0f}",
         ha="center",
         va="center",
-        fontsize=14,
+        fontsize=16,
         fontweight="bold",
         color=TXT,
     )
 
-    # Create legend with values in the right panel
-    legend_entries = []
-    for i, (label, value, pct) in enumerate(zip(labels, values, percentages)):
-        legend_entries.append(f"{label}: ${value:,.0f} ({pct:.1f}%)")
-
-    # Create legend patches
-    legend_patches = [
-        mpatches.Patch(color=colors[i], label=legend_entries[i])
-        for i in range(len(legend_entries))
+    # Text styling with outline for readability on colored backgrounds
+    text_outline = [
+        path_effects.Stroke(linewidth=3, foreground=FIG_BG),
+        path_effects.Normal(),
     ]
 
-    # Add legend to right panel
-    ax_legend.axis("off")
-    ax_legend.legend(
-        handles=legend_patches,
-        loc="center left",
-        fontsize=9,
-        frameon=False,
-        labelcolor=TXT,
-        title="Holdings",
-        title_fontsize=11,
-    )
+    # Add ticker + logo inside each slice
+    for i, (wedge, label, pct) in enumerate(zip(wedges, labels, percentages)):
+        # Calculate center position of the wedge
+        theta_mid = (wedge.theta1 + wedge.theta2) / 2
+        theta_rad = math.radians(theta_mid)
 
-    # Make legend title white
-    legend = ax_legend.get_legend()
-    if legend:
-        legend.get_title().set_color(TXT)
+        # Position at ~70% of the way from center (inside the donut ring)
+        r_text = 0.72
+
+        # Determine layout based on slice size
+        is_others = label.startswith("Others")
+        symbol = label if not is_others else "Others"
+
+        if pct >= 5:
+            # Large slice: logo + ticker side-by-side
+            logo_size = 24
+            logo_offset = 0.06  # Offset logo slightly toward center
+            text_offset = 0.06  # Offset text slightly toward edge
+        elif pct >= 3:
+            # Medium slice: smaller logo + ticker
+            logo_size = 18
+            logo_offset = 0.04
+            text_offset = 0.04
+        else:
+            # Small slice: ticker only (no logo)
+            logo_size = 0
+            logo_offset = 0
+            text_offset = 0
+
+        # Calculate positions perpendicular to radius for side-by-side layout
+        # Perpendicular direction (90 degrees rotated)
+        perp_theta = theta_rad + math.pi / 2
+
+        # Center of the slice
+        x_center = r_text * math.cos(theta_rad)
+        y_center = r_text * math.sin(theta_rad)
+
+        # Add ticker text
+        if pct >= 1.5:  # Only show text for slices >= 1.5%
+            # For large slices, offset text from logo; for small, center it
+            if logo_size > 0 and not is_others:
+                x_text = x_center + text_offset * math.cos(perp_theta)
+                y_text = y_center + text_offset * math.sin(perp_theta)
+            else:
+                x_text = x_center
+                y_text = y_center
+
+            # Determine font size based on slice
+            fontsize = 10 if pct >= 5 else (9 if pct >= 3 else 8)
+
+            # Add ticker text with percentage
+            display_text = f"{symbol}\n{pct:.1f}%" if pct >= 3 else symbol
+
+            ax.text(
+                x_text,
+                y_text,
+                display_text,
+                ha="center",
+                va="center",
+                fontsize=fontsize,
+                fontweight="bold",
+                color="white",
+                path_effects=text_outline,
+            )
+
+        # Add logo for non-Others slices with sufficient size
+        if logo_size > 0 and not is_others and label in logo_images:
+            logo_img = logo_images.get(label)
+            if logo_img is not None:
+                try:
+                    img_array = np.array(logo_img)
+
+                    # Position logo offset from text
+                    x_logo = x_center - logo_offset * math.cos(perp_theta)
+                    y_logo = y_center - logo_offset * math.sin(perp_theta)
+
+                    # Scale zoom based on logo_size
+                    zoom = logo_size / 28.0 * 0.9
+
+                    imagebox = OffsetImage(img_array, zoom=zoom)
+                    imagebox.image.axes = ax
+
+                    ab = AnnotationBbox(
+                        imagebox,
+                        (x_logo, y_logo),
+                        xycoords="data",
+                        frameon=True,
+                        bboxprops=dict(
+                            boxstyle="circle,pad=0.08",
+                            facecolor="white",
+                            edgecolor="white",
+                            alpha=0.95,
+                        ),
+                        pad=0,
+                    )
+                    ax.add_artist(ab)
+                    logger.debug(
+                        f"Added logo for {label} at ({x_logo:.2f}, {y_logo:.2f})"
+                    )
+
+                except Exception as logo_err:
+                    logger.debug(f"Failed to add logo for {label}: {logo_err}")
 
     plt.tight_layout()
 
     # Generate filename
-    timestamp = plt.datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     chart_filename = f"portfolio_pie_{timestamp}.png"
 
     # Save to file if path provided
