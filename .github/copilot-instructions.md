@@ -14,14 +14,16 @@
 
 ```bash
 # Core workflow
-python generate_journal.py --force    # Generate journal with data refresh
 python -m src.bot.bot                  # Run Discord bot
-python scripts/bootstrap.py           # Complete setup + migration
+python scripts/bootstrap.py           # Complete setup
 
 # Development & debugging
 make test                              # Run pytest test suite
 python tests/test_integration.py      # Core integration tests
 python scripts/verify_database.py     # Database schema validation
+
+# OHLCV data backfill
+python scripts/backfill_ohlcv.py --daily  # Databento OHLCV
 
 # PowerShell-friendly alternatives (Windows)
 # All commands work in PowerShell via 'make' or direct Python calls
@@ -91,13 +93,21 @@ symbols = extract_ticker_symbols("Text with $AAPL and $MSFT")
 
 ## 🔧 Key Integration Points
 
-### LLM Journal Generation
+### NLP Pipeline (OpenAI Structured Outputs)
 ```python
-from src.journal_generator import create_enhanced_journal_prompt, generate_journal_entry
+from src.nlp.openai_parser import process_message
+from src.nlp.schemas import MessageParseResult, ParsedIdea
 
-# Primary: Gemini API → Fallback: OpenAI API  
-prompt = create_enhanced_journal_prompt(positions_df, messages_df, prices_df)
-journal = generate_journal_entry(prompt, max_tokens=160)  # ~120 words
+# Process a message (includes triage + parsing + escalation)
+result = process_message(text, message_id=123, channel_id=456)
+if result and result.ideas:
+    for idea in result.ideas:
+        # Each idea has: primary_symbol, labels, direction, confidence, levels
+        print(f"{idea.primary_symbol}: {idea.labels} ({idea.confidence})")
+
+# Model routing via environment variables:
+# OPENAI_MODEL_TRIAGE, OPENAI_MODEL_MAIN, OPENAI_MODEL_ESCALATION
+# OPENAI_MODEL_LONG (high symbol density), OPENAI_MODEL_SUMMARY
 ```
 
 ### Discord Bot (Modular Command Pattern)
@@ -198,25 +208,24 @@ python scripts/run_timestamp_migration.py
 - **Schema validation**: `python scripts/verify_database.py --verbose`
 
 ### File Structure Context
-- **Entry points**: `generate_journal.py`, `src/bot/bot.py`
+- **Entry points**: `src/bot/bot.py`
 - **Data processing**: `src/data_collector.py` (market), `src/snaptrade_collector.py` (brokerage)
+- **OHLCV pipeline**: `src/databento_collector.py` → RDS/S3/Supabase
 - **NLP processing**: `src/nlp/` (OpenAI parser, schemas, soft splitter, preclean)
 - **NLP scripts**: `scripts/nlp/` (parse_messages, build_batch, run_batch, ingest_batch)
-- **LLM integration**: `src/journal_generator.py` (dual text/markdown output)
 - **Database**: `src/db.py` (engine with unified real-time writes)
 - **Bot commands**: `src/bot/commands/` (modular structure with `register()` functions)
 
 ### Data Flow Architecture
 ```
-SnapTrade + Discord + Twitter → PostgreSQL (Supabase) → NLP Parser → discord_parsed_ideas → Journal (text + markdown)
+SnapTrade + Discord + Twitter → PostgreSQL (Supabase) → NLP Parser → discord_parsed_ideas
 ```
 
-**NLP Pipeline Stage** (new):
+**NLP Pipeline Stage**:
 1. Discord messages stored in `discord_messages`
 2. `scripts/nlp/parse_messages.py` processes pending messages
 3. OpenAI structured outputs extract idea units with labels, symbols, levels
 4. Ideas stored in `discord_parsed_ideas` with unique constraint `(message_id, soft_chunk_index, local_idea_index)`
-5. Journal generator uses parsed ideas for enhanced summaries
 
 ## ⚠️ Critical Rules
 

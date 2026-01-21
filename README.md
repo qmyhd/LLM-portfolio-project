@@ -1,6 +1,6 @@
 # LLM Portfolio Journal
 
-A data-driven portfolio journal integrating brokerage data, market information, and social sentiment analysis to generate trading insights using Large Language Models.
+A data-driven portfolio analytics system integrating brokerage data, market information, and social sentiment analysis for trading insights.
 
 **Documentation:**
 - [AGENTS.md](AGENTS.md) - AI contributor guide
@@ -11,11 +11,12 @@ A data-driven portfolio journal integrating brokerage data, market information, 
 
 ## Features
 
-- Multi-source data integration: SnapTrade API, Discord bot, Twitter/X, market data
+- Multi-source data integration: SnapTrade API, Discord bot, Twitter/X, yfinance, Databento
 - PostgreSQL database with Supabase, connection pooling, and RLS policies
-- Dual LLM engine (Gemini/OpenAI) with prompt engineering
+- NLP pipeline using OpenAI structured outputs for trading idea extraction
 - FIFO position tracking, P/L calculations, charting
 - Discord message processing with ticker extraction and sentiment scoring
+- OHLCV daily price data pipeline via Databento → RDS/S3/Supabase
 - Automated ETL pipeline with validation and transformation
 - Retry mechanisms, error handling, graceful degradation
 - Interactive Discord bot for data processing and analytics
@@ -26,7 +27,7 @@ A data-driven portfolio journal integrating brokerage data, market information, 
 - Python 3.9+ with virtual environment
 - PostgreSQL/Supabase database (required)
 - Discord bot token (optional)
-- API keys for SnapTrade, OpenAI/Gemini (optional)
+- API keys for SnapTrade, OpenAI (optional)
 
 ### Installation
 ```bash
@@ -38,15 +39,12 @@ python scripts/bootstrap.py
 
 # 3. Configure environment
 cp .env.example .env  # Add your API keys
-
-# 4. Generate your first journal
-python generate_journal.py --force
 ```
 
 ### Core Commands
 ```bash
-python generate_journal.py --force   # Generate journal with fresh data
 python -m src.bot.bot                # Run Discord bot
+python scripts/backfill_ohlcv.py     # OHLCV price data backfill
 make test                            # Run tests
 ```
 
@@ -65,9 +63,8 @@ cp .env.example .env
 DATABASE_URL=postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres
 SUPABASE_SERVICE_ROLE_KEY=sb_secret_your_service_role_key
 
-# LLM APIs (choose one)
-GOOGLE_API_KEY=your_gemini_api_key      # Primary (free tier)
-OPENAI_API_KEY=your_openai_key          # Fallback
+# LLM API (for NLP parsing)
+OPENAI_API_KEY=your_openai_key
 ```
 
 ### Optional Integrations
@@ -139,13 +136,6 @@ DATABASE_DIRECT_URL=postgresql://postgres.[project]:[service-role-key]@[region].
 ---
 
 ## Usage Examples
-
-### Generate Trading Journal
-```bash
-python generate_journal.py                    # Basic generation
-python generate_journal.py --force            # Force data refresh
-python generate_journal.py --output custom/   # Custom output directory
-```
 
 ### Discord Bot Commands
 ```bash

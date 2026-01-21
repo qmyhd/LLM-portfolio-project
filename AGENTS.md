@@ -6,8 +6,8 @@
 ## 🚀 Quick Start for AI Coding Agents
 
 ### System Overview
-Sophisticated data-driven portfolio journal system with integrated LLM generation:
-- **Data Sources**: SnapTrade API + Discord bot
+Sophisticated data-driven portfolio analytics system:
+- **Data Sources**: SnapTrade API + Discord bot + Twitter/X API + yfinance + Databento OHLCV
 
 ## ⚠️ Important Notes for Agents
 
@@ -21,28 +21,28 @@ Sophisticated data-driven portfolio journal system with integrated LLM generatio
 - **Advanced MCP** – Use Supabase commands for schema checks, sequential thinking for complex plans, memory/context7 for durable notes and live documentation.
 
 ### SETUP SEQUENCE (CRITICAL)
-Twitter/X API + yfinance → Real-time market sentiment & brokerage data
 - **Storage**: PostgreSQL/Supabase with connection pooling and real-time capabilities
 - **Processing**: Advanced ETL pipelines with ticker extraction, sentiment analysis, and position tracking
-- **Intelligence**: LLM-powered journal generation (Gemini primary, OpenAI fallback) with dual output formats
+- **NLP Intelligence**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
 - **Interface**: Discord bot with modular commands, interactive charts, and real-time data collection
 
-### Current Architecture (2025)
+### Current Architecture (2026)
 - **Database Engine**: PostgreSQL-only with SQLAlchemy 2.0, Supabase pooler optimization (port 6543)
 - **Configuration**: Pydantic-based settings with comprehensive environment variable mapping
 - **Error Handling**: Hardened retry patterns with intelligent exception filtering
 - **Bot System**: Modular Discord commands with Twitter integration, advanced charting, and centralized UI design system
 - **UI System**: Standardized embed factory with color coding, interactive views (portfolio filters, help dropdown), and pagination
 - **NLP Pipeline**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
-- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 049_drop_legacy_tables.sql, 19 tables as of Jan 2026)
+- **OHLCV Pipeline**: Databento Historical API → RDS/S3/Supabase storage
+- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 050_ohlcv_daily.sql, 20 tables as of Jan 2026)
 
 ## 📁 Project Map & Service Purposes
 
 ### Entry Points
 ```bash
-generate_journal.py                    # CLI wrapper → src.journal_generator.main()
 src/bot/bot.py                        # Discord bot entry point with Twitter integration
-notebooks/01_generate_journal.ipynb   # Interactive development workflow
+scripts/backfill_ohlcv.py             # Databento OHLCV backfill CLI for EC2
+scripts/nlp/parse_messages.py         # NLP parsing pipeline entry point
 ```
 
 ### Core Services
@@ -51,6 +51,7 @@ src/
 ├── 📊 Data Collection Layer
 │   ├── data_collector.py             # Primary data ingestion: SnapTrade + yfinance + dual DB persistence
 │   ├── snaptrade_collector.py        # Dedicated SnapTrade ETL with enhanced field extraction
+│   ├── databento_collector.py        # Databento OHLCV daily bars → RDS/S3/Supabase
 │   ├── market_data.py                # Market data utilities and price fetching
 │   └── twitter_analysis.py           # Twitter/X integration and sentiment analysis
 │
@@ -59,7 +60,6 @@ src/
 │   └── config.py                     # Unified configuration: Pydantic settings with field mapping
 │
 ├── 🧠 Processing Engine
-│   ├── journal_generator.py          # LLM orchestration: prompt engineering, API calls, dual output formats
 │   ├── message_cleaner.py            # Text processing & robust ticker symbol extraction
 │   ├── position_analysis.py          # Advanced position tracking and analytics
 │   └── chart_enhancements.py         # Enhanced charting with position overlays
@@ -103,19 +103,21 @@ schema/
 ├── 030-038_*.sql                     # Discord chunks, stock mentions, LLM tagging columns
 ├── 039_add_parse_status_to_discord_messages.sql # NLP parse status tracking
 ├── 040_create_discord_parsed_ideas.sql # Core NLP parsed ideas table
-├── 041_fix_parsed_ideas_message_id_type.sql # Fix message_id type to bigint
-└── 042_add_chunk_indexing_columns.sql # Add soft_chunk_index, local_idea_index, unique constraint
+├── 041-049_*.sql                     # Chunk indexing, FK constraints, cleanup
+└── 050_ohlcv_daily.sql               # OHLCV daily bars table for Databento data
 
 scripts/
-├── bootstrap.py                      # Comprehensive database setup and migration
+├── bootstrap.py                      # Comprehensive database setup and validation
 ├── deploy_database.py                # Unified database deployment system
 ├── schema_parser.py                  # Schema parsing and dataclass generation
-├── verify_database.py                # Unified schema validation (19 tables, FKs, constraints)
+├── verify_database.py                # Unified schema validation (20 tables, FKs, constraints)
+├── backfill_ohlcv.py                 # Databento OHLCV backfill CLI for EC2
 └── nlp/                              # NLP processing scripts
     ├── parse_messages.py             # Live message parsing with OpenAI
     ├── build_batch.py                # Batch API request builder
     ├── run_batch.py                  # Submit batch jobs to OpenAI
-    └── ingest_batch.py               # Ingest batch results to database
+    ├── ingest_batch.py               # Ingest batch results to database
+    └── batch_backfill.py             # Unified orchestrator for batch pipeline
 ```
 
 ### Data Conventions
@@ -129,7 +131,7 @@ scripts/
 ### 🚨 Step 1: Pre-Setup Validation (ALWAYS RUN FIRST)
 ```bash
 # CRITICAL: Run this before any setup to validate deployment readiness
-python validate_deployment.py
+python tests/validate_deployment.py
 
 # This validates:
 # - Critical files and Python syntax
@@ -149,7 +151,6 @@ python scripts/bootstrap.py
 # - Module loading and validation
 # - Environment configuration loading
 # - Database connectivity testing with detailed info
-# - pgloader-based SQLite → PostgreSQL migration
 # - Comprehensive health checks (DB, config, size)
 # - Complete orchestration with cleanup
 ```
@@ -176,26 +177,9 @@ make verify-migration  # Check migration status
 
 # Manual database operations (if Makefile unavailable)
 python scripts/deploy_database.py       # Deploy schema to Supabase PostgreSQL
-
-# pgloader migration (requires pgloader installed)
-# Bootstrap handles this automatically, but for manual:
-# apt-get install pgloader (Ubuntu) or brew install pgloader (macOS)
 ```
 
 ## 🎯 Key Development Commands
-
-### Journal Generation (Primary Use Case)
-```bash
-# Generate journal (auto-updates data)
-python generate_journal.py --force
-make journal  # Alternative via Makefile
-
-# Custom output directory
-python generate_journal.py --output custom/path
-
-# Interactive workflow
-# Use notebooks/01_generate_journal.ipynb
-```
 
 ### Discord Bot (Real-time Data Collection)
 ```bash
@@ -230,8 +214,8 @@ python-dotenv>=1.0.1, pydantic-settings>=2.2, pydantic==2.11.7
 # Financial APIs (CORE FUNCTIONALITY)  
 yfinance>=0.2.65, snaptrade-python-sdk>=11.0.98
 
-# LLM APIs (JOURNAL GENERATION)
-openai>=1.98.0, google-generativeai>=0.8.0, langchain>=0.3.27
+# LLM APIs (NLP PARSING)
+openai>=1.98.0
 
 # Social Media (SENTIMENT ANALYSIS)
 discord.py>=2.5.2, tweepy>=4.14, textblob>=0.17
@@ -251,9 +235,8 @@ SUPABASE_KEY=your_supabase_anon_key
 # OR
 DATABASE_URL=postgresql://user:pass@host:port/db
 
-# LLM APIs (choose one)
-GOOGLE_API_KEY=your_gemini_api_key      # Primary (free tier)
-OPENAI_API_KEY=your_openai_key          # Fallback
+# LLM API (required for NLP parsing)
+OPENAI_API_KEY=your_openai_key
 ```
 
 ### Optional Integrations
@@ -278,13 +261,13 @@ TWITTER_BEARER_TOKEN=your_bearer_token
 - **Real-time writes**: All operations use `execute_sql()` → Supabase PostgreSQL with connection pooling
 - **🚨 KEY REQUIREMENT**: Must use `SUPABASE_SERVICE_ROLE_KEY` in connection string to bypass RLS policies
 
-### Key Tables (19 active as of migration 049)
+### Key Tables (20 active as of migration 050)
 ```sql
 -- SnapTrade Integration (6 tables) 
 accounts, account_balances, positions, orders, symbols, trade_history
 
--- Market Data & Analytics (3 tables)
-daily_prices, realtime_prices, stock_metrics
+-- Market Data & Analytics (4 tables)
+daily_prices, realtime_prices, stock_metrics, ohlcv_daily
 
 -- Discord/Social Integration (4 tables)
 discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas
@@ -306,64 +289,41 @@ processing_status, schema_migrations
 ```bash
 # Verify database schema compliance
 python scripts/verify_database.py --verbose
-
-# Validate post-migration status
-python scripts/validate_post_migration.py
 ```
 
-### pgloader Migration System (Advanced)
-The project includes automated pgloader-based migration:
+## 🤖 NLP Pipeline & LLM Integration
 
-```bash
-# pgloader installation (required for automated migration)
-# Ubuntu/Debian: apt-get install pgloader  
-# macOS: brew install pgloader
-# Windows: Use WSL or Docker
-
-# Migration is handled automatically by bootstrap.py:
-# 1. Detects existing SQLite database with data (>1KB)
-# 2. Runs pgloader-based migration to PostgreSQL
-# 3. Creates .migration_completed flag to prevent re-migration
-# 4. Provides detailed migration verification
-
-# Manual migration verification:
-python -c "from pathlib import Path; print('Migration completed:', Path('.migration_completed').exists())"
-```
-
-## 🤖 LLM Integration Patterns
-
-### Journal Generation Workflow
+### NLP Parsing Pipeline
 ```python
-# Entry point: generate_journal.py → src.journal_generator.main()
-from src.journal_generator import main
+# Process a single message with OpenAI structured outputs
+from src.nlp.openai_parser import process_message
+from src.nlp.schemas import MessageParseResult, ParsedIdea
 
-# Force refresh all data and generate journal
-result = main(force_update=True, output_dir=None)
+# Process a message (includes triage + parsing + escalation)
+result = process_message(text, message_id=123, channel_id=456)
+if result and result.ideas:
+    for idea in result.ideas:
+        # Each idea has: primary_symbol, labels, direction, confidence, levels
+        print(f"{idea.primary_symbol}: {idea.labels} ({idea.confidence})")
+```
+
+### Batch Processing (50% cost savings)
+```bash
+# Build batch → submit → ingest results
+python scripts/nlp/batch_backfill.py --limit 500
 ```
 
 ### LLM API Integration
-- **Primary**: Gemini API (free tier, high rate limits)
-- **Fallback**: OpenAI API (paid, reliable)
-- **Token limits**: Max 200 tokens for journal entries (~120 words)
+- **Primary**: OpenAI API for structured outputs (NLP parsing)
+- **Model routing**: Triage → Main → Escalation models based on message complexity
 - **Retry logic**: `@hardened_retry(max_retries=3, delay=2)` for API calls
-
-### Prompt Engineering
-```python
-# Basic prompt builder
-from src.journal_generator import create_journal_prompt
-
-# Enhanced prompt with full context
-from src.journal_generator import create_enhanced_journal_prompt
-
-# Both functions expect: positions_df, messages_df, prices_df
-```
 
 ## 🧪 Testing & Validation
 
 ### 🏥 Comprehensive Health Checks
 ```bash
 # Pre-deployment validation (run first)
-python validate_deployment.py
+python tests/validate_deployment.py
 
 # Bootstrap validation (full system check)
 python scripts/bootstrap.py
@@ -399,7 +359,7 @@ python -c "from src.db import execute_sql; print(execute_sql('SELECT COUNT(*) FR
 # Configuration validation
 python -c "from src.config import settings; print(settings().model_dump())"
 
-# Schema validation (validates 19 tables including foreign keys and constraints)
+# Schema validation (validates 20 tables including foreign keys and constraints)
 python scripts/verify_database.py --verbose
 ```
 
@@ -407,9 +367,6 @@ python scripts/verify_database.py --verbose
 ```bash
 # Database health and size monitoring
 python -c "from src.db import healthcheck, get_database_size; print(f'Health: {healthcheck()}, Size: {get_database_size()}')"
-
-# Migration status verification
-python scripts/validate_post_migration.py
 
 # Complete system validation
 python scripts/verify_database.py
@@ -427,7 +384,7 @@ sentiment = calculate_sentiment("Great earnings from $TSLA!")
 
 # Test database connectivity
 from src.db import get_connection
-conn = get_connection()  # Should return SQLite connection
+conn = get_connection()  # Returns PostgreSQL connection
 ```
 
 ## 🔍 Symbol Extraction & Data Processing
@@ -441,7 +398,7 @@ conn = get_connection()  # Should return SQLite connection
 1. **Collection**: `data_collector.py` fetches market data + SnapTrade positions
 2. **Cleaning**: `message_cleaner.py` extracts tickers + sentiment from Discord messages
 3. **Analysis**: `position_analysis.py` calculates portfolio metrics
-4. **Output**: `journal_generator.py` creates LLM summaries in text + markdown formats
+4. **NLP Parsing**: OpenAI structured outputs → `discord_parsed_ideas` table
 
 ## 🎛️ Discord Bot Operations
 
@@ -497,14 +454,14 @@ def database_function():
 from src.config import settings
 config = settings()
 
-# Access database URL with fallback logic
+# Access database URL
 from src.config import get_database_url
-db_url = get_database_url()  # Returns PostgreSQL or SQLite URL
+db_url = get_database_url()  # Returns PostgreSQL URL only (no SQLite fallback)
 ```
 
 ### Database Operations
 ```python
-# Universal database interface (works with both PostgreSQL and SQLite)
+# PostgreSQL database interface
 from src.db import execute_sql
 
 # Query with results using named placeholders
@@ -519,11 +476,10 @@ execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol",
 ## 🚨 Important Notes for Agents
 
 ### SETUP SEQUENCE (CRITICAL)
-1. **ALWAYS run `python validate_deployment.py` FIRST** - validates environment readiness
-2. **Use `python scripts/bootstrap.py` for automated setup** - handles dependencies, environment, database, migration
+1. **ALWAYS run `python tests/validate_deployment.py` FIRST** - validates environment readiness
+2. **Use `python scripts/bootstrap.py` for automated setup** - handles dependencies, environment, database
 3. **Virtual environment is REQUIRED** - bootstrap warns if not detected
-4. **pgloader required for PostgreSQL migration** - install before running bootstrap
-5. **Environment variables must be configured** - copy .env.example to .env with your keys
+4. **Environment variables must be configured** - copy .env.example to .env with your keys
 
 ### DO NOT MODIFY
 - Database connection logic in `db.py`
@@ -540,16 +496,13 @@ execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol",
 
 ### FILE NAMING CONVENTIONS
 - **CSV files**: `data/raw/` for source data, `data/processed/` for cleaned data
-- **Database files**: `data/database/price_history.db` (SQLite)
-- **Journal outputs**: `data/processed/` with timestamped filenames
 - **Environment**: `.env` (git-ignored), `.env.example` (template)
 
 ### DEVELOPMENT WORKFLOW
-1. Always run `python test_integration.py` after changes
+1. Always run `python tests/test_integration.py` after changes
 2. Test ticker extraction with edge cases (numbers, special characters)  
-3. Maintain dual output formats (text summary + detailed markdown)
-4. Follow the retry pattern for external API calls
-5. Handle missing `.env` variables gracefully
+3. Follow the retry pattern for external API calls
+4. Handle missing `.env` variables gracefully
 
 ## 📚 Key Functions Reference
 
@@ -585,11 +538,6 @@ from src.nlp.schemas import ParsedIdea, MessageParseResult, TradingLabels
 ```python
 from src.db import execute_sql, get_connection
 from src.db import get_database_url
-```
-
-### LLM Integration
-```python
-from src.journal_generator import generate_journal_entry, create_enhanced_journal_prompt, main
 ```
 
 This guide provides everything needed for effective development on the LLM Portfolio Journal system. Follow these patterns and you'll be able to extend and maintain the codebase successfully!
