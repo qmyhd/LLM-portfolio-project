@@ -1,0 +1,28 @@
+[Unit]
+Description=LLM Portfolio Journal Discord Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/LLM-portfolio-project
+Environment="PATH=/home/ec2-user/LLM-portfolio-project/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/ec2-user/LLM-portfolio-project"
+Environment="PYTHONUNBUFFERED=1"
+EnvironmentFile=/home/ec2-user/LLM-portfolio-project/.env
+ExecStart=/home/ec2-user/LLM-portfolio-project/.venv/bin/python -m src.bot.bot
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/discord-bot.log
+StandardError=append:/var/log/discord-bot-error.log
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ec2-user/LLM-portfolio-project/data
+ReadWritePaths=/var/log
+
+[Install]
+WantedBy=multi-user.target
