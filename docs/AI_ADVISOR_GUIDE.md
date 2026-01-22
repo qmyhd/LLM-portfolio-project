@@ -140,7 +140,6 @@ execute_sql(
 | `!movers` | `snaptrade_cmd.py` | Top gainers/losers |
 | `!twitter [SYMBOL]` | `twitter_cmd.py` | Twitter sentiment analysis |
 | `!EOD` | `eod.py` | End-of-day stock lookup |
-| `!arb` | `sports_arb.py` | Sports arbitrage calculator |
 
 ### Bot UI (`src/bot/ui/`)
 
@@ -176,14 +175,6 @@ execute_sql(
 | File | Purpose |
 |------|---------|
 | `sec_13f_parser.py` | Parse SEC 13F filings (standalone tool) |
-
-### Sports Arbitrage (`src/sports/`)
-
-| File | Purpose |
-|------|---------|
-| `arbitrage_calculator.py` | Calculate arbitrage opportunities |
-| `odds_utils.py` | Odds conversion utilities |
-| `robinhood_converter.py` | Robinhood event contracts |
 
 ---
 
@@ -256,11 +247,6 @@ schema/*.sql → schema_parser.py → src/expected_schemas.py
 ```
 !twitter                # Recent Twitter data
 !twitter AAPL           # Twitter data for specific ticker
-```
-
-### Sports Arbitrage
-```
-!arb                    # Show arbitrage opportunities
 ```
 
 ---
@@ -401,7 +387,6 @@ print(f"Tickers: {extract_ticker_symbols(text)}")
 | `SNAPTRADE_CONSUMER_KEY` | Brokerage integration |
 | `TWITTER_BEARER_TOKEN` | Twitter API access |
 | `LOG_CHANNEL_IDS` | Discord channels to monitor |
-| `SPORTS_CHANNEL_IDS` | Sports arb channels |
 
 ---
 

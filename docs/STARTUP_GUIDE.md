@@ -48,7 +48,6 @@ Verify the bot's features are working.
 | **Portfolio** | `!portfolio` | Interactive embed showing your current holdings and P/L. |
 | **Charts** | `!chart AAPL` | A price chart with your buy/sell markers overlaid. |
 | **Analysis** | `!position NVDA` | Detailed text report of your performance with that stock. |
-| **Sports Arb** | `!arb` | Interactive tool to calculate arbitrage opportunities. |
 
 ## 4. System Verification
 
@@ -62,7 +61,6 @@ python scripts/check_system_status.py
 - **COUNT**: Should be > 0 for all tables.
 - **LATEST ENTRY**: Should show today's date/time after you run `!fetch all` or `!backfill`.
 
-| **Sports Arb** | `!arb` | (In sports channel) The Arbitrage Calculator dashboard. |
 | **Twitter** | `!twitter TSLA` | Recent tweets and sentiment about the stock. |
 | **EOD Data** | `!EOD` | Interactive prompt to get end-of-day price data. |
 
@@ -82,5 +80,4 @@ python scripts/check_system_status.py
 ## 5. Troubleshooting
 
 *   **Bot doesn't reply?** Check the terminal for error logs.
-*   **"Access Denied" on `!arb`?** Ensure you are in a channel listed in `SPORTS_CHANNEL_IDS` in your `.env`.
 *   **SnapTrade errors?** Check `!status` to see connection health.

@@ -17,7 +17,6 @@ The heart of the application, organized by functional domain.
 | **`src/bot/`** | Discord Bot infrastructure. | `bot.py` (Entry Point), `events.py` (Handlers), `commands/` (Modular commands like `chart`, `history`). |
 | **`src/nlp/`** | NLP parsing pipeline. | `openai_parser.py` (LLM parser), `schemas.py` (Pydantic schemas), `preclean.py` (Ticker accuracy). |
 | **`src/etl/`** | Extract-Transform-Load pipelines. | `sec_13f_parser.py` (Institutional holdings - Standalone). |
-| **`src/sports/`** | Sports Arbitrage subsystem. | `arbitrage_calculator.py`, `odds_utils.py`. Integrated via Bot commands. |
 
 ### `scripts/` - Operational Utilities
 Scripts for deployment, maintenance, and manual operations.
@@ -155,5 +154,4 @@ graph TD
 *   **Archived Scripts**: Legacy scripts have been permanently deleted (previously in `_archive/`).
 *   **Deprecated NLP Modules**: Legacy SetFit/Argilla modules remain in `src/nlp/deprecated/` for backward compatibility but are NOT used in production.
 *   **Active NLP Pipeline**: Uses OpenAI structured outputs (`src/nlp/openai_parser.py`) with parsed ideas stored in `discord_parsed_ideas` table.
-*   **Sports Module**: The `src/sports` module is active and integrated into the Discord bot.
 *   **Standalone Tools**: `src/etl/sec_13f_parser.py` is a standalone tool for analyzing 13F filings and is not in the main automated pipeline.

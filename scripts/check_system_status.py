@@ -63,7 +63,6 @@ def check_status():
         f"• SnapTrade:  {'✅ Configured' if config.SNAPTRADE_CLIENT_ID else '❌ Missing Creds'}"
     )
     print(f"• Channels:   {len(config.log_channel_ids_list)} monitored")
-    print(f"• Sports:     {len(config.sports_channel_ids_list)} monitored")
 
 
 if __name__ == "__main__":
