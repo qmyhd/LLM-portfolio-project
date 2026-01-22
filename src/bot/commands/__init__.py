@@ -1,6 +1,6 @@
 from discord.ext import commands
 
-from . import chart, eod, history, process, snaptrade_cmd, twitter_cmd, sports_arb
+from . import chart, eod, history, process, snaptrade_cmd, twitter_cmd
 
 
 def register_commands(bot: commands.Bot, twitter_client=None):
@@ -10,4 +10,3 @@ def register_commands(bot: commands.Bot, twitter_client=None):
     process.register(bot, twitter_client)
     twitter_cmd.register(bot)
     snaptrade_cmd.register(bot, twitter_client)
-    sports_arb.register(bot, twitter_client)

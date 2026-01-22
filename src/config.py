@@ -55,7 +55,6 @@ class _Settings(BaseSettings):
 
     # === System Configuration =======================================
     LOG_CHANNEL_IDS: str = ""  # Comma-separated channel IDs for Discord bot
-    SPORTS_CHANNEL_IDS: str = ""  # Comma-separated channel IDs for Sports Arb bot
 
     model_config = SettingsConfigDict(
         env_file=".env", case_sensitive=False, extra="ignore"
@@ -67,15 +66,6 @@ class _Settings(BaseSettings):
         if not self.LOG_CHANNEL_IDS:
             return []
         return [cid.strip() for cid in self.LOG_CHANNEL_IDS.split(",") if cid.strip()]
-
-    @property
-    def sports_channel_ids_list(self) -> list[str]:
-        """Parse comma-separated SPORTS_CHANNEL_IDS into a list."""
-        if not self.SPORTS_CHANNEL_IDS:
-            return []
-        return [
-            cid.strip() for cid in self.SPORTS_CHANNEL_IDS.split(",") if cid.strip()
-        ]
 
     def get(self, key: str, default=None):
         """Get configuration value by key with optional default."""
