@@ -58,7 +58,6 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 
 #### Database Management (`src/`)
 - **`db.py`**: Enhanced SQLAlchemy 2.0 engine with unified execute_sql(), connection pooling
-- **`market_data.py`**: Consolidated portfolio and trade data queries
 
 #### Bot Infrastructure (`src/bot/`)
 - **`bot.py`**: Discord bot entry point with Twitter client integration

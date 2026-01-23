@@ -10,12 +10,19 @@ WorkingDirectory=/home/ec2-user/LLM-portfolio-project
 Environment="PATH=/home/ec2-user/LLM-portfolio-project/.venv/bin:/usr/local/bin:/usr/bin:/bin"
 Environment="PYTHONPATH=/home/ec2-user/LLM-portfolio-project"
 Environment="PYTHONUNBUFFERED=1"
-EnvironmentFile=/home/ec2-user/LLM-portfolio-project/.env
-ExecStart=/home/ec2-user/LLM-portfolio-project/.venv/bin/python -m src.bot.bot
+
+# AWS Secrets Manager configuration (no .env file needed)
+Environment="USE_AWS_SECRETS=1"
+Environment="AWS_REGION=us-east-1"
+Environment="AWS_SECRETS_PREFIX=llm-portfolio"
+Environment="AWS_SECRETS_ENV=production"
+
+# Use wrapper script that loads secrets before starting bot
+ExecStart=/home/ec2-user/LLM-portfolio-project/.venv/bin/python scripts/start_bot_with_secrets.py
 Restart=always
 RestartSec=10
-StandardOutput=append:/var/log/discord-bot.log
-StandardError=append:/var/log/discord-bot-error.log
+StandardOutput=append:/var/log/discord-bot/combined.log
+StandardError=append:/var/log/discord-bot/error.log
 
 # Hardening
 NoNewPrivileges=true

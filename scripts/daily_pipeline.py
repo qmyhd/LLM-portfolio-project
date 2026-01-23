@@ -7,6 +7,12 @@ Unified script that runs all daily data collection tasks:
 2. Discord message processing (NLP parsing of unprocessed messages)
 3. OHLCV daily bars (Databento backfill)
 
+Features:
+- AWS Secrets Manager integration (USE_AWS_SECRETS=1)
+- File-based locking to prevent concurrent runs
+- Status tracking with JSON file
+- Graceful error handling with continued execution
+
 Usage:
     # Run all tasks
     python scripts/daily_pipeline.py
@@ -21,15 +27,17 @@ Usage:
 
 Cron Schedule (add via `crontab -e`):
     # Daily pipeline at 1:00 AM ET (6:00 AM UTC)
-    0 6 * * * cd /home/ec2-user/LLM-portfolio-project && /home/ec2-user/.venv/bin/python scripts/daily_pipeline.py >> /var/log/daily_pipeline.log 2>&1
+    0 6 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh >> /var/log/discord-bot/daily_pipeline.log 2>&1
 
     # Evening SnapTrade sync at 8:00 PM ET (1:00 AM UTC next day)
-    0 1 * * * cd /home/ec2-user/LLM-portfolio-project && /home/ec2-user/.venv/bin/python scripts/daily_pipeline.py --snaptrade >> /var/log/daily_pipeline.log 2>&1
+    0 1 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh --snaptrade >> /var/log/discord-bot/snaptrade_sync.log 2>&1
 """
 
 import argparse
+import fcntl
 import json
 import logging
+import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -48,8 +56,89 @@ logging.basicConfig(
 )
 logger = logging.getLogger("daily_pipeline")
 
-# Pipeline status file for tracking last runs
+# Pipeline status and lock files
 STATUS_FILE = BASE_DIR / "data" / ".pipeline_status.json"
+LOCK_FILE = BASE_DIR / "data" / ".pipeline.lock"
+
+
+# =============================================================================
+# AWS SECRETS MANAGER INTEGRATION
+# =============================================================================
+
+
+def load_secrets_if_configured() -> int:
+    """Load secrets from AWS Secrets Manager if configured."""
+    if os.environ.get("USE_AWS_SECRETS", "").lower() in ("1", "true", "yes"):
+        try:
+            from src.aws_secrets import load_secrets_to_env
+
+            count = load_secrets_to_env()
+            logger.info(f"Loaded {count} secrets from AWS Secrets Manager")
+            return count
+        except ImportError as e:
+            logger.warning(f"Could not import aws_secrets: {e}")
+        except Exception as e:
+            logger.error(f"Failed to load secrets: {e}")
+    return 0
+
+
+# =============================================================================
+# FILE-BASED LOCKING
+# =============================================================================
+
+
+class PipelineLock:
+    """
+    File-based lock to prevent concurrent pipeline runs.
+
+    Usage:
+        with PipelineLock() as lock:
+            if lock.acquired:
+                # Run pipeline
+            else:
+                # Another instance is running
+    """
+
+    def __init__(self, lock_file: Path = LOCK_FILE):
+        self.lock_file = lock_file
+        self.lock_fd = None
+        self.acquired = False
+
+    def __enter__(self):
+        self.lock_file.parent.mkdir(parents=True, exist_ok=True)
+        self.lock_fd = open(self.lock_file, "w")
+
+        try:
+            fcntl.flock(self.lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self.acquired = True
+            # Write PID for debugging
+            self.lock_fd.write(
+                f"{os.getpid()}\n{datetime.now(timezone.utc).isoformat()}\n"
+            )
+            self.lock_fd.flush()
+            logger.debug(f"Acquired pipeline lock (PID: {os.getpid()})")
+        except (IOError, OSError):
+            self.acquired = False
+            logger.warning(
+                "Could not acquire pipeline lock - another instance may be running"
+            )
+
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.lock_fd:
+            if self.acquired:
+                try:
+                    fcntl.flock(self.lock_fd, fcntl.LOCK_UN)
+                except Exception:
+                    pass
+            self.lock_fd.close()
+            if self.acquired:
+                try:
+                    self.lock_file.unlink()
+                except Exception:
+                    pass
+        return False
 
 
 def load_pipeline_status() -> dict:
@@ -199,9 +288,11 @@ def run_discord_processing(dry_run: bool = False) -> dict:
             results["success"] = True
             return results
 
-        # Run the NLP parsing pipeline
-        # Import and run the parse_messages script logic
-        from scripts.nlp.parse_messages import main as parse_main
+        # Run the NLP parsing pipeline using lower-level functions
+        from scripts.nlp.parse_messages import (
+            get_pending_messages,
+            parse_single_message,
+        )
 
         # Process in batches
         batch_size = 50
@@ -210,16 +301,26 @@ def run_discord_processing(dry_run: bool = False) -> dict:
 
         while total_processed < min(unprocessed_count, 500):  # Cap at 500 per run
             try:
-                # parse_main returns (processed_count, ideas_count)
-                processed, ideas = parse_main(
-                    limit=batch_size, skip_existing=True, verbose=False
-                )
-                if processed == 0:
+                # Fetch a batch of messages
+                messages = get_pending_messages(limit=batch_size)
+                if not messages:
                     break
-                total_processed += processed
-                total_ideas += ideas
+
+                # Parse each message
+                batch_ideas = 0
+                for msg in messages:
+                    try:
+                        result = parse_single_message(msg, dry_run=False)
+                        batch_ideas += result.get("ideas_count", 0)
+                    except Exception as msg_error:
+                        logger.warning(
+                            f"Error parsing message {msg.get('message_id')}: {msg_error}"
+                        )
+
+                total_processed += len(messages)
+                total_ideas += batch_ideas
                 logger.info(
-                    f"   Processed batch: {processed} messages, {ideas} ideas extracted"
+                    f"   Processed batch: {len(messages)} messages, {batch_ideas} ideas extracted"
                 )
             except Exception as batch_error:
                 logger.warning(f"Batch processing error: {batch_error}")
@@ -339,7 +440,15 @@ def main():
         default=5,
         help="Number of days to backfill for OHLCV (default: 5)",
     )
+    parser.add_argument(
+        "--no-lock",
+        action="store_true",
+        help="Skip file-based locking (allow concurrent runs)",
+    )
     args = parser.parse_args()
+
+    # Load secrets from AWS Secrets Manager if configured
+    load_secrets_if_configured()
 
     # If no specific task is requested, run all
     run_all = not (args.snaptrade or args.discord or args.ohlcv)
@@ -350,6 +459,20 @@ def main():
     logger.info(f"Dry run: {args.dry_run}")
     logger.info("=" * 80)
 
+    # Use file-based locking to prevent concurrent runs
+    if args.no_lock:
+        return _run_pipeline(args, run_all)
+
+    with PipelineLock() as lock:
+        if not lock.acquired:
+            logger.error("Another pipeline instance is already running. Exiting.")
+            logger.info("Use --no-lock to force concurrent execution (not recommended)")
+            return 1
+        return _run_pipeline(args, run_all)
+
+
+def _run_pipeline(args, run_all: bool) -> int:
+    """Execute the pipeline tasks."""
     all_results = {}
 
     # SnapTrade sync
@@ -377,6 +500,13 @@ def main():
         logger.info(f"{status} {task_name}: {task_results}")
         if not task_results.get("success"):
             overall_success = False
+
+    # Update overall status
+    status = load_pipeline_status()
+    status["last_run"] = datetime.now(timezone.utc).isoformat()
+    status["last_success"] = overall_success
+    status["tasks"] = {k: v.get("success", False) for k, v in all_results.items()}
+    save_pipeline_status(status)
 
     logger.info("=" * 80)
     logger.info(f"Completed at: {datetime.now(timezone.utc).isoformat()}")

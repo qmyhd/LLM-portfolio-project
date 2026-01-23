@@ -691,6 +691,16 @@ def register(bot: commands.Bot, twitter_client=None):
                     color=embed_data["color"],
                 )
 
+                # Add company logo as thumbnail for professional appearance
+                order_symbol = symbol.upper() if symbol and symbol != "N/A" else None
+                if order_symbol and not order_symbol.startswith("Others"):
+                    try:
+                        order_logo_url = get_logo_url(order_symbol)
+                        if order_logo_url:
+                            order_embed.set_thumbnail(url=order_logo_url)
+                    except Exception:
+                        pass  # Skip logo on error
+
                 # Add nearest Discord idea field if available
                 if "idea_field" in embed_data:
                     idea = embed_data["idea_field"]

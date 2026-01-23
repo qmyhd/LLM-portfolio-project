@@ -79,17 +79,6 @@ PostgreSQL database engine with SQLAlchemy 2.0 and connection pooling.
 - `get_table_info(table_name)` → List: Table schema information
 - `table_exists(table_name)` → bool: Check if table exists
 
-#### `src.market_data`
-
-Portfolio and trade data queries.
-
-**Key Functions:**
-- `get_positions()` → DataFrame: All current portfolio positions from latest sync
-- `get_position(symbol)` → DataFrame: Specific position for given symbol
-- `get_recent_trades(limit=50)` → DataFrame: Recent trade history
-- `get_trades_for_symbol(symbol, limit=100)` → DataFrame: Symbol-specific trades
-- `get_portfolio_summary()` → Dict: Portfolio summary with total equity and top holdings
-
 ### Message Processing
 
 #### `src.message_cleaner`
@@ -284,15 +273,6 @@ Position tracking and analytics.
 - `get_current_position_size(symbol)` → float: Current position size
 - `calculate_unrealized_pnl(symbol)` → float: Unrealized profit/loss
 - `generate_position_report(symbol)` → str: Position report
-
-#### `src.chart_enhancements`
-
-Enhanced charting functionality with position overlays.
-
-**Key Functions:**
-- `create_enhanced_chart_with_position_analysis(...)` → Tuple: Enhanced charts
-- `add_position_markers(chart, position_data)`: Add position entry/exit markers
-- `calculate_technical_indicators(price_data)` → Dict: Technical analysis
 
 ## Error Handling Patterns
 

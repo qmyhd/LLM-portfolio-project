@@ -1,7 +1,8 @@
-// PM2 Ecosystem Configuration for Discord Bot
+// PM2 Ecosystem Configuration for Discord Bot with AWS Secrets Manager
 // 
 // This configuration keeps the Discord bot running continuously on EC2.
 // PM2 automatically restarts the bot if it crashes.
+// Secrets are loaded from AWS Secrets Manager at startup.
 //
 // Installation:
 //   npm install -g pm2
@@ -14,23 +15,34 @@
 //   pm2 stop discord-bot          # Stop
 //   pm2 save                      # Save process list
 //   pm2 startup                   # Configure auto-start on boot
+//
+// Prerequisites:
+//   - IAM role with secretsmanager:GetSecretValue permission
+//   - Secret "llm-portfolio/production" in AWS Secrets Manager
 
 module.exports = {
   apps: [
     {
       name: 'discord-bot',
-      script: 'python',
-      args: ['-m', 'src.bot.bot'],
+      // Use wrapper script that loads secrets from AWS Secrets Manager
+      script: 'scripts/start_bot_with_secrets.py',
       cwd: '/home/ec2-user/LLM-portfolio-project',
       
       // Python interpreter (use virtual environment)
       interpreter: '/home/ec2-user/LLM-portfolio-project/.venv/bin/python',
       interpreter_args: '',
       
-      // Environment
+      // Environment - configure AWS Secrets Manager
       env: {
         PYTHONPATH: '/home/ec2-user/LLM-portfolio-project',
-        PYTHONUNBUFFERED: '1'
+        PYTHONUNBUFFERED: '1',
+        // AWS Secrets Manager configuration
+        USE_AWS_SECRETS: '1',
+        AWS_REGION: 'us-east-1',
+        // Main app secrets (Discord, OpenAI, Supabase, SnapTrade, Databento)
+        AWS_SECRET_NAME: 'qqqAppsecrets',
+        // RDS secrets (OHLCV database)
+        AWS_RDS_SECRET_NAME: 'RDS/ohlcvdata'
       },
       
       // Process management
@@ -54,7 +66,10 @@ module.exports = {
       // Graceful shutdown
       kill_timeout: 10000,
       wait_ready: true,
-      listen_timeout: 10000
+      listen_timeout: 10000,
+      
+      // Daily restart at 5 AM UTC (optional - for memory cleanup)
+      cron_restart: '0 5 * * *'
     }
   ]
 };

@@ -52,7 +52,6 @@ src/
 │   ├── data_collector.py             # Primary data ingestion: SnapTrade + yfinance + dual DB persistence
 │   ├── snaptrade_collector.py        # Dedicated SnapTrade ETL with enhanced field extraction
 │   ├── databento_collector.py        # Databento OHLCV daily bars → RDS/S3/Supabase
-│   ├── market_data.py                # Market data utilities and price fetching
 │   └── twitter_analysis.py           # Twitter/X integration and sentiment analysis
 │
 ├── 💾 Database Management  
@@ -61,8 +60,7 @@ src/
 │
 ├── 🧠 Processing Engine
 │   ├── message_cleaner.py            # Text processing & robust ticker symbol extraction
-│   ├── position_analysis.py          # Advanced position tracking and analytics
-│   └── chart_enhancements.py         # Enhanced charting with position overlays
+│   └── position_analysis.py          # Advanced position tracking and analytics
 │
 ├── 🧪 NLP Pipeline (OpenAI Structured Outputs)
 │   └── nlp/
@@ -508,9 +506,8 @@ execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol",
 
 ### Data Collection
 ```python
-from src.data_collector import update_all_data, get_account_positions
+from src.data_collector import update_all_data
 from src.snaptrade_collector import SnapTradeCollector
-from src.market_data import get_positions, get_recent_trades
 ```
 
 ### Text Processing

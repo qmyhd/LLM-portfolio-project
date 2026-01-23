@@ -1,0 +1,278 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  LLM Portfolio Journal - Serverless Pipeline Functions
+  
+  Lambda functions triggered by EventBridge for automated data collection:
+  - SnapTrade sync (every 30 min during market hours)
+  - Discord NLP processing (every 15 min)
+  - OHLCV backfill (daily after market close)
+
+Globals:
+  Function:
+    Runtime: python3.11
+    Timeout: 300  # 5 minutes
+    MemorySize: 512
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        # Secret name for AWS Secrets Manager
+        AWS_SECRET_NAME: !Ref SecretName
+        AWS_SECRET_REGION: !Ref AWS::Region
+        USE_AWS_SECRETS: "1"
+        LOG_LEVEL: INFO
+
+Parameters:
+  SecretName:
+    Type: String
+    Default: llm-portfolio/production
+    Description: Name of the secret in AWS Secrets Manager
+  
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues:
+      - production
+      - staging
+      - development
+    Description: Deployment environment
+
+Resources:
+  # ============================================================================
+  # IAM Role for Lambda Functions
+  # ============================================================================
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "llm-portfolio-lambda-${Environment}"
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: SecretsManagerAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - secretsmanager:GetSecretValue
+                  - secretsmanager:DescribeSecret
+                Resource: !Sub "arn:aws:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:${SecretName}*"
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:PutObject
+                  - s3:GetObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub "arn:aws:s3:::${S3Bucket}"
+                  - !Sub "arn:aws:s3:::${S3Bucket}/*"
+
+  # ============================================================================
+  # S3 Bucket for OHLCV Archives
+  # ============================================================================
+  S3Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub "llm-portfolio-data-${Environment}-${AWS::AccountId}"
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveOldData
+            Status: Enabled
+            Transitions:
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+
+  # ============================================================================
+  # Lambda Layer for Dependencies
+  # ============================================================================
+  DependenciesLayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+      LayerName: !Sub "llm-portfolio-deps-${Environment}"
+      Description: Python dependencies for LLM Portfolio functions
+      ContentUri: layers/dependencies/
+      CompatibleRuntimes:
+        - python3.11
+      RetentionPolicy: Retain
+
+  # ============================================================================
+  # SnapTrade Sync Function
+  # ============================================================================
+  SnapTradeSyncFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "llm-portfolio-snaptrade-sync-${Environment}"
+      Handler: lambdas.snaptrade_sync.handler.handler
+      CodeUri: .
+      Description: Syncs portfolio data from SnapTrade API to Supabase
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 180  # 3 minutes
+      MemorySize: 256
+      Layers:
+        - !Ref DependenciesLayer
+      Events:
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Name: !Sub "snaptrade-sync-schedule-${Environment}"
+            Description: Trigger SnapTrade sync every 30 minutes during market hours
+            # Every 30 min, 9:00 AM - 4:30 PM EST (UTC-5), Mon-Fri
+            # UTC: 14:00 - 21:30
+            Schedule: cron(0/30 14-21 ? * MON-FRI *)
+            Enabled: true
+
+  # ============================================================================
+  # Discord NLP Processing Function
+  # ============================================================================
+  DiscordNlpFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "llm-portfolio-discord-nlp-${Environment}"
+      Handler: lambdas.discord_nlp.handler.handler
+      CodeUri: .
+      Description: Processes Discord messages through NLP pipeline
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300  # 5 minutes
+      MemorySize: 512
+      Layers:
+        - !Ref DependenciesLayer
+      Environment:
+        Variables:
+          BATCH_SIZE: "50"
+      Events:
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Name: !Sub "discord-nlp-schedule-${Environment}"
+            Description: Process pending Discord messages every 15 minutes
+            Schedule: rate(15 minutes)
+            Enabled: true
+
+  # ============================================================================
+  # OHLCV Backfill Function
+  # ============================================================================
+  OhlcvBackfillFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "llm-portfolio-ohlcv-backfill-${Environment}"
+      Handler: lambdas.ohlcv_backfill.handler.handler
+      CodeUri: .
+      Description: Fetches daily OHLCV data from Databento and stores in RDS/S3
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 300  # 5 minutes
+      MemorySize: 1024  # Higher memory for data processing
+      Layers:
+        - !Ref DependenciesLayer
+      Environment:
+        Variables:
+          USE_RDS: "true"
+          ARCHIVE_S3: "true"
+          S3_BUCKET: !Ref S3Bucket
+      Events:
+        ScheduledEvent:
+          Type: Schedule
+          Properties:
+            Name: !Sub "ohlcv-backfill-schedule-${Environment}"
+            Description: Fetch daily OHLCV data after market close
+            # 5:30 PM EST = 22:30 UTC, Mon-Fri
+            Schedule: cron(30 22 ? * MON-FRI *)
+            Enabled: true
+
+  # ============================================================================
+  # CloudWatch Alarms for Monitoring
+  # ============================================================================
+  SnapTradeErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "llm-portfolio-snaptrade-errors-${Environment}"
+      AlarmDescription: Alert when SnapTrade sync fails
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref SnapTradeSyncFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  DiscordNlpErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "llm-portfolio-discord-nlp-errors-${Environment}"
+      AlarmDescription: Alert when Discord NLP processing fails
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref DiscordNlpFunction
+      Statistic: Sum
+      Period: 900
+      EvaluationPeriods: 1
+      Threshold: 3
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+  OhlcvErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "llm-portfolio-ohlcv-errors-${Environment}"
+      AlarmDescription: Alert when OHLCV backfill fails
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref OhlcvBackfillFunction
+      Statistic: Sum
+      Period: 86400  # Daily
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+
+Outputs:
+  SnapTradeSyncFunctionArn:
+    Description: SnapTrade Sync Lambda function ARN
+    Value: !GetAtt SnapTradeSyncFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-SnapTradeSyncArn"
+
+  DiscordNlpFunctionArn:
+    Description: Discord NLP Lambda function ARN
+    Value: !GetAtt DiscordNlpFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-DiscordNlpArn"
+
+  OhlcvBackfillFunctionArn:
+    Description: OHLCV Backfill Lambda function ARN
+    Value: !GetAtt OhlcvBackfillFunction.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-OhlcvBackfillArn"
+
+  S3BucketName:
+    Description: S3 bucket for OHLCV archives
+    Value: !Ref S3Bucket
+    Export:
+      Name: !Sub "${AWS::StackName}-S3Bucket"
+
+  LambdaRoleArn:
+    Description: Lambda execution role ARN
+    Value: !GetAtt LambdaExecutionRole.Arn
+    Export:
+      Name: !Sub "${AWS::StackName}-LambdaRoleArn"

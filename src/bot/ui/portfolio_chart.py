@@ -5,11 +5,10 @@ Generates a pie chart visualization of portfolio holdings for Discord display.
 Uses Discord dark theme colors for consistent styling.
 
 Features:
-- Top 10 positions with company logos and tickers inside slices
+- Top 20 positions with company logos and tickers inside slices
 - "Others" aggregation for remaining positions
 - Logo + ticker placement inside each slice using patheffects for readability
-- Discord-friendly dark theme styling
-"""
+- Discord-friendly dark theme styling"""
 
 import io
 import logging
@@ -78,10 +77,10 @@ def _fetch_logo_images(
         return {}
 
     # Prefetch to warm cache
-    prefetch_logos(symbols[:10])
+    prefetch_logos(symbols[:20])
 
     logos = {}
-    for symbol in symbols[:10]:  # Limit to top 10
+    for symbol in symbols[:20]:  # Limit to top 20
         try:
             buffer = get_logo_image(symbol, size=size)
             if buffer:
@@ -100,7 +99,7 @@ def _fetch_logo_images(
 
 def generate_portfolio_pie_chart(
     positions: List[Dict],
-    top_n: int = 10,
+    top_n: int = 20,
     title: str = "Portfolio Top Holdings by Value",
     save_path: Optional[Path] = None,
     return_buffer: bool = True,
@@ -110,7 +109,7 @@ def generate_portfolio_pie_chart(
     Generate a pie chart of top portfolio holdings by value with in-slice labels.
 
     Features:
-    - Top N positions (default 10) shown as individual slices
+    - Top N positions (default 20) shown as individual slices
     - Remaining positions aggregated into "Others" slice
     - Ticker symbols and logos placed INSIDE each slice
     - Wide slices: logo + ticker side-by-side
@@ -119,7 +118,7 @@ def generate_portfolio_pie_chart(
 
     Args:
         positions: List of position dicts with 'symbol' and 'equity' keys
-        top_n: Number of top positions to show (default 10)
+        top_n: Number of top positions to show (default 20)
         title: Chart title
         save_path: Optional path to save PNG file
         return_buffer: If True, return BytesIO buffer for Discord upload
@@ -174,9 +173,9 @@ def generate_portfolio_pie_chart(
     logo_images = {}
     if include_logos:
         top_symbols = [
-            pos.get("symbol") for pos in top_positions[:10] if pos.get("symbol")
+            pos.get("symbol") for pos in top_positions[:20] if pos.get("symbol")
         ]
-        logo_images = _fetch_logo_images(top_symbols, size=(28, 28))
+        logo_images = _fetch_logo_images(top_symbols, size=(32, 32))
 
     # Create figure with Discord dark theme - SINGLE subplot (no legend panel)
     fig, ax = plt.subplots(figsize=(10, 10), facecolor=FIG_BG)
@@ -194,17 +193,7 @@ def generate_portfolio_pie_chart(
     # Add title
     ax.set_title(title, color=TXT, fontsize=16, fontweight="bold", pad=20)
 
-    # Add total value in center of donut
-    ax.text(
-        0,
-        0,
-        f"Total\n${total_value:,.0f}",
-        ha="center",
-        va="center",
-        fontsize=16,
-        fontweight="bold",
-        color=TXT,
-    )
+    # NOTE: Center total removed per user request - cleaner donut appearance
 
     # Text styling with outline for readability on colored backgrounds
     text_outline = [
@@ -221,22 +210,27 @@ def generate_portfolio_pie_chart(
         # Position at ~70% of the way from center (inside the donut ring)
         r_text = 0.72
 
-        # Determine layout based on slice size
+        # Determine layout based on slice size (adjusted for 20 positions)
         is_others = label.startswith("Others")
         symbol = label if not is_others else "Others"
 
-        if pct >= 5:
+        if pct >= 8:
             # Large slice: logo + ticker side-by-side
-            logo_size = 24
-            logo_offset = 0.06  # Offset logo slightly toward center
-            text_offset = 0.06  # Offset text slightly toward edge
-        elif pct >= 3:
+            logo_size = 28
+            logo_offset = 0.07  # Offset logo slightly toward center
+            text_offset = 0.07  # Offset text slightly toward edge
+        elif pct >= 4:
             # Medium slice: smaller logo + ticker
-            logo_size = 18
-            logo_offset = 0.04
-            text_offset = 0.04
+            logo_size = 22
+            logo_offset = 0.05
+            text_offset = 0.05
+        elif pct >= 2:
+            # Small slice: small logo + ticker
+            logo_size = 16
+            logo_offset = 0.03
+            text_offset = 0.03
         else:
-            # Small slice: ticker only (no logo)
+            # Tiny slice: ticker only (no logo)
             logo_size = 0
             logo_offset = 0
             text_offset = 0
@@ -250,7 +244,7 @@ def generate_portfolio_pie_chart(
         y_center = r_text * math.sin(theta_rad)
 
         # Add ticker text
-        if pct >= 1.5:  # Only show text for slices >= 1.5%
+        if pct >= 1.0:  # Only show text for slices >= 1%
             # For large slices, offset text from logo; for small, center it
             if logo_size > 0 and not is_others:
                 x_text = x_center + text_offset * math.cos(perp_theta)
@@ -259,11 +253,11 @@ def generate_portfolio_pie_chart(
                 x_text = x_center
                 y_text = y_center
 
-            # Determine font size based on slice
-            fontsize = 10 if pct >= 5 else (9 if pct >= 3 else 8)
+            # Determine font size based on slice (adjusted for 20 positions)
+            fontsize = 11 if pct >= 8 else (10 if pct >= 4 else (9 if pct >= 2 else 8))
 
-            # Add ticker text with percentage
-            display_text = f"{symbol}\n{pct:.1f}%" if pct >= 3 else symbol
+            # Add ticker text with percentage (show % for slices >= 2%)
+            display_text = f"{symbol}\n{pct:.1f}%" if pct >= 2 else symbol
 
             ax.text(
                 x_text,

@@ -179,6 +179,120 @@ async def async_healthcheck():
         raise
 
 
+# ============================================================================
+# RDS Engine Support (for OHLCV and high-volume operations)
+# ============================================================================
+
+_rds_sync_engine = None
+
+
+def get_rds_sync_engine():
+    """
+    Get or create a synchronous SQLAlchemy engine for RDS.
+
+    Uses RDS_HOST, RDS_PORT, RDS_DATABASE, RDS_USER, RDS_PASSWORD from
+    environment variables (loaded from AWS Secrets Manager in production).
+
+    Returns:
+        SQLAlchemy Engine for RDS, or None if RDS not configured
+    """
+    global _rds_sync_engine
+
+    if _rds_sync_engine is None:
+        try:
+            # Import here to avoid circular dependency
+            from src.aws_secrets import build_rds_connection_url
+
+            rds_url = build_rds_connection_url()
+
+            if not rds_url:
+                logger.debug(
+                    "RDS not configured - missing RDS_HOST/RDS_USER/RDS_PASSWORD"
+                )
+                return None
+
+            logger.info("Creating synchronous SQLAlchemy engine for RDS connection")
+
+            # Force psycopg2 dialect
+            rds_url_with_dialect = rds_url.replace(
+                "postgresql://", "postgresql+psycopg2://"
+            )
+
+            # RDS-specific configuration (higher pool for batch writes)
+            _rds_sync_engine = create_engine(
+                rds_url_with_dialect,
+                pool_size=10,  # Higher for batch operations
+                max_overflow=5,
+                pool_pre_ping=True,
+                pool_recycle=1800,  # 30 min recycle for long-running jobs
+                pool_timeout=60,  # Longer timeout for batch operations
+                echo=getattr(settings(), "DEBUG", False),
+                future=True,
+                connect_args={
+                    "connect_timeout": 30,
+                    "options": "-c timezone=utc",
+                },
+            )
+
+            # Add connection event listeners
+            @event.listens_for(_rds_sync_engine, "connect")
+            def set_rds_options(dbapi_connection, _connection_record):
+                """Configure RDS connection-specific options."""
+                with dbapi_connection.cursor() as cursor:
+                    cursor.execute("SET statement_timeout = '120s'")  # Longer for batch
+                    cursor.execute("SET lock_timeout = '30s'")
+                    cursor.execute("SET application_name = 'trading-bot-rds'")
+
+            logger.info("✅ RDS synchronous SQLAlchemy engine created successfully")
+
+        except Exception as e:
+            logger.error(f"Failed to create RDS SQLAlchemy engine: {e}")
+            # Don't raise - RDS is optional
+            return None
+
+    return _rds_sync_engine
+
+
+def get_rds_connection():
+    """
+    Get a database connection from the RDS sync engine.
+
+    Returns:
+        Connection object or None if RDS not configured
+    """
+    engine = get_rds_sync_engine()
+    if engine is None:
+        return None
+    return engine.connect()
+
+
+def rds_healthcheck() -> bool:
+    """
+    Perform a health check on the RDS connection.
+
+    Returns:
+        True if healthy, False if not configured or connection fails
+    """
+    try:
+        engine = get_rds_sync_engine()
+        if engine is None:
+            logger.debug("RDS health check skipped - not configured")
+            return False
+
+        with engine.connect() as conn:
+            result = conn.execute(text("SELECT 1 as health_check"))
+            row = result.fetchone()
+            if row and row[0] == 1:
+                logger.debug("✅ RDS health check passed")
+                return True
+            else:
+                logger.warning("RDS health check returned unexpected result")
+                return False
+    except Exception as e:
+        logger.error(f"❌ RDS health check failed: {e}")
+        return False
+
+
 def get_connection():
     """
     Get a database connection from the sync engine.
