@@ -1,6 +1,0 @@
-src\bot\commands\chart.py:43: unused variable 'sell_date' (100% confidence)
-src\db.py:84: unused variable 'connection_record' (100% confidence)
-src\logging_utils.py:129: unused variable 'log_file' (100% confidence)
-src\logging_utils.py:129: unused variable 'tweet_log' (100% confidence)
-src\logging_utils.py:142: unused variable 'tweet_log' (100% confidence)
-src\retry_utils.py:31: unused import 'Type' (90% confidence)
