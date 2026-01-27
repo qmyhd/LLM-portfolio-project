@@ -4,15 +4,25 @@
 
 ### Data Collection
 
-#### `src.data_collector`
+#### `src.price_service`
 
-Primary market data collection module with yfinance integration and CSV handling.
+Centralized OHLCV data access layer using RDS PostgreSQL (Databento source).
 
 **Key Functions:**
-- `fetch_realtime_prices(symbols=None)` → DataFrame: Get current market prices
-- `extract_symbol_from_data(data, fallback_key='symbol')` → str: Extract ticker from nested data
-- `save_positions_to_csv(positions_data, csv_path)`: Save portfolio positions
-- `save_orders_to_csv(orders_data, csv_path)`: Save order history
+- `get_ohlcv(symbol, start, end)` → DataFrame: Get OHLCV data (mplfinance compatible)
+- `get_latest_close(symbol)` → Optional[float]: Get most recent close price
+- `get_previous_close(symbol, before_date)` → Optional[float]: Get close before date
+- `get_ohlcv_range(symbol, start_date, end_date)` → DataFrame: Query date range
+
+#### `src.databento_collector`
+
+OHLCV daily bars from Databento Historical API with multi-storage backend.
+
+**Key Functions:**
+- `run_backfill(symbols, start_date, end_date)`: Backfill historical data
+- `run_daily_update(symbols)`: Daily incremental update
+- `save_to_rds(df)`: Persist to RDS PostgreSQL
+- `save_to_s3(df)`: Archive to S3 as Parquet
 
 #### `src.snaptrade_collector`
 
