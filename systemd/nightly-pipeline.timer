@@ -1,0 +1,22 @@
+[Unit]
+Description=LLM Portfolio Nightly Pipeline Timer
+Requires=nightly-pipeline.service
+
+[Timer]
+# Run at 1:00 AM Eastern Time daily
+# Note: systemd uses the system timezone, so set TZ or use timedatectl
+OnCalendar=*-*-* 01:00:00
+# Use America/New_York timezone for market-aligned scheduling
+# Configure system timezone: sudo timedatectl set-timezone America/New_York
+
+# Randomize start time by up to 5 minutes to avoid thundering herd
+RandomizedDelaySec=300
+
+# Catch up missed runs if system was down
+Persistent=true
+
+# Accuracy for timer (default is 1 minute)
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

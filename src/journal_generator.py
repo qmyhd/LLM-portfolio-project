@@ -23,8 +23,8 @@ try:
 except ImportError:
     openai = None
 
-# Import from data_collector for auto-updating data
-from src.data_collector import update_all_data
+# Note: Data updates now handled separately via SnapTrade sync and Databento OHLCV
+# Legacy update_all_data removed with data_collector.py
 
 #############################################################
 # CONFIGURATION
@@ -1040,8 +1040,9 @@ def main(force_update=False, output_dir=None):
 
     # Update data if needed
     if update_needed:
-        logger.info("🔄 Updating portfolio data")
-        update_all_data()
+        logger.info("⚠️ Portfolio data is stale. Run !fetch to sync SnapTrade data.")
+        # Note: update_all_data() was removed with data_collector.py
+        # Use !fetch command in Discord or run SnapTrade sync manually
     else:
         logger.info("✅ Using existing portfolio data from today")
 

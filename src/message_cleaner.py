@@ -313,6 +313,105 @@ def extract_unprefixed_tickers(
     return found_tickers
 
 
+def upsert_symbol_alias(
+    ticker: str,
+    alias: str,
+    source: Literal["discord", "snaptrade", "manual"] = "discord",
+) -> bool:
+    """
+    Upsert a symbol alias to the symbol_aliases table.
+
+    Records ticker variants/aliases for improved symbol resolution.
+    Uses ON CONFLICT to avoid duplicates per (alias, source).
+
+    Args:
+        ticker: Canonical ticker symbol (e.g., 'AAPL')
+        alias: Variant/alias (e.g., '$AAPL', 'Apple', 'apple inc')
+        source: Source of the alias - 'discord', 'snaptrade', or 'manual'
+
+    Returns:
+        True if successful, False otherwise
+
+    Example:
+        >>> upsert_symbol_alias('AAPL', '$AAPL', 'discord')
+        True
+        >>> upsert_symbol_alias('GOOGL', 'waymo', 'manual')
+        True
+    """
+    if not ticker or not alias:
+        return False
+
+    try:
+        from src.db import execute_sql
+
+        execute_sql(
+            """
+            INSERT INTO symbol_aliases (ticker, alias, source, updated_at)
+            VALUES (:ticker, :alias, :source, NOW())
+            ON CONFLICT (alias, source)
+            DO UPDATE SET
+                ticker = EXCLUDED.ticker,
+                updated_at = NOW()
+            """,
+            params={
+                "ticker": ticker.upper().strip(),
+                "alias": alias.strip(),
+                "source": source,
+            },
+        )
+        logger.debug(f"Upserted symbol alias: {alias} -> {ticker} ({source})")
+        return True
+
+    except Exception as e:
+        logger.warning(f"Failed to upsert symbol alias {alias} -> {ticker}: {e}")
+        return False
+
+
+def upsert_ticker_aliases_from_text(
+    text: str,
+    source: Literal["discord", "snaptrade", "manual"] = "discord",
+) -> int:
+    """
+    Extract tickers from text and upsert their aliases.
+
+    Captures both $TICKER and bare TICKER formats, recording them
+    as aliases for the canonical ticker symbol.
+
+    Args:
+        text: Text to extract tickers from
+        source: Source of the aliases
+
+    Returns:
+        Number of aliases upserted
+
+    Example:
+        >>> upsert_ticker_aliases_from_text("$AAPL and MSFT looking good", "discord")
+        2  # Upserted '$AAPL' -> 'AAPL' and 'MSFT' -> 'MSFT'
+    """
+    if not text:
+        return 0
+
+    count = 0
+
+    # Extract $TICKER format
+    prefixed_tickers = extract_ticker_symbols(text)
+    for ticker_with_prefix in prefixed_tickers:
+        # Extract canonical ticker (remove $ prefix)
+        canonical = ticker_with_prefix.lstrip("$").upper()
+        # Record both the prefixed version and canonical
+        if upsert_symbol_alias(canonical, ticker_with_prefix, source):
+            count += 1
+
+    # Extract unprefixed tickers (bare symbols in trading context)
+    unprefixed = extract_unprefixed_tickers(text)
+    for ticker in unprefixed:
+        canonical = ticker.upper()
+        if upsert_symbol_alias(canonical, ticker, source):
+            count += 1
+
+    return count
+
+
 def parse_trading_intent(text: str | None) -> Dict[str, Any]:
     """Parse trading intent from message text.
 

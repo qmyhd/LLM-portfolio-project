@@ -12,8 +12,7 @@ if str(project_root) not in sys.path:
 
 import pandas as pd
 
-# Use absolute imports instead of sys.path manipulation
-from src.data_collector import append_discord_message_to_csv
+# Use absolute imports
 from src.message_cleaner import extract_ticker_symbols
 from src.journal_generator import (
     create_journal_prompt,
@@ -74,70 +73,9 @@ class TestTickerExtraction(unittest.TestCase):
         )
 
 
-class TestMessageAppend(unittest.TestCase):
-    """Test cases for message append function"""
-
-    def setUp(self):
-        """Set up a temporary directory for test files"""
-        self.temp_dir = tempfile.mkdtemp()
-        self.csv_path = Path(self.temp_dir) / "test_messages.csv"
-
-    def tearDown(self):
-        """Clean up the temporary directory"""
-        shutil.rmtree(self.temp_dir)
-
-    def test_append_basic_message(self):
-        """Test basic message append functionality"""
-        message = "This is a test message."
-        result = append_discord_message_to_csv(message, output_path=self.csv_path)
-
-        # Check that the function returned the file path
-        self.assertEqual(result, self.csv_path)
-
-        # Check that the file exists
-        self.assertTrue(self.csv_path.exists())
-
-        # Read the file and check the content
-        df = pd.read_csv(self.csv_path)
-        self.assertEqual(len(df), 1)
-        self.assertEqual(df.iloc[0]["content"], message)
-        self.assertEqual(df.iloc[0]["num_chars"], len(message))
-        self.assertEqual(df.iloc[0]["num_words"], 5)
-
-    def test_append_message_with_tickers(self):
-        """Test appending a message with ticker symbols"""
-        message = "I like $AAPL and $MSFT stocks."
-        tickers = ["$AAPL", "$MSFT"]
-        append_discord_message_to_csv(
-            message, tickers=tickers, output_path=self.csv_path
-        )
-
-        # Read the file and check the content
-        df = pd.read_csv(self.csv_path)
-        self.assertEqual(df.iloc[0]["tickers_detected"], "$AAPL, $MSFT")
-
-    def test_append_multiple_messages(self):
-        """Test appending multiple messages to the same file"""
-        message1 = "First message"
-        message2 = "Second message"
-
-        append_discord_message_to_csv(message1, output_path=self.csv_path)
-        append_discord_message_to_csv(message2, output_path=self.csv_path)
-
-        # Read the file and check the content
-        df = pd.read_csv(self.csv_path)
-        self.assertEqual(len(df), 2)
-        self.assertEqual(df.iloc[0]["content"], message1)
-        self.assertEqual(df.iloc[1]["content"], message2)
-
-    def test_sanitize_line_breaks(self):
-        """Test that line breaks are properly sanitized"""
-        message = "Line 1\nLine 2\r\nLine 3"
-        append_discord_message_to_csv(message, output_path=self.csv_path)
-
-        # Read the file and check the content
-        df = pd.read_csv(self.csv_path)
-        self.assertEqual(df.iloc[0]["content"], "Line 1 Line 2 Line 3")
+# Note: TestMessageAppend was removed with data_collector.py
+# The append_discord_message_to_csv function was part of the legacy CSV-based data flow
+# All Discord message storage now goes directly to PostgreSQL via the bot events
 
 
 class TestPromptBuilder(unittest.TestCase):

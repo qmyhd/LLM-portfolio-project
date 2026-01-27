@@ -286,6 +286,9 @@ def get_pending_messages(
     """
     Fetch messages pending parsing from the database.
 
+    Excludes bot messages and command messages from parsing.
+    These are stored in discord_messages but flagged for exclusion.
+
     Args:
         limit: Maximum number of messages to fetch
         message_id: Specific message ID to fetch (always string)
@@ -312,6 +315,8 @@ def get_pending_messages(
         """
         params = {"message_id": str(message_id)}
     else:
+        # Exclude bot messages and command messages from NLP parsing
+        # These are stored but flagged: is_bot=TRUE or is_command=TRUE
         query = """
             SELECT 
                 message_id,
@@ -323,6 +328,8 @@ def get_pending_messages(
             WHERE parse_status = 'pending'
             AND content IS NOT NULL
             AND LENGTH(content) > 10
+            AND (is_bot IS NULL OR is_bot = FALSE)
+            AND (is_command IS NULL OR is_command = FALSE)
             ORDER BY created_at DESC
         """
         if limit:

@@ -13,9 +13,8 @@ if str(project_root) not in sys.path:
 
 
 def test_ticker_extraction_integration():
-    """Test that data_collector properly uses message_cleaner for ticker extraction."""
+    """Test that message_cleaner properly extracts tickers."""
     from src.message_cleaner import extract_ticker_symbols
-    from src.data_collector import append_discord_message_to_csv
 
     # Test direct function call
     test_message = "I bought $AAPL and $TSLA today! Also considering $NVDA"

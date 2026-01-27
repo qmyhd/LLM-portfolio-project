@@ -8,7 +8,13 @@ from src.twitter_analysis import (
 logger = logging.getLogger(__name__)
 
 
-def log_message_to_database(message, twitter_client=None):
+def log_message_to_database(
+    message,
+    twitter_client=None,
+    is_bot: bool = False,
+    is_command: bool = False,
+    channel_type: str = None,
+):
     """Persist a Discord message to database using unified execute_sql approach.
 
     Deduplication & Safety Features:
@@ -23,6 +29,12 @@ def log_message_to_database(message, twitter_client=None):
     - Marking stage: mark_message_processed() sets processed_for_cleaning flag
     - Resumable: If interrupted, raw messages remain for later processing
 
+    Message Flags:
+    - is_bot: TRUE if message author is a Discord bot
+    - is_command: TRUE if message starts with command prefix (!, /, etc.)
+    - channel_type: Channel category ('trading', 'market', 'general')
+    - Bot/command messages are stored but excluded from NLP parsing downstream
+
     ON CONFLICT Behavior:
     - If message_id already exists: Updates all fields with new values
     - Ensures latest data is always stored
@@ -34,6 +46,9 @@ def log_message_to_database(message, twitter_client=None):
     Args:
         message: Discord message object from discord.py
         twitter_client: Optional Twitter API client for tweet data extraction
+        is_bot: Whether the message author is a bot
+        is_command: Whether the message is a bot command
+        channel_type: The channel type ('trading', 'market', 'general')
     """
     try:
         from src.db import execute_sql
@@ -76,6 +91,9 @@ def log_message_to_database(message, twitter_client=None):
                 else None
             ),
             "attachments": attachments_json,
+            "is_bot": is_bot,
+            "is_command": is_command,
+            "channel_type": channel_type,
         }
 
         execute_sql(
@@ -83,10 +101,12 @@ def log_message_to_database(message, twitter_client=None):
             INSERT INTO discord_messages 
             (message_id, author, author_id, content, channel, timestamp, 
              user_id, num_chars, num_words, tickers_detected, 
-             is_reply, reply_to_id, mentions, attachments)
+             is_reply, reply_to_id, mentions, attachments,
+             is_bot, is_command, channel_type)
             VALUES (:message_id, :author, :author_id, :content, :channel, :timestamp,
                     :user_id, :num_chars, :num_words, :tickers_detected,
-                    :is_reply, :reply_to_id, :mentions, :attachments)
+                    :is_reply, :reply_to_id, :mentions, :attachments,
+                    :is_bot, :is_command, :channel_type)
             ON CONFLICT (message_id) DO UPDATE SET
                 author = EXCLUDED.author,
                 author_id = EXCLUDED.author_id,
@@ -99,7 +119,10 @@ def log_message_to_database(message, twitter_client=None):
                 is_reply = EXCLUDED.is_reply,
                 reply_to_id = EXCLUDED.reply_to_id,
                 mentions = EXCLUDED.mentions,
-                attachments = EXCLUDED.attachments
+                attachments = EXCLUDED.attachments,
+                is_bot = EXCLUDED.is_bot,
+                is_command = EXCLUDED.is_command,
+                channel_type = EXCLUDED.channel_type
             """,
             message_data,
         )
@@ -161,7 +184,13 @@ def log_message_to_database(message, twitter_client=None):
 
 
 def log_message_to_file(
-    message, _log_file: Path, _tweet_log: Path, twitter_client=None
+    message,
+    _log_file: Path,
+    _tweet_log: Path,
+    twitter_client=None,
+    is_bot: bool = False,
+    is_command: bool = False,
+    channel_type: str = None,
 ):
     """Legacy function - now redirects to database logging.
 
@@ -173,9 +202,18 @@ def log_message_to_file(
         _log_file: Deprecated - CSV logging path (unused, kept for backwards compatibility)
         _tweet_log: Deprecated - Tweet CSV logging path (unused, kept for backwards compatibility)
         twitter_client: Optional Twitter client for tweet fetching
+        is_bot: Whether the message author is a bot
+        is_command: Whether the message is a bot command
+        channel_type: The channel type ('trading', 'market', 'general')
     """
-    # Primary: Log to database (Supabase)
-    log_message_to_database(message, twitter_client)
+    # Primary: Log to database (Supabase) with flags
+    log_message_to_database(
+        message,
+        twitter_client=twitter_client,
+        is_bot=is_bot,
+        is_command=is_command,
+        channel_type=channel_type,
+    )
 
     # Note: CSV logging has been deprecated in favor of database storage.
     # Database provides better consistency, deduplication, and query capabilities.

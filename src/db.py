@@ -899,22 +899,19 @@ def check_database_tables():
         bool: True if all tables exist, False otherwise
 
     Note:
-        Current schema has 19 tables as of migration 049 (Jan 2026).
+        Current schema has 14 Supabase tables as of migration 054 (Jan 2026).
         Legacy tables dropped: discord_processing_log, chart_metadata,
-        discord_message_chunks, discord_idea_units, stock_mentions.
+        discord_message_chunks, discord_idea_units, stock_mentions,
+        daily_prices, realtime_prices, stock_metrics, event_contract_trades,
+        event_contract_positions, trade_history.
     """
     required_tables = {
-        # SnapTrade/Brokerage (6 tables)
+        # SnapTrade/Brokerage (5 tables)
         "accounts",
         "account_balances",
         "positions",
         "orders",
         "symbols",
-        "trade_history",
-        # Market Data (3 tables)
-        "realtime_prices",
-        "daily_prices",
-        "stock_metrics",
         # Discord/Social (4 tables)
         "discord_messages",
         "discord_market_clean",
@@ -922,15 +919,15 @@ def check_database_tables():
         "discord_parsed_ideas",
         # Twitter (1 table)
         "twitter_data",
-        # Event Contracts (2 tables)
-        "event_contract_positions",
-        "event_contract_trades",
+        # Symbol Management (1 table)
+        "symbol_aliases",
         # Institutional (1 table)
         "institutional_holdings",
         # System (2 tables)
         "processing_status",
         "schema_migrations",
     }
+    # Note: ohlcv_daily is in RDS (not Supabase), checked separately by price_service
 
     try:
         # Query existing tables

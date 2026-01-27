@@ -1,0 +1,41 @@
+[Unit]
+Description=LLM Portfolio Nightly Pipeline (OHLCV, NLP, Stock Refresh)
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/LLM-portfolio-project
+Environment="PATH=/home/ec2-user/LLM-portfolio-project/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/ec2-user/LLM-portfolio-project"
+Environment="PYTHONUNBUFFERED=1"
+
+# AWS Secrets Manager configuration
+Environment="USE_AWS_SECRETS=1"
+Environment="AWS_REGION=us-east-1"
+Environment="AWS_SECRET_NAME=qqqAppsecrets"
+Environment="AWS_RDS_SECRET_NAME=RDS/ohlcvdata"
+
+# Run the nightly pipeline script
+# This orchestrates: OHLCV backfill, NLP batch processing, stock profile refresh
+ExecStart=/home/ec2-user/LLM-portfolio-project/.venv/bin/python scripts/nightly_pipeline.py
+
+# Timeout for long-running job (30 minutes max)
+TimeoutStartSec=1800
+
+# Logging
+StandardOutput=append:/var/log/portfolio-nightly/combined.log
+StandardError=append:/var/log/portfolio-nightly/error.log
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ec2-user/LLM-portfolio-project/data
+ReadWritePaths=/home/ec2-user/LLM-portfolio-project/logs
+ReadWritePaths=/var/log/portfolio-nightly
+
+[Install]
+WantedBy=multi-user.target
