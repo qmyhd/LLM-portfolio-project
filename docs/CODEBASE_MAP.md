@@ -4,7 +4,7 @@
 > **Status:** Up-to-date following January 2026 OHLCV pipeline (Databento integration, ohlcv_daily table).
 
 ## 1. Project Overview
-The **LLM Portfolio Journal** is a data-driven application that integrates brokerage data (SnapTrade), market information (yfinance, Databento), and social sentiment (Discord, Twitter) for trading analytics. The NLP pipeline uses OpenAI structured outputs to parse Discord messages into structured trading ideas.
+The **LLM Portfolio Journal** is a data-driven application that integrates brokerage data (SnapTrade), market information (Databento OHLCV via RDS), and social sentiment (Discord, Twitter) for trading analytics. The NLP pipeline uses OpenAI structured outputs to parse Discord messages into structured trading ideas.
 
 ## 2. Directory Structure & Purpose
 
@@ -13,7 +13,7 @@ The heart of the application, organized by functional domain.
 
 | Module/Directory | Purpose | Key Files |
 | :--- | :--- | :--- |
-| **`src/` (Root)** | Core services and utilities. | `db.py` (Database Engine), `config.py` (Settings), `data_collector.py` (Market Data), `databento_collector.py` (OHLCV). |
+| **`src/` (Root)** | Core services and utilities. | `db.py` (Database Engine), `config.py` (Settings), `price_service.py` (OHLCV Data), `databento_collector.py` (OHLCV ETL). |
 | **`src/bot/`** | Discord Bot infrastructure. | `bot.py` (Entry Point), `events.py` (Handlers), `commands/` (Modular commands like `chart`, `history`). |
 | **`src/nlp/`** | NLP parsing pipeline. | `openai_parser.py` (LLM parser), `schemas.py` (Pydantic schemas), `preclean.py` (Ticker accuracy). |
 | **`src/etl/`** | Extract-Transform-Load pipelines. | `sec_13f_parser.py` (Institutional holdings - Standalone). |
@@ -89,9 +89,9 @@ The NLP pipeline includes a multi-layer ticker accuracy system to prevent false 
 ## 3. Key Process Flows
 
 ### A. Data Ingestion Pipeline
-1.  **Market Data**: `data_collector.py` fetches prices via `yfinance`.
-2.  **Brokerage Data**: `snaptrade_collector.py` syncs Positions, Orders, and Accounts from SnapTrade.
-3.  **OHLCV Data**: `databento_collector.py` fetches daily OHLCV bars via Databento → RDS/S3/Supabase.
+1.  **OHLCV Data**: `databento_collector.py` fetches daily bars via Databento Historical API → RDS (rolling 1-year) + S3 (archive).
+2.  **Price Access**: `price_service.py` queries RDS ohlcv_daily - the sole source for OHLCV data.
+3.  **Brokerage Data**: `snaptrade_collector.py` syncs Positions, Orders, and Accounts from SnapTrade.
 4.  **Social Data**:
     *   **Discord**: `src/bot/` listens to channels -> `message_cleaner.py` extracts Tickers/Sentiment -> DB (`discord_messages`).
     *   **Twitter**: `twitter_analysis.py` fetches tweets -> DB (`twitter_data`).
@@ -113,7 +113,6 @@ The NLP pipeline includes a multi-layer ticker accuracy system to prevent false 
 graph TD
     subgraph Data Sources
         ST[SnapTrade API]
-        YF[yfinance]
         DB_API[Databento API]
         DIS[Discord]
         TW[Twitter]
@@ -121,8 +120,8 @@ graph TD
 
     subgraph Ingestion Layer
         SC[snaptrade_collector.py]
-        DC[data_collector.py]
         DBC[databento_collector.py]
+        PS[price_service.py]
         BOT[Discord Bot]
         TA[twitter_analysis.py]
     end
@@ -152,6 +151,5 @@ graph TD
 
 ## 5. Maintenance & Cleanup Notes
 *   **Archived Scripts**: Legacy scripts have been permanently deleted (previously in `_archive/`).
-*   **Deprecated NLP Modules**: Legacy SetFit/Argilla modules remain in `src/nlp/deprecated/` for backward compatibility but are NOT used in production.
-*   **Active NLP Pipeline**: Uses OpenAI structured outputs (`src/nlp/openai_parser.py`) with parsed ideas stored in `discord_parsed_ideas` table.
+*   **Active NLP Pipeline**: Uses OpenAI structured outputs (`src/nlp/openai_parser.py`) with parsed ideas stored in `discord_parsed_ideas` table. Legacy SetFit/Argilla infrastructure has been removed.
 *   **Standalone Tools**: `src/etl/sec_13f_parser.py` is a standalone tool for analyzing 13F filings and is not in the main automated pipeline.

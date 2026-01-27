@@ -59,23 +59,66 @@ def resolve_symbol(user_input: str) -> Tuple[str, Optional[str]]:
     except ImportError:
         pass
 
-    # 2. Check if it's already a valid ticker in our database
+    # 2. Check symbol_aliases table (database-backed aliases)
+    alias_match = _lookup_symbol_alias(user_input)
+    if alias_match:
+        description = _get_description_from_db(alias_match)
+        return (alias_match, description)
+
+    # 3. Check if it's already a valid ticker in our database
     description = _get_description_from_db(user_upper)
     if description:
         return (user_upper, description)
 
-    # 3. Search symbols table by description (fuzzy match)
+    # 4. Search symbols table by description (fuzzy match)
     match = _search_symbols_by_description(user_input)
     if match:
         return match
 
-    # 4. Check positions table (user might have a position in this)
+    # 5. Check positions table (user might have a position in this)
     pos_match = _search_positions_by_symbol(user_upper)
     if pos_match:
         return pos_match
 
-    # 5. Return as-is (uppercase), no description found
+    # 6. Return as-is (uppercase), no description found
     return (user_upper, None)
+
+
+def _lookup_symbol_alias(alias: str) -> Optional[str]:
+    """
+    Look up a ticker by alias in the symbol_aliases table.
+
+    Performs case-insensitive lookup using LOWER() index.
+
+    Args:
+        alias: The alias to look up (e.g., '$AAPL', 'apple inc')
+
+    Returns:
+        Canonical ticker if found, None otherwise
+    """
+    try:
+        from src.db import execute_sql
+
+        result = execute_sql(
+            """
+            SELECT ticker FROM symbol_aliases 
+            WHERE LOWER(alias) = LOWER(:alias)
+            ORDER BY 
+                CASE source 
+                    WHEN 'manual' THEN 1 
+                    WHEN 'snaptrade' THEN 2 
+                    WHEN 'discord' THEN 3 
+                END
+            LIMIT 1
+            """,
+            params={"alias": alias},
+            fetch_results=True,
+        )
+        if result and result[0][0]:
+            return str(result[0][0])
+    except Exception:
+        pass
+    return None
 
 
 def _get_description_from_db(ticker: str) -> Optional[str]:

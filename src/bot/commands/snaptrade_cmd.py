@@ -440,7 +440,7 @@ def register(bot: commands.Bot, twitter_client=None):
             from src.bot.ui.symbol_resolver import resolve_symbol, get_symbol_info
             from src.bot.ui.logo_helper import get_logo_url
             from datetime import date, timedelta
-            import yfinance as yf
+            from src.price_service import get_latest_close
 
             # Parse arguments: determine if filtering by symbol or just limit
             ticker_filter = None
@@ -562,17 +562,14 @@ def register(bot: commands.Bot, twitter_client=None):
                                 "pnl": float(pnl or 0),
                             }
 
-            # Fallback to yfinance for missing prices
+            # Fallback to price_service (RDS ohlcv_daily) for missing prices
             missing = [s for s in symbols if s not in current_prices]
             if missing and len(missing) <= 5:  # Only fetch if small number
                 try:
                     for sym in missing:
-                        ticker = yf.Ticker(sym)
-                        info = ticker.fast_info
-                        if hasattr(info, "last_price") and info.last_price:
-                            current_prices[sym] = {
-                                "current_price": float(info.last_price)
-                            }
+                        price = get_latest_close(sym)
+                        if price:
+                            current_prices[sym] = {"current_price": float(price)}
                 except Exception:
                     pass  # Silently fail on price fetch
 
@@ -753,13 +750,13 @@ def register(bot: commands.Bot, twitter_client=None):
         • By Daily % Change - Best/worst percentage moves
         • By Daily $ Profit - Biggest dollar winners/losers
 
-        Uses yesterday's close from daily_prices or yfinance fallback.
+        Uses yesterday's close from RDS ohlcv_daily (Databento).
         """
         from datetime import datetime, timezone, timedelta
 
         try:
             from src.db import execute_sql
-            import yfinance as yf
+            from src.price_service import get_previous_close, get_latest_close_batch
 
             # Track calculation time
             calc_time = datetime.now(timezone.utc)
@@ -796,30 +793,21 @@ def register(bot: commands.Bot, twitter_client=None):
             elif yesterday.weekday() == 5:  # Saturday
                 yesterday = yesterday - timedelta(days=1)
 
-            # Fetch yesterday's close from daily_prices for all symbols
+            # Fetch yesterday's close from RDS ohlcv_daily for all symbols
             symbols = [row[0] for row in result]
-            placeholders = ", ".join(f"'{s}'" for s in symbols)
 
             yesterday_prices = {}
             try:
-                cached_result = execute_sql(
-                    f"""
-                    SELECT symbol, close
-                    FROM daily_prices
-                    WHERE symbol IN ({placeholders})
-                    AND date = :yesterday
-                    """,
-                    params={"yesterday": str(yesterday)},
-                    fetch_results=True,
-                )
-                if cached_result:
-                    yesterday_prices = {row[0]: float(row[1]) for row in cached_result}
+                # Batch fetch previous closes from price_service
+                for sym in symbols:
+                    prev_close = get_previous_close(sym, today)
+                    if prev_close:
+                        yesterday_prices[sym] = prev_close
             except Exception as cache_err:
-                logger.warning(f"Cache lookup error: {cache_err}")
+                logger.warning(f"Price service lookup error: {cache_err}")
 
             # Process positions with yesterday's close
             positions = []
-            missing_symbols = []
 
             for row in result:
                 symbol, qty, equity, current_price = row
@@ -827,13 +815,8 @@ def register(bot: commands.Bot, twitter_client=None):
                 equity = float(equity or 0)
                 current_price = float(current_price or 0)
 
-                # Get yesterday's close - try cache first, then yfinance
+                # Get yesterday's close from price_service
                 prev_close = yesterday_prices.get(symbol)
-
-                if prev_close is None and current_price > 0:
-                    missing_symbols.append(symbol)
-                    # Will batch fetch from yfinance below
-                    prev_close = None
 
                 if prev_close and prev_close > 0 and current_price > 0:
                     # Calculate daily metrics
@@ -855,27 +838,6 @@ def register(bot: commands.Bot, twitter_client=None):
                         "daily_dollar": daily_dollar,
                     }
                 )
-
-            # Batch fetch missing symbols from yfinance (limit to 10 to avoid rate limits)
-            if missing_symbols:
-                try:
-                    for sym in missing_symbols[:10]:
-                        ticker = yf.Ticker(sym)
-                        hist = ticker.history(period="2d", interval="1d")
-                        if len(hist) >= 2:
-                            prev_close = float(hist["Close"].iloc[-2])
-                            # Update the position with correct data
-                            for p in positions:
-                                if p["symbol"] == sym and prev_close > 0:
-                                    p["prev_close"] = prev_close
-                                    p["daily_pct"] = (
-                                        (p["current_price"] - prev_close) / prev_close
-                                    ) * 100
-                                    p["daily_dollar"] = (
-                                        p["current_price"] - prev_close
-                                    ) * p["qty"]
-                except Exception as yf_err:
-                    logger.warning(f"yfinance fallback error: {yf_err}")
 
             # Create two sorted lists
             by_pct = sorted(positions, key=lambda x: x["daily_pct"], reverse=True)

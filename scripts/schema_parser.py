@@ -211,7 +211,8 @@ class EnhancedSchemaParser:
     def _parse_create_tables(self, content: str):
         """Parse CREATE TABLE statements."""
         # Updated pattern to handle PostgreSQL dump format with schema qualifiers
-        create_table_pattern = r'CREATE TABLE (?:IF NOT EXISTS\s+)?(?:"public"\.)?(?:")?"?(\w+)"?\s*\((.*?)\);'
+        # Handles: CREATE TABLE public.tablename, CREATE TABLE "public"."tablename", CREATE TABLE tablename
+        create_table_pattern = r'CREATE TABLE (?:IF NOT EXISTS\s+)?(?:"?public"?\.)?(?:")?"?(\w+)"?\s*\((.*?)\);'
 
         matches = re.finditer(create_table_pattern, content, re.IGNORECASE | re.DOTALL)
 
@@ -549,7 +550,9 @@ class EnhancedSchemaParser:
                 logger.info(f"Renamed column {table_name}.{old_name} to {new_name}")
 
         # DROP TABLE (remove table from schema)
-        drop_table_pattern = r"DROP TABLE\s+(?:IF\s+EXISTS\s+)?(\w+)(?:\s+CASCADE)?\s*;"
+        drop_table_pattern = (
+            r"DROP TABLE\s+(?:IF\s+EXISTS\s+)?(?:public\.)?([\w]+)(?:\s+CASCADE)?\s*;"
+        )
 
         for match in re.finditer(drop_table_pattern, content, re.IGNORECASE):
             table_name = match.group(1).lower()
@@ -579,7 +582,9 @@ class EnhancedSchemaParser:
 
     def _parse_drop_tables(self, content: str):
         """Parse DROP TABLE statements and remove tables from schema."""
-        drop_table_pattern = r"DROP TABLE\s+(?:IF EXISTS\s+)?(\w+)(?:\s+CASCADE)?\s*;"
+        drop_table_pattern = (
+            r"DROP TABLE\s+(?:IF EXISTS\s+)?(?:public\.)?([\w]+)(?:\s+CASCADE)?\s*;"
+        )
 
         for match in re.finditer(drop_table_pattern, content, re.IGNORECASE):
             table_name = match.group(1).lower()

@@ -1,7 +1,7 @@
 # LLM Portfolio Journal - Architecture Documentation
 
-> **Last Updated:** January 20, 2026  
-> **Database:** PostgreSQL (Supabase) - 20 active tables, RLS 100% compliant
+> **Last Updated:** January 26, 2026  
+> **Database:** PostgreSQL (Supabase) - 14 active tables + RDS ohlcv_daily, RLS 100% compliant
 
 ## Overview
 
@@ -16,7 +16,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 │   Data Sources  │    │  Processing     │    │    Output       │
 │                 │    │   Engine        │    │   Generation    │
 ├─────────────────┤    ├─────────────────┤    ├─────────────────┤
-│ • SnapTrade API │───▶│ • Data Collector│───▶│ • Discord Bot   │
+│ • SnapTrade API │───▶│ • Price Service │───▶│ • Discord Bot   │
 │ • Discord Bot   │    │ • Message Clean │    │ • NLP Ideas     │
 │ • Twitter API   │    │ • Sentiment     │    │ • Charts        │
 │ • Databento     │    │ • Database ETL  │    │ • Analytics     │
@@ -31,17 +31,18 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 - **No Fallback**: System requires PostgreSQL - no SQLite support
 - **RLS Enabled**: All tables have Row Level Security enabled
 
-**Key Tables (20 operational):**
-- **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`, `trade_history`
+**Key Tables (14 Supabase + 1 RDS):**
+- **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`
 - **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`
 - **NLP Pipeline**: `discord_parsed_ideas` (canonical table for parsed trading ideas)
-- **Market Data**: `daily_prices`, `realtime_prices`, `stock_metrics`, `ohlcv_daily`
-- **System**: `twitter_data`, `processing_status`, `schema_migrations`
-- **Event Contracts**: `event_contract_trades`, `event_contract_positions`
-- **Institutional**: `institutional_holdings`
+- **Symbol Management**: `symbol_aliases` (ticker variants for resolution)
+- **System**: `twitter_data`, `processing_status`, `schema_migrations`, `institutional_holdings`
+- **RDS (separate)**: `ohlcv_daily` (Databento source, 1-year rolling)
 
-**Dropped Legacy Tables (Migration 049):**
+**Dropped Legacy Tables (Migration 049-054):**
 - `discord_message_chunks`, `discord_idea_units`, `stock_mentions`, `discord_processing_log`, `chart_metadata`
+- `daily_prices`, `realtime_prices`, `stock_metrics` (replaced by RDS ohlcv_daily)
+- `event_contract_trades`, `event_contract_positions`, `trade_history` (no runtime usage)
 
 **Key Relationships:**
 - `discord_parsed_ideas.message_id` → `discord_messages.message_id` (CASCADE delete)
@@ -49,10 +50,10 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 ### Module Structure
 
 #### Data Collection (`src/`)
-- **`data_collector.py`**: General market data collection, yfinance integration
+- **`price_service.py`**: Centralized price data access (RDS ohlcv_daily) - sole source for OHLCV data
 - **`snaptrade_collector.py`**: SnapTrade API integration with enhanced field extraction
-- **`databento_collector.py`**: Databento OHLCV daily bars with RDS/S3/Supabase storage
-- **`message_cleaner.py`**: Discord message cleaning with ticker extraction, sentiment analysis
+- **`databento_collector.py`**: Databento OHLCV daily bars → RDS/S3 storage
+- **`message_cleaner.py`**: Discord message cleaning with ticker extraction, sentiment analysis, alias upsert
 - **`channel_processor.py`**: Production wrapper that fetches → cleans → writes to discord tables
 - **`twitter_analysis.py`**: Twitter/X sentiment analysis and data extraction
 
@@ -108,8 +109,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
    ├─ SnapTrade API → Positions/Orders/Accounts
    ├─ Discord Bot → Message Stream → Ticker Extraction
    ├─ Twitter API → Tweet Analysis → Sentiment Scoring
-   ├─ Databento → OHLCV Daily Bars → RDS/S3/Supabase
-   └─ yfinance → Market Data → Price History
+   └─ Databento → OHLCV Daily Bars → RDS/S3/Supabase
 
 2. Data Processing
    ├─ Symbol Extraction → Ticker Normalization

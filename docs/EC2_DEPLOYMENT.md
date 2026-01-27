@@ -1,12 +1,12 @@
 # EC2 Deployment Guide
 
-> **Last Updated:** January 23, 2026  
+> **Last Updated:** January 26, 2026  
 > **Target:** Amazon Linux 2023 on t4g.micro (ARM64)
 
 This guide covers deploying the LLM Portfolio Journal to EC2 with:
 - AWS Secrets Manager for secure credential storage
-- Discord bot running continuously via PM2 or systemd
-- Reliable daily data pipeline via cron jobs
+- Discord bot running continuously via systemd
+- Reliable daily data pipeline via systemd timers
 - OHLCV backfill from Databento
 
 ## Current Production Configuration
@@ -24,8 +24,8 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
 │  ┌─────────────────┐     ┌─────────────────┐                   │
-│  │   PM2/systemd   │     │   Cron Jobs     │                   │
-│  │  Discord Bot    │     │  Daily Pipeline │                   │
+│  │    systemd      │     │ systemd Timer   │                   │
+│  │  Discord Bot    │     │  Nightly Jobs   │                   │
 │  └────────┬────────┘     └────────┬────────┘                   │
 │           │                       │                             │
 │           └───────────┬───────────┘                             │
@@ -189,48 +189,59 @@ print(f'RDS_HOST: {os.environ.get(\"RDS_HOST\", \"NOT SET\")}')
 
 ```bash
 chmod +x scripts/setup_ec2_services.sh
-./scripts/setup_ec2_services.sh --pm2
+./scripts/setup_ec2_services.sh --systemd
 ```
 
 ---
 
-## Discord Bot - Continuous Running
+## Discord Bot - Continuous Running (systemd)
 
-### Option 1: PM2 (Recommended)
+Systemd provides robust process management with OS-level integration.
 
-PM2 is a process manager that automatically restarts your bot if it crashes.
+### Installation
 
 ```bash
-# Start bot (loads secrets from AWS Secrets Manager)
-pm2 start ecosystem.config.js
+# Create log directories
+sudo mkdir -p /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+sudo chown -R ec2-user:ec2-user /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
 
-# Configure auto-start on boot
-pm2 save
-pm2 startup
+# Copy service files
+sudo cp systemd/*.service /etc/systemd/system/
+sudo cp systemd/*.timer /etc/systemd/system/
 
-# Useful commands
-pm2 status              # Check status
-pm2 logs discord-bot    # View logs
-pm2 restart discord-bot # Restart
-pm2 stop discord-bot    # Stop
+# Reload systemd
+sudo systemctl daemon-reload
+
+# Enable and start Discord bot
+sudo systemctl enable discord-bot.service
+sudo systemctl start discord-bot.service
+
+# Enable and start nightly pipeline timer
+sudo systemctl enable nightly-pipeline.timer
+sudo systemctl start nightly-pipeline.timer
 ```
 
-### Option 2: systemd
-
-For deeper OS integration:
+### Useful Commands
 
 ```bash
-# Copy service file
-sudo cp docker/discord-bot.service /etc/systemd/system/
+# Check status
+sudo systemctl status discord-bot.service
+sudo systemctl status nightly-pipeline.timer
 
-# Enable and start
-sudo systemctl daemon-reload
-sudo systemctl enable discord-bot
-sudo systemctl start discord-bot
+# View logs (real-time)
+sudo journalctl -u discord-bot.service -f
 
-# Useful commands
-sudo systemctl status discord-bot
-sudo journalctl -u discord-bot -f
+# View last 100 lines
+sudo journalctl -u discord-bot.service -n 100
+
+# Restart service
+sudo systemctl restart discord-bot.service
+
+# Stop service
+sudo systemctl stop discord-bot.service
+
+# View all scheduled timers
+systemctl list-timers
 ```
 
 ---
@@ -261,30 +272,31 @@ source .venv/bin/activate
 ./scripts/run_pipeline_with_secrets.sh --dry-run
 ```
 
-### Cron Schedule
+### Systemd Timer Schedule
 
-The setup script configures these cron jobs (all times in UTC):
+The nightly pipeline is managed by systemd timers (see `systemd/nightly-pipeline.timer`):
 
-| Time (UTC) | Time (ET) | Task | Description |
-|------------|-----------|------|-------------|
-| 06:00 | 01:00 AM | Full pipeline | SnapTrade + Discord NLP + OHLCV |
-| 01:00 | 08:00 PM | SnapTrade only | End-of-day positions |
-| */5 * * * * | Every 5 min | Health check | Restart bot if unresponsive |
+| Time (ET) | Timer | Task | Description |
+|-----------|-------|------|-------------|
+| 01:00 AM | nightly-pipeline.timer | Full pipeline | SnapTrade + Discord NLP + OHLCV |
 
-View cron jobs:
+View scheduled timers:
 ```bash
-crontab -l
+systemctl list-timers
 ```
 
-### Manual Cron Entry
+### Run Pipeline Manually
 
 ```bash
-crontab -e
+# Trigger immediately via systemd
+sudo systemctl start nightly-pipeline.service
 
-# Add these lines:
-0 6 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh >> /var/log/discord-bot/daily_pipeline.log 2>&1
-0 1 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh --snaptrade >> /var/log/discord-bot/snaptrade_sync.log 2>&1
-*/5 * * * * pm2 ping discord-bot >/dev/null 2>&1 || pm2 restart discord-bot
+# Watch logs
+sudo journalctl -u nightly-pipeline.service -f
+
+# Or run directly
+cd /home/ec2-user/LLM-portfolio-project
+.venv/bin/python scripts/nightly_pipeline.py
 ```
 
 ---
@@ -309,14 +321,14 @@ python scripts/backfill_ohlcv.py --start 2024-01-01 --end 2024-12-31
 |-----|----------|
 | Discord bot | `/var/log/discord-bot/combined.log` |
 | Bot errors | `/var/log/discord-bot/error.log` |
-| Daily pipeline | `/var/log/discord-bot/daily_pipeline.log` |
-| SnapTrade sync | `/var/log/discord-bot/snaptrade_sync.log` |
+| API server | `/var/log/portfolio-api/combined.log` |
+| Nightly pipeline | `/var/log/portfolio-nightly/combined.log` |
 | EC2 User Data | `/var/log/user-data.log` |
 
 View logs in real-time:
 ```bash
 tail -f /var/log/discord-bot/combined.log
-pm2 logs discord-bot
+sudo journalctl -u discord-bot.service -f
 ```
 
 ---
@@ -326,12 +338,19 @@ pm2 logs discord-bot
 ### Check Bot Status
 
 ```bash
-# PM2
-pm2 status
-pm2 describe discord-bot
-
 # systemd
-sudo systemctl status discord-bot
+sudo systemctl status discord-bot.service
+sudo journalctl -u discord-bot.service -n 20
+```
+
+### Check Timer Status
+
+```bash
+# List all timers
+systemctl list-timers
+
+# Check specific timer
+sudo systemctl status nightly-pipeline.timer
 ```
 
 ### Check Database Connectivity
@@ -362,14 +381,14 @@ print(f'Secret has {len(secrets)} keys')
 
 ### Bot Won't Start
 
-1. Check PM2 logs: `pm2 logs discord-bot`
+1. Check systemd logs: `sudo journalctl -u discord-bot.service -n 50`
 2. Verify IAM role has `secretsmanager:GetSecretValue`
 3. Test secrets: `python -c "from src.aws_secrets import load_secrets_to_env; print(load_secrets_to_env())"`
 4. Test manually: `python scripts/start_bot_with_secrets.py`
 
 ### Pipeline Fails
 
-1. Check log: `tail -100 /var/log/discord-bot/daily_pipeline.log`
+1. Check log: `sudo journalctl -u nightly-pipeline.service -n 100`
 2. Check for lock file: `ls -la data/.pipeline.lock`
 3. Test individual tasks:
    ```bash
