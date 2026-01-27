@@ -209,7 +209,7 @@ python scripts/run_timestamp_migration.py
 
 ### File Structure Context
 - **Entry points**: `src/bot/bot.py`
-- **Data processing**: `src/data_collector.py` (market), `src/snaptrade_collector.py` (brokerage)
+- **Price data**: `src/price_service.py` (RDS ohlcv_daily), `src/snaptrade_collector.py` (brokerage)
 - **OHLCV pipeline**: `src/databento_collector.py` → RDS/S3/Supabase
 - **NLP processing**: `src/nlp/` (OpenAI parser, schemas, soft splitter, preclean)
 - **NLP scripts**: `scripts/nlp/` (parse_messages, build_batch, run_batch, ingest_batch)
@@ -230,7 +230,7 @@ SnapTrade + Discord + Twitter → PostgreSQL (Supabase) → NLP Parser → disco
 ## ⚠️ Critical Rules
 
 - **PostgreSQL-only**: No SQLite fallback - all database operations use Supabase PostgreSQL
-- **Always use retry patterns** for external APIs (SnapTrade, yfinance, LLM APIs, OpenAI)
+- **Always use retry patterns** for external APIs (SnapTrade, OpenAI, Databento)
 - **Always use `pathlib.Path`** - never string concatenation for file paths
 - **Test ticker extraction** with edge cases (`$BRK.B`, mixed text, duplicates)
 - **Database operations**: Use `execute_sql()` or connection patterns with PostgreSQL syntax

@@ -1,8 +1,8 @@
 # LLM Portfolio Journal - AI Advisor Complete Technical Guide
 
-> **Generated:** December 9, 2025  
+> **Generated:** January 2026  
 > **Purpose:** Complete technical reference for AI coding assistants to understand, debug, and extend the codebase  
-> **Database:** PostgreSQL (Supabase) - 19 active tables, RLS enabled
+> **Database:** PostgreSQL (Supabase) - 14 active tables + RDS ohlcv_daily, RLS enabled
 
 ---
 
@@ -10,7 +10,7 @@
 
 ### System Overview
 A sophisticated portfolio tracking system that:
-1. **Collects Data** from SnapTrade (brokerage), Discord (social), Twitter (sentiment), yfinance (market)
+1. **Collects Data** from SnapTrade (brokerage), Discord (social), Twitter (sentiment), Databento (OHLCV)
 2. **Processes** messages to extract tickers, calculate sentiment, track positions
 3. **Generates** AI-powered journal entries using Gemini/OpenAI LLMs
 4. **Provides** Discord bot interface for real-time interaction and commands
@@ -44,7 +44,7 @@ from src.db import execute_sql, get_sync_engine
 from src.config import get_database_url
 ```
 
-### Tables with Row Counts (as of Dec 9, 2025)
+### Tables with Row Counts (as of January 2026)
 
 | Table | Rows | Primary Key | Purpose |
 |-------|------|-------------|---------|
@@ -56,17 +56,14 @@ from src.config import get_database_url
 | **discord_messages** | 226 | `message_id` | Raw Discord messages |
 | **discord_market_clean** | 25 | `message_id` | Processed general messages |
 | **discord_trading_clean** | 165 | `message_id` | Processed trading messages |
+| **discord_parsed_ideas** | - | `id` | LLM-extracted trading ideas |
 | **twitter_data** | 7 | `tweet_id` | Extracted tweet data |
-| **event_contract_trades** | 207 | `trade_id` | Event contract trades |
-| **event_contract_positions** | 33 | `position_id` | Event contract positions |
-| **schema_migrations** | 26 | `version` | Migration tracking |
+| **schema_migrations** | - | `version` | Migration tracking |
 | **processing_status** | 211 | `message_id, channel` | Message processing flags |
-| **daily_prices** | 1 | `date, symbol` | Historical OHLCV |
-| **realtime_prices** | 7 | `timestamp, symbol` | Intraday prices |
-| **stock_metrics** | 2 | `date, symbol` | Fundamental metrics |
-| **chart_metadata** | 0 | `symbol, period, interval, theme` | Chart configs |
-| **discord_processing_log** | 0 | `message_id, channel` | Processing history |
 | **institutional_holdings** | 0 | `id` | 13F filing data |
+| **symbol_aliases** | - | `id` | Ticker alias resolution |
+
+**Note**: `ohlcv_daily` is in RDS PostgreSQL (Databento source), accessed via `price_service.py`.
 
 ### Key Relationships
 ```
@@ -106,7 +103,8 @@ execute_sql(
 |------|---------|---------------|
 | `db.py` | Database engine with SQLAlchemy 2.0 | `execute_sql()`, `get_sync_engine()`, `get_connection()` |
 | `config.py` | Pydantic settings from .env | `settings()`, `get_database_url()` |
-| `data_collector.py` | Market data ingestion | `fetch_realtime_prices()`, `update_all_data()` |
+| `price_service.py` | Centralized OHLCV access (RDS) | `get_ohlcv()`, `get_latest_close()` |
+| `databento_collector.py` | OHLCV ETL from Databento | `run_backfill()`, `run_daily_update()` |
 | `snaptrade_collector.py` | SnapTrade ETL operations | `SnapTradeCollector.collect_all_data()` |
 | `message_cleaner.py` | Text processing & ticker extraction | `extract_ticker_symbols()`, `calculate_sentiment()` |
 | `journal_generator.py` | LLM integration | `generate_journal_entry()`, `create_enhanced_journal_prompt()` |
@@ -114,8 +112,6 @@ execute_sql(
 | `twitter_analysis.py` | Twitter/X data extraction | Tweet fetching and sentiment |
 | `retry_utils.py` | Retry decorators | `@hardened_retry`, `@database_retry` |
 | `position_analysis.py` | Portfolio analytics | Position tracking, P/L calculation |
-| `chart_enhancements.py` | Enhanced charting | Position overlays on charts |
-| `market_data.py` | Market data queries | Portfolio queries |
 | `logging_utils.py` | Logging with Twitter | `log_message_with_twitter()` |
 | `expected_schemas.py` | Schema definitions | `EXPECTED_SCHEMAS` dict for validation |
 
@@ -396,19 +392,20 @@ print(f"Tickers: {extract_ticker_symbols(text)}")
 ┌─────────────────────────────────────────────────────────────────────┐
 │                        DATA SOURCES                                  │
 ├─────────────────────────────────────────────────────────────────────┤
-│  SnapTrade API    Discord Bot    Twitter API    yfinance            │
+│  SnapTrade API    Discord Bot    Twitter API    Databento API       │
 │       │               │              │              │               │
 │       ▼               ▼              ▼              ▼               │
-│  snaptrade_      events.py      twitter_      data_collector        │
-│  collector.py                   analysis.py      .py                │
+│  snaptrade_      events.py      twitter_      databento_            │
+│  collector.py                   analysis.py   collector.py          │
 └───────┬───────────────┬──────────────┬──────────────┬───────────────┘
         │               │              │              │
         ▼               ▼              ▼              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                     POSTGRESQL (SUPABASE)                            │
+│                POSTGRESQL (SUPABASE + RDS)                           │
 ├─────────────────────────────────────────────────────────────────────┤
 │  accounts  │ positions │ orders │ discord_messages │ twitter_data   │
-│  symbols   │ balances  │ prices │ *_clean tables   │ processing_*   │
+│  symbols   │ balances  │        │ *_clean tables   │ processing_*   │
+│            │           │        │ parsed_ideas     │ ohlcv_daily(RDS)│
 └─────────────────────────────────────────────────────────────────────┘
         │
         ▼

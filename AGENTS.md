@@ -7,7 +7,7 @@
 
 ### System Overview
 Sophisticated data-driven portfolio analytics system:
-- **Data Sources**: SnapTrade API + Discord bot + Twitter/X API + yfinance + Databento OHLCV
+- **Data Sources**: SnapTrade API + Discord bot + Twitter/X API + Databento OHLCV (RDS)
 
 ## ⚠️ Important Notes for Agents
 
@@ -33,8 +33,8 @@ Sophisticated data-driven portfolio analytics system:
 - **Bot System**: Modular Discord commands with Twitter integration, advanced charting, and centralized UI design system
 - **UI System**: Standardized embed factory with color coding, interactive views (portfolio filters, help dropdown), and pagination
 - **NLP Pipeline**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
-- **OHLCV Pipeline**: Databento Historical API → RDS/S3/Supabase storage
-- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 050_ohlcv_daily.sql, 20 tables as of Jan 2026)
+- **OHLCV Pipeline**: Databento Historical API → RDS (rolling 1-year) + S3 (archive)
+- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 054_drop_chart_metadata.sql, 14 Supabase tables + 1 RDS table)
 
 ## 📁 Project Map & Service Purposes
 
@@ -49,7 +49,7 @@ scripts/nlp/parse_messages.py         # NLP parsing pipeline entry point
 ```
 src/
 ├── 📊 Data Collection Layer
-│   ├── data_collector.py             # Primary data ingestion: SnapTrade + yfinance + dual DB persistence
+│   ├── price_service.py              # Centralized OHLCV data access (RDS ohlcv_daily) - sole price source
 │   ├── snaptrade_collector.py        # Dedicated SnapTrade ETL with enhanced field extraction
 │   ├── databento_collector.py        # Databento OHLCV daily bars → RDS/S3/Supabase
 │   └── twitter_analysis.py           # Twitter/X integration and sentiment analysis
@@ -209,8 +209,8 @@ Based on `.env.example`, configure these for full functionality:
 pandas>=2.3.1, sqlalchemy>=2.0.29, psycopg2-binary>=2.9.0
 python-dotenv>=1.0.1, pydantic-settings>=2.2, pydantic==2.11.7
 
-# Financial APIs (CORE FUNCTIONALITY)  
-yfinance>=0.2.65, snaptrade-python-sdk>=11.0.98
+# Brokerage API (CORE FUNCTIONALITY)  
+snaptrade-python-sdk>=11.0.98
 
 # LLM APIs (NLP PARSING)
 openai>=1.98.0
@@ -259,13 +259,10 @@ TWITTER_BEARER_TOKEN=your_bearer_token
 - **Real-time writes**: All operations use `execute_sql()` → Supabase PostgreSQL with connection pooling
 - **🚨 KEY REQUIREMENT**: Must use `SUPABASE_SERVICE_ROLE_KEY` in connection string to bypass RLS policies
 
-### Key Tables (20 active as of migration 050)
+### Key Tables (14 Supabase + 1 RDS as of migration 054)
 ```sql
--- SnapTrade Integration (6 tables) 
-accounts, account_balances, positions, orders, symbols, trade_history
-
--- Market Data & Analytics (4 tables)
-daily_prices, realtime_prices, stock_metrics, ohlcv_daily
+-- SnapTrade Integration (5 tables) 
+accounts, account_balances, positions, orders, symbols
 
 -- Discord/Social Integration (4 tables)
 discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas
@@ -273,14 +270,22 @@ discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_id
 -- Twitter/X Integration (1 table)
 twitter_data
 
--- Event Contracts & Institutional (3 tables)
-event_contract_trades, event_contract_positions, institutional_holdings
+-- Institutional (1 table)
+institutional_holdings
+
+-- Symbol Management (1 table)
+symbol_aliases
 
 -- System Configuration (2 tables)
 processing_status, schema_migrations
 
--- DROPPED in migration 049:
+-- RDS (separate from Supabase):
+-- ohlcv_daily (Databento source, 1-year rolling)
+
+-- DROPPED in migration 049-054:
 -- discord_processing_log, chart_metadata, discord_message_chunks, discord_idea_units, stock_mentions
+-- daily_prices, realtime_prices, stock_metrics (replaced by RDS ohlcv_daily)
+-- event_contract_trades, event_contract_positions, trade_history (no runtime usage)
 ```
 
 ### Schema Validation
@@ -393,10 +398,11 @@ conn = get_connection()  # Returns PostgreSQL connection
 - **Fallback hierarchy**: `raw_symbol` → `symbol` → `ticker` → short `id` values (no UUIDs)
 
 ### Data Processing Pipeline
-1. **Collection**: `data_collector.py` fetches market data + SnapTrade positions
-2. **Cleaning**: `message_cleaner.py` extracts tickers + sentiment from Discord messages
-3. **Analysis**: `position_analysis.py` calculates portfolio metrics
-4. **NLP Parsing**: OpenAI structured outputs → `discord_parsed_ideas` table
+1. **OHLCV Data**: `price_service.py` queries RDS ohlcv_daily (Databento source)
+2. **Brokerage Data**: `snaptrade_collector.py` fetches positions, orders, accounts
+3. **Cleaning**: `message_cleaner.py` extracts tickers + sentiment from Discord messages
+4. **Analysis**: `position_analysis.py` calculates portfolio metrics
+5. **NLP Parsing**: OpenAI structured outputs → `discord_parsed_ideas` table
 
 ## 🎛️ Discord Bot Operations
 
@@ -504,9 +510,16 @@ execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol",
 
 ## 📚 Key Functions Reference
 
-### Data Collection
+### Price Data (OHLCV)
 ```python
-from src.data_collector import update_all_data
+from src.price_service import get_ohlcv, get_latest_close, get_previous_close
+# get_ohlcv(symbol, start, end) → pd.DataFrame (mplfinance compatible)
+# get_latest_close(symbol) → Optional[float]
+# get_previous_close(symbol, before_date) → Optional[float]
+```
+
+### Brokerage Data
+```python
 from src.snaptrade_collector import SnapTradeCollector
 ```
 

@@ -233,7 +233,7 @@ Step 3: Call mcp_context7_get-library-docs
 
 Step 4: Check dependency file for current version
 → Detect language/ecosystem from workspace
-→ JavaScript: read/readFile "frontend/package.json" → "express": "^4.21.2"
+→ JavaScript: read/readFile "package.json" → "express": "^4.21.2"
 → Python: read/readFile "requirements.txt" → "flask==2.3.0"
 → Ruby: read/readFile "Gemfile" → gem 'sinatra', '~> 3.0.0'
 → Current version: 4.21.2 (Express example)
@@ -389,7 +389,7 @@ Your workflow:
 
    **JavaScript/TypeScript/Node.js**:
    ```
-   read/readFile on "package.json" or "frontend/package.json" or "api/package.json"
+   read/readFile on "package.json" or "api/package.json"
    Extract: "react": "^18.3.1" → Current version is 18.3.1
    ```
    

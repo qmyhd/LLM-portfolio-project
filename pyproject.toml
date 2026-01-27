@@ -79,3 +79,63 @@ reportGeneralTypeIssues = "warning"
 [tool.pyright.defineConstant]
 PYLANCE_IGNORE_GOOGLE_AI = true
 PYLANCE_IGNORE_TWEEPY = true
+
+# ============================================
+# Ruff Configuration (Fast Python Linter)
+# ============================================
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+exclude = [
+    ".venv",
+    ".git",
+    "__pycache__",
+    "data",
+    "batch_output",
+    "charts",
+    "tmp",
+    "*.ipynb",
+]
+
+[tool.ruff.lint]
+# Enable rules for common issues
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # isort
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "UP",   # pyupgrade
+]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module level import not at top of file
+    "F401",   # unused import (sometimes intentional for re-exports)
+    "B008",   # do not perform function calls in argument defaults
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__.py
+"tests/*.py" = ["B011"]   # Allow assert in tests
+
+# ============================================
+# Pytest Configuration
+# ============================================
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--tb=short",
+    "--strict-markers",
+]
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::PendingDeprecationWarning",
+]
