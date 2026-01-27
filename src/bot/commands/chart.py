@@ -6,10 +6,10 @@ import discord
 import matplotlib.pyplot as plt
 import mplfinance as mpf
 import pandas as pd
-import yfinance as yf
 from discord.ext import commands
 
 from src.bot.ui.embed_factory import EmbedFactory, EmbedCategory, build_embed
+from src.price_service import get_ohlcv
 
 # Use absolute imports instead of sys.path manipulation
 from src.db import get_connection
@@ -554,26 +554,25 @@ def register(bot: commands.Bot):
         • period - Time period: 5d, 1mo, 3mo, 6mo, 1y, 2y, 10y, max
         • theme  - Chart style: yahoo (classic), discord (dark)
         • min_trade - Minimum trade size filter (default: 0)
-        • interval - Override interval: 30m, 1h, 1d, 5d, 1wk, 1mo, 3mo
+        • interval - Override interval: 1d, 5d, 1wk, 1mo, 3mo
 
         **Period → Default Interval → Moving Averages:**
-        • 5d  → 30m interval (no MAs, intraday)
+        • 5d  → 1d interval (no MAs)
         • 1mo → 1d interval (20-day MA)
-        • 3mo → 1h interval (21, 50 MAs)
+        • 3mo → 1d interval (21, 50 MAs)
         • 6mo → 1d interval (10, 21, 50 MAs)
         • 1y  → 1d interval (21, 50, 100 MAs)
         • 2y  → 1wk interval (4, 13, 26 week MAs)
 
-        **⚠️ Intraday Data Limits:**
-        • 30m, 1h intervals: Only last **60 days** available from yfinance
-        • For older data, use 1d or higher intervals
+        **Data Source:**
+        • All OHLCV data from Databento (RDS ohlcv_daily)
+        • Daily bars only (no intraday data)
 
         **Features:**
         • 📈 Candlestick charts for all timeframes
         • 📊 Volume bars for periods ≥1 year
         • 🔺🔻 Trade markers (buy/sell) with FIFO P/L
         • 🟡 Cost-basis line from positions
-        • 🔄 Falls back to cached prices if API fails
         """
         # Argument validation
         if symbol is None:
@@ -586,8 +585,8 @@ def register(bot: commands.Bot):
                 "`!chart AAPL 1y yahoo 0.0 5d` - 1y with 5-day interval\n\n"
                 "**Periods:** 5d, 1mo, 3mo, 6mo, 1y, 2y, 10y, max\n"
                 "**Themes:** yahoo (classic), discord (dark)\n"
-                "**Intervals:** 30m, 1h, 1d, 5d, 1wk, 1mo, 3mo\n\n"
-                "⚠️ **Note:** Intraday data (30m, 1h) only available for last 60 days"
+                "**Intervals:** 1d, 5d, 1wk, 1mo, 3mo\n\n"
+                "📊 **Data Source:** Databento (daily bars only)"
             )
             return
 
@@ -649,90 +648,29 @@ def register(bot: commands.Bot):
                 # Calculate date range for trade data querying
                 start_date, end_date = calculate_chart_date_range(period)
 
-                # Download price data with enhanced error handling
+                # Fetch price data from RDS ohlcv_daily (Databento source)
                 data = None
-                data_source = "yfinance"
+                data_source = "databento"
 
                 try:
-                    # Always use auto_adjust=False to suppress deprecation warnings
-                    # and get raw OHLC data without dividend/split adjustments
-                    data = yf.download(
-                        symbol,
-                        period=period,
-                        interval=final_interval,
-                        auto_adjust=False,  # Explicit to avoid future warnings
-                        progress=False,  # Suppress progress bar in bot context
-                    )
+                    # Fetch OHLCV from price_service (RDS ohlcv_daily)
+                    data = get_ohlcv(symbol, start_date.date(), end_date.date())
 
-                    # Verify OHLC columns exist before processing
-                    required_cols = ["Open", "High", "Low", "Close"]
                     if data is not None and not data.empty:
-                        missing_cols = [
-                            c for c in required_cols if c not in data.columns
-                        ]
-                        if missing_cols:
-                            raise ValueError(f"Missing OHLC columns: {missing_cols}")
-
                         # Ensure index is sorted (critical for mplfinance)
                         data = data.sort_index()
 
-                        # Coerce all columns to numeric, coercing errors to NaN
+                        # Verify OHLC columns exist and are numeric
+                        required_cols = ["Open", "High", "Low", "Close"]
                         for col in data.columns:
                             data[col] = pd.to_numeric(data[col], errors="coerce")
 
                         # Drop rows with NaN in critical OHLC columns
                         data = data.dropna(subset=required_cols)
 
-                except Exception as yf_error:
-                    # Log error but try fallback to cached data
-                    print(f"yfinance error for {symbol}: {yf_error}")
+                except Exception as price_error:
+                    print(f"Price service error for {symbol}: {price_error}")
                     data = None
-
-                # Fallback to cached daily_prices if yfinance failed or returned empty
-                if data is None or data.empty:
-                    try:
-                        from src.db import execute_sql
-
-                        # Query cached prices from daily_prices table
-                        cached_result = execute_sql(
-                            """
-                            SELECT date, open, high, low, close, volume
-                            FROM daily_prices
-                            WHERE symbol = :symbol
-                            ORDER BY date DESC
-                            LIMIT 500
-                            """,
-                            params={"symbol": symbol},
-                            fetch_results=True,
-                        )
-
-                        if cached_result:
-                            # Convert to DataFrame with proper structure for mplfinance
-                            data = pd.DataFrame(
-                                cached_result,
-                                columns=[
-                                    "Date",
-                                    "Open",
-                                    "High",
-                                    "Low",
-                                    "Close",
-                                    "Volume",
-                                ],
-                            )
-                            data["Date"] = pd.to_datetime(data["Date"])
-                            data.set_index("Date", inplace=True)
-                            data = data.sort_index()
-
-                            # Verify OHLC columns are numeric
-                            for col in ["Open", "High", "Low", "Close", "Volume"]:
-                                data[col] = pd.to_numeric(data[col], errors="coerce")
-                            data = data.dropna(subset=["Open", "High", "Low", "Close"])
-
-                            if not data.empty:
-                                data_source = "cached"
-
-                    except Exception as cache_error:
-                        print(f"Cache fallback error for {symbol}: {cache_error}")
 
                 # Final check - if still no data, send error
                 if data is None or data.empty:

@@ -1,13 +1,17 @@
 import asyncio
-import yfinance as yf
+from datetime import date, timedelta
 from discord.ext import commands
 from src.bot.ui import EmbedFactory, EmbedCategory
+from src.price_service import get_ohlcv
 
 
 def register(bot: commands.Bot):
     @bot.command(name="EOD")
     async def eod_info(ctx):
-        """Interactive End-of-Day stock data lookup."""
+        """Interactive End-of-Day stock data lookup.
+
+        Data sourced from Databento (RDS ohlcv_daily).
+        """
 
         # Initial prompt
         prompt_msg = await ctx.send(
@@ -30,35 +34,37 @@ def register(bot: commands.Bot):
             await prompt_msg.edit(
                 embed=EmbedFactory.loading(
                     title=f"Fetching Data: {symbol}",
-                    description="Retrieving latest market data...",
+                    description="Retrieving latest market data from Databento...",
                 )
             )
 
-            # Fetch data
-            # Use run_in_executor to avoid blocking the event loop
+            # Fetch data from price_service (last 5 days to get the most recent)
             loop = asyncio.get_event_loop()
+            end_date = date.today()
+            start_date = end_date - timedelta(days=7)
+
             data = await loop.run_in_executor(
-                None, lambda: yf.download(symbol, period="1d", progress=False)
+                None, lambda: get_ohlcv(symbol, start_date, end_date)
             )
 
             if data.empty:
                 await ctx.send(
                     embed=EmbedFactory.warning(
                         title="Data Not Found",
-                        description=f"Could not find market data for **{symbol}**.",
-                        footer_hint="Check the symbol and try again.",
+                        description=f"Could not find market data for **{symbol}** in RDS.",
+                        footer_hint="Check the symbol and ensure OHLCV data has been backfilled.",
                     )
                 )
                 return
 
-            # Extract data
-            # yfinance returns a DataFrame, we need the last row
+            # Extract latest data (last row)
             info = data.iloc[-1]
+            date_str = data.index[-1].strftime("%Y-%m-%d")
 
             # Create response embed
             embed = EmbedFactory.create(
                 title=f"End-of-Day Update: ${symbol}",
-                description=f"Latest market data for **{symbol}**",
+                description=f"Latest market data for **{symbol}** (Databento)",
                 category=EmbedCategory.MARKET,
             )
 
@@ -70,11 +76,7 @@ def register(bot: commands.Bot):
                 name="Volume", value=f"{int(info['Volume']):,}", inline=True
             )
 
-            # Add date to footer
-            date_str = (
-                info.name.strftime("%Y-%m-%d") if hasattr(info, "name") else "Latest"
-            )
-            embed.set_footer(text=f"Date: {date_str}")
+            embed.set_footer(text=f"Date: {date_str} | Source: Databento")
 
             await ctx.send(embed=embed)
 

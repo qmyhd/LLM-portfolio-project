@@ -1,0 +1,45 @@
+[Unit]
+Description=LLM Portfolio Journal API Server (FastAPI)
+After=network.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ec2-user
+Group=ec2-user
+WorkingDirectory=/home/ec2-user/LLM-portfolio-project
+Environment="PATH=/home/ec2-user/LLM-portfolio-project/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/ec2-user/LLM-portfolio-project"
+Environment="PYTHONUNBUFFERED=1"
+
+# AWS Secrets Manager configuration
+Environment="USE_AWS_SECRETS=1"
+Environment="AWS_REGION=us-east-1"
+Environment="AWS_SECRET_NAME=qqqAppsecrets"
+Environment="AWS_RDS_SECRET_NAME=RDS/ohlcvdata"
+
+# Start uvicorn with FastAPI app
+ExecStart=/home/ec2-user/LLM-portfolio-project/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+# Restart policy
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/var/log/portfolio-api/combined.log
+StandardError=append:/var/log/portfolio-api/error.log
+
+# Resource limits
+MemoryMax=1G
+CPUQuota=80%
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/ec2-user/LLM-portfolio-project/data
+ReadWritePaths=/home/ec2-user/LLM-portfolio-project/logs
+ReadWritePaths=/var/log/portfolio-api
+
+[Install]
+WantedBy=multi-user.target

@@ -52,7 +52,6 @@ class DatabentoCollector:
         api_key: str | None = None,
         rds_url: str | None = None,
         s3_bucket: str | None = None,
-        supabase_url: str | None = None,
     ):
         """
         Initialize the collector.
@@ -61,7 +60,6 @@ class DatabentoCollector:
             api_key: Databento API key (defaults to DATABENTO_API_KEY env var)
             rds_url: PostgreSQL RDS connection URL (defaults to RDS_* env vars)
             s3_bucket: S3 bucket name (defaults to S3_BUCKET_NAME env var)
-            supabase_url: Optional Supabase connection URL for syncing
         """
         self.api_key = api_key or os.getenv("DATABENTO_API_KEY")
         if not self.api_key:
@@ -70,7 +68,6 @@ class DatabentoCollector:
         # Build RDS connection URL from components if not provided
         self.rds_url = rds_url or self._build_rds_url()
         self.s3_bucket = s3_bucket or os.getenv("S3_BUCKET_NAME", "qqq-llm-raw-history")
-        self.supabase_url = supabase_url
 
         # Lazy-loaded clients
         self._db_client = None
@@ -529,62 +526,6 @@ class DatabentoCollector:
             logger.error(f"Failed to save to S3: {e}")
             return None
 
-    def save_to_supabase(self, df: pd.DataFrame) -> int:
-        """
-        Sync OHLCV data to Supabase (optional).
-
-        Uses the project's standard database connection.
-
-        Args:
-            df: DataFrame with OHLCV data
-
-        Returns:
-            Number of rows synced
-        """
-        if df.empty:
-            return 0
-
-        try:
-            from src.db import execute_sql
-
-            rows_affected = 0
-            for _, row in df.iterrows():
-                execute_sql(
-                    """
-                    INSERT INTO ohlcv_daily (symbol, date, open, high, low, close, volume, source)
-                    VALUES (:symbol, :date, :open, :high, :low, :close, :volume, 'databento')
-                    ON CONFLICT (symbol, date)
-                    DO UPDATE SET
-                        open = EXCLUDED.open,
-                        high = EXCLUDED.high,
-                        low = EXCLUDED.low,
-                        close = EXCLUDED.close,
-                        volume = EXCLUDED.volume,
-                        updated_at = now()
-                    """,
-                    params={
-                        "symbol": row["symbol"],
-                        "date": row["date"],
-                        "open": float(row["open"]) if pd.notna(row["open"]) else None,
-                        "high": float(row["high"]) if pd.notna(row["high"]) else None,
-                        "low": float(row["low"]) if pd.notna(row["low"]) else None,
-                        "close": (
-                            float(row["close"]) if pd.notna(row["close"]) else None
-                        ),
-                        "volume": (
-                            int(row["volume"]) if pd.notna(row["volume"]) else None
-                        ),
-                    },
-                )
-                rows_affected += 1
-
-            logger.info(f"Synced {rows_affected} rows to Supabase")
-            return rows_affected
-
-        except Exception as e:
-            logger.error(f"Failed to sync to Supabase: {e}")
-            return 0
-
     def run_backfill(
         self,
         start: str | date,
@@ -592,7 +533,6 @@ class DatabentoCollector:
         symbols: list[str] | None = None,
         save_rds: bool = True,
         save_s3: bool = True,
-        save_supabase: bool = False,
     ) -> dict:
         """
         Run a full backfill for the given date range.
@@ -603,7 +543,6 @@ class DatabentoCollector:
             symbols: Optional list of symbols (defaults to portfolio)
             save_rds: Whether to save to RDS
             save_s3: Whether to save to S3
-            save_supabase: Whether to sync to Supabase
 
         Returns:
             Dict with operation results
@@ -617,7 +556,6 @@ class DatabentoCollector:
             "fetched_rows": len(df),
             "rds_rows": 0,
             "s3_key": None,
-            "supabase_rows": 0,
         }
 
         if df.empty:
@@ -630,9 +568,6 @@ class DatabentoCollector:
 
         if save_s3:
             results["s3_key"] = self.save_to_s3(df)
-
-        if save_supabase:
-            results["supabase_rows"] = self.save_to_supabase(df)
 
         logger.info(f"Backfill complete: {results}")
         return results
@@ -665,7 +600,6 @@ class DatabentoCollector:
             symbols=symbols,
             save_rds=True,
             save_s3=True,
-            save_supabase=True,  # Sync to Supabase for daily updates
         )
 
     def prune_rds_data(self, keep_days: int = 365) -> int:
