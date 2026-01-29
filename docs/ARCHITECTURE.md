@@ -1,7 +1,7 @@
 # LLM Portfolio Journal - Architecture Documentation
 
-> **Last Updated:** January 26, 2026  
-> **Database:** PostgreSQL (Supabase) - 14 active tables + RDS ohlcv_daily, RLS 100% compliant
+> **Last Updated:** January 27, 2026  
+> **Database:** PostgreSQL (Supabase) - 15 active tables, RLS 100% compliant
 
 ## Overview
 
@@ -26,22 +26,22 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 ### Database Layer
 
 **PostgreSQL-Only Database Architecture (SQLAlchemy 2.0 Compatible):**
-- **PostgreSQL/Supabase**: Production database with real-time capabilities and connection pooling
+- **PostgreSQL/Supabase**: Single production database with real-time capabilities and connection pooling
 - **Unified Interface**: All components use `execute_sql()` with named placeholders and dict parameters
 - **No Fallback**: System requires PostgreSQL - no SQLite support
 - **RLS Enabled**: All tables have Row Level Security enabled
 
-**Key Tables (14 Supabase + 1 RDS):**
+**Key Tables (15 Supabase):**
 - **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`
 - **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`
 - **NLP Pipeline**: `discord_parsed_ideas` (canonical table for parsed trading ideas)
 - **Symbol Management**: `symbol_aliases` (ticker variants for resolution)
+- **Market Data**: `ohlcv_daily` (Databento OHLCV source)
 - **System**: `twitter_data`, `processing_status`, `schema_migrations`, `institutional_holdings`
-- **RDS (separate)**: `ohlcv_daily` (Databento source, 1-year rolling)
 
 **Dropped Legacy Tables (Migration 049-054):**
 - `discord_message_chunks`, `discord_idea_units`, `stock_mentions`, `discord_processing_log`, `chart_metadata`
-- `daily_prices`, `realtime_prices`, `stock_metrics` (replaced by RDS ohlcv_daily)
+- `daily_prices`, `realtime_prices`, `stock_metrics` (replaced by `ohlcv_daily`)
 - `event_contract_trades`, `event_contract_positions`, `trade_history` (no runtime usage)
 
 **Key Relationships:**
@@ -50,9 +50,9 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 ### Module Structure
 
 #### Data Collection (`src/`)
-- **`price_service.py`**: Centralized price data access (RDS ohlcv_daily) - sole source for OHLCV data
+- **`price_service.py`**: Centralized price data access (Supabase `ohlcv_daily`) - sole source for OHLCV data
 - **`snaptrade_collector.py`**: SnapTrade API integration with enhanced field extraction
-- **`databento_collector.py`**: Databento OHLCV daily bars → RDS/S3 storage
+- **`databento_collector.py`**: Databento OHLCV daily bars → Supabase storage
 - **`message_cleaner.py`**: Discord message cleaning with ticker extraction, sentiment analysis, alias upsert
 - **`channel_processor.py`**: Production wrapper that fetches → cleans → writes to discord tables
 - **`twitter_analysis.py`**: Twitter/X sentiment analysis and data extraction
@@ -89,8 +89,8 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 #### OHLCV Data Pipeline
 - **`src/databento_collector.py`**: Databento Historical API integration
   - Dataset routing: EQUS.MINI (pre-2024-07-01), EQUS.SUMMARY (current)
-  - Storage: RDS (1-year rolling), S3 (Parquet archive), Supabase (optional)
-- **`scripts/backfill_ohlcv.py`**: CLI for EC2 backfills
+  - Storage: Supabase `ohlcv_daily` table (unified storage)
+- **`scripts/backfill_ohlcv.py`**: CLI for OHLCV backfills
 
 ### Operational Tooling (`scripts/`)
 - **`bootstrap.py`**: Application bootstrap with dependency management
@@ -109,7 +109,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
    ├─ SnapTrade API → Positions/Orders/Accounts
    ├─ Discord Bot → Message Stream → Ticker Extraction
    ├─ Twitter API → Tweet Analysis → Sentiment Scoring
-   └─ Databento → OHLCV Daily Bars → RDS/S3/Supabase
+   └─ Databento → OHLCV Daily Bars → Supabase ohlcv_daily
 
 2. Data Processing
    ├─ Symbol Extraction → Ticker Normalization
@@ -118,9 +118,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
    └─ Deduplication → Database Upserts
 
 3. Data Storage
-   ├─ PostgreSQL (Supabase) → Real-time Writes
-   ├─ RDS PostgreSQL → OHLCV rolling 1-year
-   └─ S3 → Parquet archive
+   └─ PostgreSQL (Supabase) → All data (unified)
 
 4. Outputs
    ├─ Discord Bot → Interactive commands and charts

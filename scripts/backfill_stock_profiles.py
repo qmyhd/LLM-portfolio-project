@@ -3,7 +3,7 @@
 Stock Profile Backfill Script
 
 Populates stock_profile_current and stock_profile_history tables by joining:
-- RDS ohlcv_daily: Price metrics (returns, volatility)
+- Supabase ohlcv_daily: Price metrics (returns, volatility)
 - Supabase positions/orders: Trading activity metrics
 - Supabase discord_parsed_ideas: Sentiment and mention metrics
 
@@ -15,7 +15,7 @@ Usage:
     python scripts/backfill_stock_profiles.py --dry-run          # Preview without writing
 
 Environment:
-    Requires both Supabase and RDS credentials configured.
+    Requires Supabase credentials configured.
 """
 
 from __future__ import annotations
@@ -29,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from src.db import execute_sql, get_connection
-from src.price_service import get_ohlcv, is_available as rds_available
+from src.price_service import get_ohlcv, is_available as ohlcv_available
 from src.retry_utils import hardened_retry
 
 logging.basicConfig(
@@ -206,9 +206,9 @@ def get_sentiment_metrics(ticker: str) -> dict[str, Any]:
 
 @hardened_retry(max_retries=2, delay=1)
 def get_price_metrics(ticker: str) -> dict[str, Any]:
-    """Get price metrics from RDS ohlcv_daily."""
-    if not rds_available():
-        logger.warning("RDS not available, skipping price metrics")
+    """Get price metrics from Supabase ohlcv_daily."""
+    if not ohlcv_available():
+        logger.warning("OHLCV data not available, skipping price metrics")
         return {}
 
     # Get 1 year of data for calculations

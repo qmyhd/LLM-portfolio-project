@@ -2,17 +2,15 @@
 """
 OHLCV Backfill CLI
 
-Fetches daily bars from Databento and saves to RDS/S3/Supabase.
+Fetches daily bars from Databento and saves to Supabase PostgreSQL.
 
 Environment Variables (required on EC2):
-    DATABENTO_API_KEY, RDS_HOST, RDS_PASSWORD, S3_BUCKET_NAME,
-    AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+    DATABENTO_API_KEY, DATABASE_URL (Supabase)
 
 Usage:
     python scripts/backfill_ohlcv.py --daily              # Last 5 days
     python scripts/backfill_ohlcv.py --full               # Full historical
     python scripts/backfill_ohlcv.py --start 2024-01-01   # Custom range
-    python scripts/backfill_ohlcv.py --prune              # Remove old RDS data
 """
 
 import argparse
@@ -48,7 +46,7 @@ def parse_date(date_str: str) -> date:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Databento OHLCV Backfill",
+        description="Databento OHLCV Backfill (Supabase)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )
@@ -64,11 +62,6 @@ def main():
         "--daily",
         action="store_true",
         help="Daily update (last 5 days)",
-    )
-    mode_group.add_argument(
-        "--prune",
-        action="store_true",
-        help="Prune old RDS data (keep 1 year)",
     )
 
     # Date range
@@ -90,23 +83,6 @@ def main():
         help="Comma-separated list of symbols (default: portfolio symbols)",
     )
 
-    # Storage targets
-    parser.add_argument(
-        "--no-rds",
-        action="store_true",
-        help="Skip saving to RDS",
-    )
-    parser.add_argument(
-        "--no-s3",
-        action="store_true",
-        help="Skip saving to S3",
-    )
-    parser.add_argument(
-        "--supabase",
-        action="store_true",
-        help="Also sync to Supabase (default: skip)",
-    )
-
     # Options
     parser.add_argument(
         "--dry-run",
@@ -118,12 +94,6 @@ def main():
         "-v",
         action="store_true",
         help="Enable verbose logging",
-    )
-    parser.add_argument(
-        "--keep-days",
-        type=int,
-        default=365,
-        help="Days of data to keep when pruning (default: 365)",
     )
     parser.add_argument(
         "--lookback",
@@ -154,13 +124,6 @@ def main():
     except ValueError as e:
         logger.error(f"Configuration error: {e}")
         sys.exit(1)
-
-    # Handle prune mode
-    if args.prune:
-        logger.info(f"Pruning RDS data older than {args.keep_days} days")
-        deleted = collector.prune_rds_data(keep_days=args.keep_days)
-        logger.info(f"Pruned {deleted} rows")
-        return
 
     # Determine symbols
     symbols = None
@@ -200,21 +163,6 @@ def main():
         logger.warning(f"End date adjusted to yesterday (can't fetch today's data)")
         end_date = date.today() - timedelta(days=1)
 
-    # Determine storage targets
-    if args.dry_run:
-        save_rds = False
-        save_s3 = False
-        save_supabase = False
-        logger.info("DRY RUN: Will fetch but not save")
-    else:
-        save_rds = not args.no_rds
-        save_s3 = not args.no_s3
-        save_supabase = args.supabase
-
-    logger.info(
-        f"Storage targets: RDS={save_rds}, S3={save_s3}, Supabase={save_supabase}"
-    )
-
     # Run backfill
     try:
         if args.dry_run:
@@ -236,21 +184,13 @@ def main():
                 start=start_date,
                 end=end_date,
                 symbols=symbols,
-                save_rds=save_rds,
-                save_s3=save_s3,
-                save_supabase=save_supabase,
             )
 
             logger.info("=" * 50)
             logger.info("BACKFILL COMPLETE")
             logger.info("=" * 50)
             logger.info(f"Fetched rows: {results['fetched_rows']}")
-            if save_rds:
-                logger.info(f"RDS rows upserted: {results['rds_rows']}")
-            if save_s3:
-                logger.info(f"S3 key: {results['s3_key']}")
-            if save_supabase:
-                logger.info(f"Supabase rows synced: {results['supabase_rows']}")
+            logger.info(f"Supabase rows upserted: {results['supabase_rows']}")
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
