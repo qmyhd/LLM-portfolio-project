@@ -15,7 +15,7 @@ Usage:
     python scripts/daily_stock_refresh.py --dry-run  # Preview only
 
 Environment:
-    Requires DATABASE_URL and RDS credentials configured.
+    Requires DATABASE_URL (Supabase) configured.
 """
 
 from __future__ import annotations

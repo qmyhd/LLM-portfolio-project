@@ -86,7 +86,7 @@ def main():
 
     results = {}
 
-    # Step 1: OHLCV Backfill (Databento → RDS)
+    # Step 1: OHLCV Backfill (Databento → Supabase)
     logger.info("\n📊 Step 1: OHLCV Backfill")
     results["ohlcv"] = run_script(
         "scripts/backfill_ohlcv.py",

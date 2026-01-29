@@ -41,6 +41,8 @@ def get_unnotified_orders(limit: Optional[int] = None) -> list[dict]:
     """
     Fetch filled orders that haven't been notified yet.
 
+    Uses notified_at IS NULL pattern for pending notifications.
+
     Args:
         limit: Maximum number of orders to return
 
@@ -60,7 +62,7 @@ def get_unnotified_orders(limit: Optional[int] = None) -> list[dict]:
         FROM orders o
         LEFT JOIN accounts a ON o.account_id = a.account_id
         WHERE o.status = 'filled'
-          AND o.notified = false
+          AND o.notified_at IS NULL
         ORDER BY o.filled_at ASC
     """
 
@@ -72,7 +74,7 @@ def get_unnotified_orders(limit: Optional[int] = None) -> list[dict]:
 
 def mark_order_notified(order_id: str) -> bool:
     """
-    Mark an order as notified in the database.
+    Mark an order as notified in the database by setting notified_at timestamp.
 
     Args:
         order_id: The order ID to mark
@@ -82,7 +84,7 @@ def mark_order_notified(order_id: str) -> bool:
     """
     try:
         execute_sql(
-            "UPDATE orders SET notified = true WHERE order_id = :order_id",
+            "UPDATE orders SET notified_at = NOW() WHERE order_id = :order_id",
             params={"order_id": order_id},
         )
         return True

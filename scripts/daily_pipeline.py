@@ -27,10 +27,10 @@ Usage:
 
 Cron Schedule (add via `crontab -e`):
     # Daily pipeline at 1:00 AM ET (6:00 AM UTC)
-    0 6 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh >> /var/log/discord-bot/daily_pipeline.log 2>&1
+    0 6 * * * /home/ubuntu/llm-portfolio/scripts/run_pipeline_with_secrets.sh >> /var/log/discord-bot/daily_pipeline.log 2>&1
 
     # Evening SnapTrade sync at 8:00 PM ET (1:00 AM UTC next day)
-    0 1 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh --snaptrade >> /var/log/discord-bot/snaptrade_sync.log 2>&1
+    0 1 * * * /home/ubuntu/llm-portfolio/scripts/run_pipeline_with_secrets.sh --snaptrade >> /var/log/discord-bot/snaptrade_sync.log 2>&1
 """
 
 import argparse
