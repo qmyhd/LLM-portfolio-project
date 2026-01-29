@@ -8,16 +8,22 @@ Provides REST API endpoints for:
 - Symbol search and watchlist management
 - SnapTrade webhook handling
 - AI-powered stock chat analysis
+
+Security:
+- API key authentication on all endpoints except /health and webhooks
+- CORS restricted to allowed frontend origins
+- Bind to 127.0.0.1 (Nginx handles public traffic with SSL)
 """
 
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
+from app.auth import require_api_key
 from app.routes import portfolio, orders, stocks, search, watchlist, chat, webhook
 
 # Configure logging
@@ -63,8 +69,8 @@ app = FastAPI(
 ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Local Next.js dev
     "http://127.0.0.1:3000",
-    "https://llm-portfolio.vercel.app",  # Production Vercel
-    "https://*.vercel.app",  # Vercel preview deployments
+    "https://llm-portfolio-frontend.vercel.app",  # Production Vercel
+    "https://llmportfolio.app",  # Custom domain (if configured)
 ]
 
 app.add_middleware(
@@ -77,13 +83,46 @@ app.add_middleware(
 )
 
 
-# Include routers
-app.include_router(portfolio.router, prefix="/portfolio", tags=["Portfolio"])
-app.include_router(orders.router, prefix="/orders", tags=["Orders"])
-app.include_router(stocks.router, prefix="/stocks", tags=["Stocks"])
-app.include_router(search.router, prefix="/search", tags=["Search"])
-app.include_router(watchlist.router, prefix="/watchlist", tags=["Watchlist"])
-app.include_router(chat.router, prefix="/stocks", tags=["Chat"])
+# Include routers with API key authentication
+# Protected routes - require API key
+app.include_router(
+    portfolio.router,
+    prefix="/portfolio",
+    tags=["Portfolio"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    orders.router,
+    prefix="/orders",
+    tags=["Orders"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    stocks.router,
+    prefix="/stocks",
+    tags=["Stocks"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    search.router,
+    prefix="/search",
+    tags=["Search"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    watchlist.router,
+    prefix="/watchlist",
+    tags=["Watchlist"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    chat.router,
+    prefix="/stocks",
+    tags=["Chat"],
+    dependencies=[Depends(require_api_key)],
+)
+
+# Webhook routes - protected by signature verification, NOT API key
 app.include_router(webhook.router, prefix="/webhook", tags=["Webhooks"])
 
 
@@ -139,4 +178,5 @@ async def global_exception_handler(request: Request, exc: Exception):
 if __name__ == "__main__":
     import uvicorn
 
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True)
+    # Bind to 127.0.0.1 - Nginx handles public traffic with SSL
+    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
