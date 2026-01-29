@@ -10,7 +10,7 @@ def register(bot: commands.Bot):
     async def eod_info(ctx):
         """Interactive End-of-Day stock data lookup.
 
-        Data sourced from Databento (RDS ohlcv_daily).
+        Data sourced from Databento (Supabase ohlcv_daily).
         """
 
         # Initial prompt
@@ -51,7 +51,7 @@ def register(bot: commands.Bot):
                 await ctx.send(
                     embed=EmbedFactory.warning(
                         title="Data Not Found",
-                        description=f"Could not find market data for **{symbol}** in RDS.",
+                        description=f"Could not find market data for **{symbol}**.",
                         footer_hint="Check the symbol and ensure OHLCV data has been backfilled.",
                     )
                 )

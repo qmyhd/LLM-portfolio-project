@@ -565,7 +565,7 @@ def register(bot: commands.Bot):
         • 2y  → 1wk interval (4, 13, 26 week MAs)
 
         **Data Source:**
-        • All OHLCV data from Databento (RDS ohlcv_daily)
+        • All OHLCV data from Databento (Supabase ohlcv_daily)
         • Daily bars only (no intraday data)
 
         **Features:**
@@ -648,12 +648,12 @@ def register(bot: commands.Bot):
                 # Calculate date range for trade data querying
                 start_date, end_date = calculate_chart_date_range(period)
 
-                # Fetch price data from RDS ohlcv_daily (Databento source)
+                # Fetch price data from Supabase ohlcv_daily (Databento source)
                 data = None
                 data_source = "databento"
 
                 try:
-                    # Fetch OHLCV from price_service (RDS ohlcv_daily)
+                    # Fetch OHLCV from price_service (Supabase ohlcv_daily)
                     data = get_ohlcv(symbol, start_date.date(), end_date.date())
 
                     if data is not None and not data.empty:

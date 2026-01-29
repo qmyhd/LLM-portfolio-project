@@ -1,25 +1,24 @@
 [Unit]
 Description=LLM Portfolio Journal API Server (FastAPI)
-After=network.target postgresql.service
+After=network.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=ec2-user
-Group=ec2-user
-WorkingDirectory=/home/ec2-user/LLM-portfolio-project
-Environment="PATH=/home/ec2-user/LLM-portfolio-project/.venv/bin:/usr/local/bin:/usr/bin:/bin"
-Environment="PYTHONPATH=/home/ec2-user/LLM-portfolio-project"
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/llm-portfolio
+Environment="PATH=/home/ubuntu/llm-portfolio/.venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="PYTHONPATH=/home/ubuntu/llm-portfolio"
 Environment="PYTHONUNBUFFERED=1"
 
 # AWS Secrets Manager configuration
 Environment="USE_AWS_SECRETS=1"
 Environment="AWS_REGION=us-east-1"
-Environment="AWS_SECRET_NAME=qqqAppsecrets"
-Environment="AWS_RDS_SECRET_NAME=RDS/ohlcvdata"
+Environment="AWS_SECRET_NAME=llm-portfolio/production"
 
-# Start uvicorn with FastAPI app
-ExecStart=/home/ec2-user/LLM-portfolio-project/.venv/bin/python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+# Start uvicorn with FastAPI app - bind to localhost only (Nginx handles public traffic)
+ExecStart=/home/ubuntu/llm-portfolio/.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 # Restart policy
 Restart=always
@@ -37,8 +36,8 @@ CPUQuota=80%
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/home/ec2-user/LLM-portfolio-project/data
-ReadWritePaths=/home/ec2-user/LLM-portfolio-project/logs
+ReadWritePaths=/home/ubuntu/llm-portfolio/data
+ReadWritePaths=/home/ubuntu/llm-portfolio/logs
 ReadWritePaths=/var/log/portfolio-api
 
 [Install]
