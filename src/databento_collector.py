@@ -4,15 +4,11 @@ Databento OHLCV Data Collector
 Fetches daily OHLCV bars from Databento Historical API.
 Handles dataset switching: EQUS.MINI (pre-2024-07-01), EQUS.SUMMARY (current).
 
+All data is stored in Supabase PostgreSQL (ohlcv_daily table).
+
 Environment Variables:
     DATABENTO_API_KEY   - Required. Databento API key.
-    RDS_HOST            - RDS PostgreSQL host.
-    RDS_PORT            - RDS port (default: 5432).
-    RDS_DATABASE/RDS_DB - RDS database name (default: postgres).
-    RDS_USER            - RDS username (default: postgres).
-    RDS_PASSWORD        - RDS password.
-    S3_BUCKET_NAME      - S3 bucket for Parquet archive.
-    S3_RAW_DAILY_PREFIX - S3 key prefix (default: ohlcv/daily).
+    DATABASE_URL        - Supabase PostgreSQL connection URL.
 """
 
 from __future__ import annotations
@@ -20,18 +16,16 @@ from __future__ import annotations
 import logging
 import os
 from datetime import date, datetime, timedelta
-from decimal import Decimal
-from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pandas as pd
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
 
+from src.db import execute_sql
 from src.retry_utils import hardened_retry
 
 if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
+    pass
 
 # Load environment variables
 load_dotenv()
@@ -50,44 +44,19 @@ class DatabentoCollector:
     def __init__(
         self,
         api_key: str | None = None,
-        rds_url: str | None = None,
-        s3_bucket: str | None = None,
     ):
         """
         Initialize the collector.
 
         Args:
             api_key: Databento API key (defaults to DATABENTO_API_KEY env var)
-            rds_url: PostgreSQL RDS connection URL (defaults to RDS_* env vars)
-            s3_bucket: S3 bucket name (defaults to S3_BUCKET_NAME env var)
         """
         self.api_key = api_key or os.getenv("DATABENTO_API_KEY")
         if not self.api_key:
             raise ValueError("DATABENTO_API_KEY not set")
 
-        # Build RDS connection URL from components if not provided
-        self.rds_url = rds_url or self._build_rds_url()
-        self.s3_bucket = s3_bucket or os.getenv("S3_BUCKET_NAME", "qqq-llm-raw-history")
-
-        # Lazy-loaded clients
+        # Lazy-loaded Databento client
         self._db_client = None
-        self._rds_engine: Engine | None = None
-        self._s3_client = None
-
-    def _build_rds_url(self) -> str:
-        """Build PostgreSQL connection URL from environment variables."""
-        host = os.getenv("RDS_HOST", "")
-        port = os.getenv("RDS_PORT", "5432")
-        # Support both RDS_DATABASE and RDS_DB for flexibility
-        database = os.getenv("RDS_DATABASE") or os.getenv("RDS_DB", "postgres")
-        user = os.getenv("RDS_USER", "postgres")
-        password = os.getenv("RDS_PASSWORD", "")
-
-        if not host or not password:
-            logger.warning("RDS configuration incomplete, RDS storage will be disabled")
-            return ""
-
-        return f"postgresql://{user}:{password}@{host}:{port}/{database}"
 
     @property
     def db_client(self):
@@ -102,30 +71,6 @@ class DatabentoCollector:
                     "databento package not installed. Run: pip install databento"
                 )
         return self._db_client
-
-    @property
-    def rds_engine(self) -> Engine | None:
-        """Lazy-load RDS SQLAlchemy engine."""
-        if self._rds_engine is None and self.rds_url:
-            self._rds_engine = create_engine(
-                self.rds_url,
-                pool_size=5,
-                max_overflow=10,
-                pool_pre_ping=True,
-            )
-        return self._rds_engine
-
-    @property
-    def s3_client(self):
-        """Lazy-load S3 client."""
-        if self._s3_client is None:
-            try:
-                import boto3  # type: ignore[import-untyped]
-
-                self._s3_client = boto3.client("s3")
-            except ImportError:
-                raise ImportError("boto3 package not installed. Run: pip install boto3")
-        return self._s3_client
 
     def get_portfolio_symbols(self) -> list[str]:
         """
@@ -373,9 +318,9 @@ class DatabentoCollector:
         logger.info(f"Total fetched: {len(result)} OHLCV records")
         return result
 
-    def save_to_rds(self, df: pd.DataFrame) -> int:
+    def save_to_supabase(self, df: pd.DataFrame) -> int:
         """
-        Save OHLCV data to RDS PostgreSQL with upsert.
+        Save OHLCV data to Supabase PostgreSQL with upsert.
 
         Args:
             df: DataFrame with OHLCV data
@@ -384,36 +329,27 @@ class DatabentoCollector:
             Number of rows upserted
         """
         if df.empty:
-            logger.warning("No data to save to RDS")
+            logger.warning("No data to save to Supabase")
             return 0
 
-        if not self.rds_engine:
-            logger.warning("RDS not configured, skipping RDS save")
-            return 0
-
-        # Ensure table exists
-        self._ensure_rds_table()
-
-        # Upsert data
+        # Upsert data row by row
         rows_affected = 0
-        with self.rds_engine.connect() as conn:
-            for _, row in df.iterrows():
-                result = conn.execute(
-                    text(
-                        """
-                        INSERT INTO ohlcv_daily (symbol, date, open, high, low, close, volume, source)
-                        VALUES (:symbol, :date, :open, :high, :low, :close, :volume, 'databento')
-                        ON CONFLICT (symbol, date)
-                        DO UPDATE SET
-                            open = EXCLUDED.open,
-                            high = EXCLUDED.high,
-                            low = EXCLUDED.low,
-                            close = EXCLUDED.close,
-                            volume = EXCLUDED.volume,
-                            updated_at = now()
+        for _, row in df.iterrows():
+            try:
+                result = execute_sql(
                     """
-                    ),
-                    {
+                    INSERT INTO ohlcv_daily (symbol, date, open, high, low, close, volume, source)
+                    VALUES (:symbol, :date, :open, :high, :low, :close, :volume, 'databento')
+                    ON CONFLICT (symbol, date)
+                    DO UPDATE SET
+                        open = EXCLUDED.open,
+                        high = EXCLUDED.high,
+                        low = EXCLUDED.low,
+                        close = EXCLUDED.close,
+                        volume = EXCLUDED.volume,
+                        updated_at = now()
+                    """,
+                    params={
                         "symbol": row["symbol"],
                         "date": row["date"],
                         "open": float(row["open"]) if pd.notna(row["open"]) else None,
@@ -426,113 +362,22 @@ class DatabentoCollector:
                             int(row["volume"]) if pd.notna(row["volume"]) else None
                         ),
                     },
+                    fetch_results=False,
                 )
-                rows_affected += result.rowcount
-            conn.commit()
+                rows_affected += 1
+            except Exception as e:
+                logger.warning(
+                    f"Error inserting row for {row['symbol']} on {row['date']}: {e}"
+                )
 
-        logger.info(f"Saved {rows_affected} rows to RDS")
+        logger.info(f"Saved {rows_affected} rows to Supabase")
         return rows_affected
-
-    def _ensure_rds_table(self) -> None:
-        """Ensure ohlcv_daily table exists in RDS."""
-        if not self.rds_engine:
-            return
-
-        create_table_sql = """
-            CREATE TABLE IF NOT EXISTS ohlcv_daily (
-                symbol TEXT NOT NULL,
-                date DATE NOT NULL,
-                open NUMERIC(18,6),
-                high NUMERIC(18,6),
-                low NUMERIC(18,6),
-                close NUMERIC(18,6),
-                volume BIGINT,
-                created_at TIMESTAMPTZ DEFAULT now(),
-                updated_at TIMESTAMPTZ DEFAULT now(),
-                source TEXT DEFAULT 'databento',
-                PRIMARY KEY (symbol, date)
-            );
-            
-            CREATE INDEX IF NOT EXISTS idx_ohlcv_daily_symbol ON ohlcv_daily(symbol);
-            CREATE INDEX IF NOT EXISTS idx_ohlcv_daily_date ON ohlcv_daily(date DESC);
-            CREATE INDEX IF NOT EXISTS idx_ohlcv_daily_symbol_date ON ohlcv_daily(symbol, date DESC);
-        """
-
-        with self.rds_engine.connect() as conn:
-            conn.execute(text(create_table_sql))
-            conn.commit()
-
-        logger.debug("Ensured ohlcv_daily table exists in RDS")
-
-    def save_to_s3(
-        self,
-        df: pd.DataFrame,
-        partition_date: date | None = None,
-        prefix: str | None = None,
-    ) -> str | None:
-        """
-        Save OHLCV data to S3 as Parquet.
-
-        Args:
-            df: DataFrame with OHLCV data
-            partition_date: Date for partitioning (defaults to max date in df)
-            prefix: S3 key prefix
-
-        Returns:
-            S3 key of saved file, or None if failed
-        """
-        if df.empty:
-            logger.warning("No data to save to S3")
-            return None
-
-        if not self.s3_bucket:
-            logger.warning("S3 bucket not configured, skipping S3 save")
-            return None
-
-        # Use env var or default for prefix
-        if prefix is None:
-            prefix = os.getenv("S3_RAW_DAILY_PREFIX", "ohlcv/daily").rstrip("/")
-
-        # Determine partition date
-        if partition_date is None:
-            partition_date = df["date"].max()
-            if isinstance(partition_date, pd.Timestamp):
-                partition_date = partition_date.date()
-
-        # Build S3 key with date partitioning
-        assert partition_date is not None  # Ensured above
-        year = partition_date.year
-        month = f"{partition_date.month:02d}"
-        day = f"{partition_date.day:02d}"
-        key = f"{prefix}/year={year}/month={month}/day={day}/ohlcv.parquet"
-
-        try:
-            # Convert to Parquet in memory
-            buffer = BytesIO()
-            df.to_parquet(buffer, index=False, engine="pyarrow")
-            buffer.seek(0)
-
-            # Upload to S3
-            self.s3_client.put_object(
-                Bucket=self.s3_bucket,
-                Key=key,
-                Body=buffer.getvalue(),
-            )
-
-            logger.info(f"Saved {len(df)} rows to s3://{self.s3_bucket}/{key}")
-            return key
-
-        except Exception as e:
-            logger.error(f"Failed to save to S3: {e}")
-            return None
 
     def run_backfill(
         self,
         start: str | date,
         end: str | date,
         symbols: list[str] | None = None,
-        save_rds: bool = True,
-        save_s3: bool = True,
     ) -> dict:
         """
         Run a full backfill for the given date range.
@@ -541,8 +386,6 @@ class DatabentoCollector:
             start: Start date
             end: End date
             symbols: Optional list of symbols (defaults to portfolio)
-            save_rds: Whether to save to RDS
-            save_s3: Whether to save to S3
 
         Returns:
             Dict with operation results
@@ -554,20 +397,15 @@ class DatabentoCollector:
 
         results = {
             "fetched_rows": len(df),
-            "rds_rows": 0,
-            "s3_key": None,
+            "supabase_rows": 0,
         }
 
         if df.empty:
             logger.warning("No data fetched, nothing to save")
             return results
 
-        # Save to targets
-        if save_rds:
-            results["rds_rows"] = self.save_to_rds(df)
-
-        if save_s3:
-            results["s3_key"] = self.save_to_s3(df)
+        # Save to Supabase
+        results["supabase_rows"] = self.save_to_supabase(df)
 
         logger.info(f"Backfill complete: {results}")
         return results
@@ -598,36 +436,7 @@ class DatabentoCollector:
             start=start_date,
             end=end_date,
             symbols=symbols,
-            save_rds=True,
-            save_s3=True,
         )
-
-    def prune_rds_data(self, keep_days: int = 365) -> int:
-        """
-        Prune old data from RDS to maintain rolling window.
-
-        Args:
-            keep_days: Number of days of data to keep
-
-        Returns:
-            Number of rows deleted
-        """
-        if not self.rds_engine:
-            logger.warning("RDS not configured")
-            return 0
-
-        cutoff_date = date.today() - timedelta(days=keep_days)
-
-        with self.rds_engine.connect() as conn:
-            result = conn.execute(
-                text("DELETE FROM ohlcv_daily WHERE date < :cutoff"),
-                {"cutoff": cutoff_date},
-            )
-            conn.commit()
-            deleted = result.rowcount
-
-        logger.info(f"Pruned {deleted} rows older than {cutoff_date}")
-        return deleted
 
 
 # Convenience functions for CLI usage

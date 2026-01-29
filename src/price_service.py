@@ -2,7 +2,7 @@
 Price Service - Centralized OHLCV Data Access
 
 This module is the SOLE source of truth for fetching price history and latest prices.
-All price data comes from the RDS ohlcv_daily table (Databento source).
+All price data comes from the Supabase ohlcv_daily table (Databento source).
 
 Usage:
     from src.price_service import get_ohlcv, get_latest_close
@@ -14,89 +14,25 @@ Usage:
     price = get_latest_close("AAPL")
 
 Environment Variables:
-    RDS_HOST       - RDS PostgreSQL host
-    RDS_PORT       - RDS port (default: 5432)
-    RDS_DATABASE   - RDS database name (also supports RDS_DB)
-    RDS_USER       - RDS username (default: postgres)
-    RDS_PASSWORD   - RDS password
+    DATABASE_URL   - Supabase PostgreSQL connection URL
 
 Note:
     This module does NOT use yfinance or any external market data API.
-    All data comes from Databento via the ohlcv_daily table.
+    All data comes from Databento via the ohlcv_daily table in Supabase.
 """
 
 from __future__ import annotations
 
 import logging
-import os
-from datetime import date, datetime, timedelta
-from functools import lru_cache
-from typing import TYPE_CHECKING, Optional
+from datetime import date
+from typing import Optional
 
 import pandas as pd
-from dotenv import load_dotenv
-from sqlalchemy import create_engine, text
 
+from src.db import execute_sql, healthcheck
 from src.retry_utils import hardened_retry
 
-if TYPE_CHECKING:
-    from sqlalchemy.engine import Engine
-
-# Load environment variables
-load_dotenv()
-
 logger = logging.getLogger(__name__)
-
-# Module-level engine cache
-_rds_engine: Optional[Engine] = None
-
-
-def _build_rds_url() -> str:
-    """
-    Build PostgreSQL connection URL from environment variables.
-
-    Returns:
-        PostgreSQL connection URL string, or empty string if not configured.
-    """
-    host = os.getenv("RDS_HOST", "")
-    port = os.getenv("RDS_PORT", "5432")
-    # Support both RDS_DATABASE and RDS_DB for flexibility
-    database = os.getenv("RDS_DATABASE") or os.getenv("RDS_DB", "postgres")
-    user = os.getenv("RDS_USER", "postgres")
-    password = os.getenv("RDS_PASSWORD", "")
-
-    if not host or not password:
-        logger.warning(
-            "RDS configuration incomplete (RDS_HOST or RDS_PASSWORD missing)"
-        )
-        return ""
-
-    return f"postgresql://{user}:{password}@{host}:{port}/{database}"
-
-
-def _get_rds_engine() -> Optional[Engine]:
-    """
-    Get or create the RDS SQLAlchemy engine with connection pooling.
-
-    Returns:
-        SQLAlchemy Engine instance, or None if RDS is not configured.
-    """
-    global _rds_engine
-
-    if _rds_engine is None:
-        rds_url = _build_rds_url()
-        if rds_url:
-            _rds_engine = create_engine(
-                rds_url,
-                pool_size=5,
-                max_overflow=10,
-                pool_pre_ping=True,
-            )
-            logger.debug("RDS engine initialized")
-        else:
-            logger.warning("RDS not configured - price service unavailable")
-
-    return _rds_engine
 
 
 @hardened_retry(max_retries=3, delay=1)
@@ -108,7 +44,7 @@ def get_ohlcv(
     """
     Fetch OHLCV daily bars for a symbol within a date range.
 
-    Data is sourced from the RDS ohlcv_daily table (Databento).
+    Data is sourced from the Supabase ohlcv_daily table (Databento).
 
     Args:
         symbol: Stock ticker symbol (e.g., "AAPL", "MSFT")
@@ -118,7 +54,7 @@ def get_ohlcv(
     Returns:
         DataFrame with columns: Date (index), Open, High, Low, Close, Volume
         Compatible with mplfinance charting.
-        Returns empty DataFrame if no data found or RDS not configured.
+        Returns empty DataFrame if no data found.
 
     Example:
         >>> from datetime import date
@@ -128,41 +64,31 @@ def get_ohlcv(
         Date
         2024-01-02  185.12  186.45  184.80  185.50  45000000
     """
-    engine = _get_rds_engine()
-    if engine is None:
-        logger.error("RDS not configured - cannot fetch OHLCV data")
-        return pd.DataFrame()
-
     symbol = symbol.upper().strip()
 
-    query = text(
-        """
-        SELECT 
-            date,
-            open,
-            high,
-            low,
-            close,
-            volume
-        FROM ohlcv_daily
-        WHERE symbol = :symbol
-          AND date >= :start_date
-          AND date <= :end_date
-        ORDER BY date ASC
-    """
-    )
-
     try:
-        with engine.connect() as conn:
-            result = conn.execute(
-                query,
-                {
-                    "symbol": symbol,
-                    "start_date": start,
-                    "end_date": end,
-                },
-            )
-            rows = result.fetchall()
+        rows = execute_sql(
+            """
+            SELECT 
+                date,
+                open,
+                high,
+                low,
+                close,
+                volume
+            FROM ohlcv_daily
+            WHERE symbol = :symbol
+              AND date >= :start_date
+              AND date <= :end_date
+            ORDER BY date ASC
+            """,
+            params={
+                "symbol": symbol,
+                "start_date": start,
+                "end_date": end,
+            },
+            fetch_results=True,
+        )
 
         if not rows:
             logger.info(f"No OHLCV data for {symbol} from {start} to {end}")
@@ -201,7 +127,7 @@ def get_latest_close(symbol: str) -> Optional[float]:
     """
     Get the most recent closing price for a symbol.
 
-    Data is sourced from the RDS ohlcv_daily table (Databento).
+    Data is sourced from the Supabase ohlcv_daily table (Databento).
 
     Args:
         symbol: Stock ticker symbol (e.g., "AAPL", "MSFT")
@@ -214,33 +140,26 @@ def get_latest_close(symbol: str) -> Optional[float]:
         >>> print(f"AAPL last close: ${price:.2f}")
         AAPL last close: $185.50
     """
-    engine = _get_rds_engine()
-    if engine is None:
-        logger.error("RDS not configured - cannot fetch latest close")
-        return None
-
     symbol = symbol.upper().strip()
 
-    query = text(
-        """
-        SELECT close
-        FROM ohlcv_daily
-        WHERE symbol = :symbol
-        ORDER BY date DESC
-        LIMIT 1
-    """
-    )
-
     try:
-        with engine.connect() as conn:
-            result = conn.execute(query, {"symbol": symbol})
-            row = result.fetchone()
+        rows = execute_sql(
+            """
+            SELECT close
+            FROM ohlcv_daily
+            WHERE symbol = :symbol
+            ORDER BY date DESC
+            LIMIT 1
+            """,
+            params={"symbol": symbol},
+            fetch_results=True,
+        )
 
-        if row is None:
+        if not rows or rows[0][0] is None:
             logger.info(f"No price data found for {symbol}")
             return None
 
-        close_price = float(row[0])
+        close_price = float(rows[0][0])
         logger.debug(f"Latest close for {symbol}: ${close_price:.2f}")
         return close_price
 
@@ -268,39 +187,29 @@ def get_previous_close(
         >>> prev = get_previous_close("AAPL", date(2024, 1, 15))
         >>> print(f"AAPL previous close: ${prev:.2f}")
     """
-    engine = _get_rds_engine()
-    if engine is None:
-        logger.error("RDS not configured - cannot fetch previous close")
-        return None
-
     symbol = symbol.upper().strip()
     if before_date is None:
         before_date = date.today()
 
-    query = text(
-        """
-        SELECT close
-        FROM ohlcv_daily
-        WHERE symbol = :symbol
-          AND date < :before_date
-        ORDER BY date DESC
-        LIMIT 1
-    """
-    )
-
     try:
-        with engine.connect() as conn:
-            result = conn.execute(
-                query,
-                {"symbol": symbol, "before_date": before_date},
-            )
-            row = result.fetchone()
+        rows = execute_sql(
+            """
+            SELECT close
+            FROM ohlcv_daily
+            WHERE symbol = :symbol
+              AND date < :before_date
+            ORDER BY date DESC
+            LIMIT 1
+            """,
+            params={"symbol": symbol, "before_date": before_date},
+            fetch_results=True,
+        )
 
-        if row is None:
+        if not rows or rows[0][0] is None:
             logger.info(f"No previous close found for {symbol} before {before_date}")
             return None
 
-        close_price = float(row[0])
+        close_price = float(rows[0][0])
         logger.debug(
             f"Previous close for {symbol} before {before_date}: ${close_price:.2f}"
         )
@@ -349,33 +258,26 @@ def get_latest_close_batch(symbols: list[str]) -> dict[str, float]:
         Dict mapping symbol -> latest close price
         (symbols with no data are omitted)
     """
-    engine = _get_rds_engine()
-    if engine is None:
-        logger.error("RDS not configured - cannot fetch batch prices")
-        return {}
-
     if not symbols:
         return {}
 
     # Clean symbols
     clean_symbols = [s.upper().strip() for s in symbols]
 
-    # Use a more efficient batch query with DISTINCT ON
-    query = text(
-        """
-        SELECT DISTINCT ON (symbol)
-            symbol,
-            close
-        FROM ohlcv_daily
-        WHERE symbol = ANY(:symbols)
-        ORDER BY symbol, date DESC
-    """
-    )
-
     try:
-        with engine.connect() as conn:
-            result = conn.execute(query, {"symbols": clean_symbols})
-            rows = result.fetchall()
+        # Use a more efficient batch query with DISTINCT ON
+        rows = execute_sql(
+            """
+            SELECT DISTINCT ON (symbol)
+                symbol,
+                close
+            FROM ohlcv_daily
+            WHERE symbol = ANY(:symbols)
+            ORDER BY symbol, date DESC
+            """,
+            params={"symbols": clean_symbols},
+            fetch_results=True,
+        )
 
         prices = {row[0]: float(row[1]) for row in rows if row[1] is not None}
         logger.debug(f"Fetched latest closes for {len(prices)}/{len(symbols)} symbols")
@@ -391,19 +293,9 @@ def is_available() -> bool:
     Check if the price service is properly configured and connected.
 
     Returns:
-        True if RDS is configured and reachable, False otherwise.
+        True if Supabase is configured and reachable, False otherwise.
     """
-    engine = _get_rds_engine()
-    if engine is None:
-        return False
-
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
-    except Exception as e:
-        logger.warning(f"Price service health check failed: {e}")
-        return False
+    return healthcheck()
 
 
 # Alias for backwards compatibility if needed

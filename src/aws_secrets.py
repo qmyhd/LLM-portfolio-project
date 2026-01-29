@@ -41,18 +41,13 @@ logger = logging.getLogger(__name__)
 # Secret name mapping: environment variable -> secret key in Secrets Manager
 # These are the keys expected in the AWS Secrets Manager secret
 SECRET_KEY_MAPPING = {
-    # Database - Supabase (primary)
+    # API Authentication
+    "API_SECRET_KEY": "API_SECRET_KEY",  # For FastAPI bearer token auth
+    # Database - Supabase (primary and only)
     "DATABASE_URL": "DATABASE_URL",
     "SUPABASE_SERVICE_ROLE_KEY": "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_URL": "SUPABASE_URL",
     "SUPABASE_KEY": "SUPABASE_KEY",
-    # Database - RDS (for OHLCV and high-volume writes)
-    # NOTE: RDS secrets may be in a separate secret (see AWS_RDS_SECRET_NAME)
-    "RDS_HOST": "RDS_HOST",
-    "RDS_PORT": "RDS_PORT",
-    "RDS_DATABASE": "RDS_DATABASE",
-    "RDS_USER": "RDS_USER",
-    "RDS_PASSWORD": "RDS_PASSWORD",
     # OpenAI (required for NLP)
     "OPENAI_API_KEY": "OPENAI_API_KEY",
     # Discord Bot
@@ -61,24 +56,13 @@ SECRET_KEY_MAPPING = {
     # SnapTrade (optional)
     "SNAPTRADE_CLIENT_ID": "SNAPTRADE_CLIENT_ID",
     "SNAPTRADE_CONSUMER_KEY": "SNAPTRADE_CONSUMER_KEY",
+    "SNAPTRADE_CLIENT_SECRET": "SNAPTRADE_CLIENT_SECRET",  # For webhook signature verification
     "SNAPTRADE_USER_ID": "SNAPTRADE_USER_ID",
     "SNAPTRADE_USER_SECRET": "SNAPTRADE_USER_SECRET",
     # Twitter (optional)
     "TWITTER_BEARER_TOKEN": "TWITTER_BEARER_TOKEN",
     # Databento (optional)
     "DATABENTO_API_KEY": "DATABENTO_API_KEY",
-    # S3 (optional - for Parquet archive)
-    "S3_BUCKET_NAME": "S3_BUCKET_NAME",
-    "S3_RAW_DAILY_PREFIX": "S3_RAW_DAILY_PREFIX",
-}
-
-# RDS-specific secret keys (for separate RDS secret)
-RDS_SECRET_KEY_MAPPING = {
-    "RDS_HOST": ["host", "RDS_HOST", "hostname"],
-    "RDS_PORT": ["port", "RDS_PORT"],
-    "RDS_DATABASE": ["dbname", "database", "RDS_DATABASE", "dbInstanceIdentifier"],
-    "RDS_USER": ["username", "RDS_USER", "user"],
-    "RDS_PASSWORD": ["password", "RDS_PASSWORD"],
 }
 
 
@@ -254,61 +238,6 @@ def load_secrets_to_env(
 
     logger.info(f"Loaded {count} environment variables from AWS Secrets Manager")
 
-    # Also load RDS secrets if configured separately
-    rds_count = load_rds_secrets_to_env(overwrite=overwrite)
-
-    return count + rds_count
-
-
-def load_rds_secrets_to_env(
-    rds_secret_name: Optional[str] = None,
-    overwrite: bool = False,
-) -> int:
-    """
-    Load RDS secrets from a separate AWS Secrets Manager secret.
-
-    This handles the case where RDS credentials are stored in a separate
-    secret (e.g., created by RDS or manually for OHLCV data).
-
-    Args:
-        rds_secret_name: Name of the RDS secret. Defaults to AWS_RDS_SECRET_NAME env var.
-        overwrite: If True, overwrite existing environment variables
-
-    Returns:
-        Number of environment variables set
-
-    Environment Variables:
-        AWS_RDS_SECRET_NAME: Name of the RDS secret (e.g., "RDS/ohlcvdata")
-    """
-    if rds_secret_name is None:
-        rds_secret_name = os.environ.get("AWS_RDS_SECRET_NAME")
-
-    if not rds_secret_name:
-        logger.debug("No RDS secret name configured, skipping RDS secrets")
-        return 0
-
-    logger.info(f"Loading RDS secrets from: {rds_secret_name}")
-
-    try:
-        secrets = fetch_secret(rds_secret_name)
-    except Exception as e:
-        logger.warning(f"Failed to load RDS secrets from {rds_secret_name}: {e}")
-        return 0
-
-    count = 0
-    for env_var, possible_keys in RDS_SECRET_KEY_MAPPING.items():
-        # Try each possible key name for this env var
-        for key in possible_keys:
-            if key in secrets:
-                value = secrets[key]
-                if value is not None:
-                    if overwrite or env_var not in os.environ:
-                        os.environ[env_var] = str(value)
-                        count += 1
-                        logger.debug(f"Set {env_var} from RDS secret (key: {key})")
-                    break  # Found a value, stop looking
-
-    logger.info(f"Loaded {count} RDS environment variables")
     return count
 
 
@@ -355,9 +284,13 @@ def create_secret_template() -> dict:
         # aws secretsmanager create-secret --name llm-portfolio/production --secret-string '...'
     """
     return {
+        # Required - API Authentication
+        "API_SECRET_KEY": "your_api_secret_key_for_fastapi",
         # Required - Supabase
         "DATABASE_URL": "postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres",
         "SUPABASE_SERVICE_ROLE_KEY": "sb_secret_your_key",
+        "SUPABASE_URL": "https://[project].supabase.co",
+        "SUPABASE_KEY": "your_supabase_anon_key",
         # Required - OpenAI
         "OPENAI_API_KEY": "sk-your_openai_key",
         # Required - Discord
@@ -366,118 +299,14 @@ def create_secret_template() -> dict:
         # Optional - SnapTrade
         "SNAPTRADE_CLIENT_ID": "",
         "SNAPTRADE_CONSUMER_KEY": "",
+        "SNAPTRADE_CLIENT_SECRET": "",
         "SNAPTRADE_USER_ID": "",
         "SNAPTRADE_USER_SECRET": "",
         # Optional - Twitter
         "TWITTER_BEARER_TOKEN": "",
         # Optional - Databento
         "DATABENTO_API_KEY": "",
-        # Optional - RDS (for OHLCV and high-volume operations)
-        "RDS_HOST": "your-db.region.rds.amazonaws.com",
-        "RDS_PORT": "5432",
-        "RDS_DATABASE": "postgres",
-        "RDS_USER": "postgres",
-        "RDS_PASSWORD": "your_rds_password",
-        # Optional - S3
-        "S3_BUCKET_NAME": "",
-        "S3_RAW_DAILY_PREFIX": "ohlcv/daily/",
     }
-
-
-def build_rds_connection_url(
-    host: Optional[str] = None,
-    port: Optional[str] = None,
-    database: Optional[str] = None,
-    user: Optional[str] = None,
-    password: Optional[str] = None,
-    ssl_mode: str = "require",
-) -> Optional[str]:
-    """
-    Build a PostgreSQL connection URL from RDS components.
-
-    Args:
-        host: RDS hostname (defaults to RDS_HOST env var)
-        port: RDS port (defaults to RDS_PORT env var, fallback 5432)
-        database: Database name (defaults to RDS_DATABASE env var)
-        user: Username (defaults to RDS_USER env var)
-        password: Password (defaults to RDS_PASSWORD env var)
-        ssl_mode: SSL mode (default: require)
-
-    Returns:
-        PostgreSQL connection URL or None if required fields missing
-
-    Example:
-        from src.aws_secrets import build_rds_connection_url
-
-        # Uses environment variables
-        rds_url = build_rds_connection_url()
-
-        # Or with explicit values
-        rds_url = build_rds_connection_url(
-            host="my-db.rds.amazonaws.com",
-            user="admin",
-            password="secret123",
-            database="mydb"
-        )
-    """
-    # Get values from environment if not provided
-    host = host or os.environ.get("RDS_HOST")
-    port = port or os.environ.get("RDS_PORT", "5432")
-    database = database or os.environ.get("RDS_DATABASE", "postgres")
-    user = user or os.environ.get("RDS_USER")
-    password = password or os.environ.get("RDS_PASSWORD")
-
-    # Validate required fields
-    if not all([host, user, password]):
-        missing = []
-        if not host:
-            missing.append("RDS_HOST")
-        if not user:
-            missing.append("RDS_USER")
-        if not password:
-            missing.append("RDS_PASSWORD")
-        logger.debug(f"Cannot build RDS URL - missing: {missing}")
-        return None
-
-    # URL-encode password for special characters
-    from urllib.parse import quote_plus
-
-    encoded_password = quote_plus(password)
-
-    # Build connection URL with SSL
-    url = f"postgresql://{user}:{encoded_password}@{host}:{port}/{database}"
-    if ssl_mode:
-        url += f"?sslmode={ssl_mode}"
-
-    logger.debug(f"Built RDS connection URL for host: {host}")
-    return url
-
-
-def get_rds_connection_url() -> Optional[str]:
-    """
-    Get RDS connection URL, loading from Secrets Manager if needed.
-
-    Returns:
-        PostgreSQL connection URL for RDS, or None if not configured
-
-    Example:
-        from src.aws_secrets import get_rds_connection_url
-
-        rds_url = get_rds_connection_url()
-        if rds_url:
-            engine = create_engine(rds_url)
-    """
-    # First try to build from environment (may already be loaded)
-    url = build_rds_connection_url()
-    if url:
-        return url
-
-    # Try loading secrets if not already loaded
-    if should_use_aws_secrets():
-        load_secrets_to_env()
-        return build_rds_connection_url()
-
-    return None
 
 
 if __name__ == "__main__":
