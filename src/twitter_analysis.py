@@ -472,14 +472,14 @@ def log_tweet_to_database(tweet_data: dict, discord_message_id: int):
 
         execute_sql(
             """
-            INSERT INTO twitter_data 
+            INSERT INTO twitter_data
             (tweet_id, message_id, content, author, channel, discord_message_id,
-             discord_sent_date, discord_date, tweet_date, tweet_created_date, tweet_content, author_username, 
-             author_name, retweet_count, like_count, reply_count, quote_count, 
+             discord_sent_date, discord_date, tweet_date, tweet_created_date, tweet_content, author_username,
+             author_name, retweet_count, like_count, reply_count, quote_count,
              stock_tags, source_url, retrieved_at, media_urls)
             VALUES (:tweet_id, :message_id, :content, :author, :channel, :discord_message_id,
-                   :discord_sent_date, :discord_date, :tweet_date, :tweet_created_date, :tweet_content, :author_username, 
-                   :author_name, :retweet_count, :like_count, :reply_count, :quote_count, 
+                   :discord_sent_date, :discord_date, :tweet_date, :tweet_created_date, :tweet_content, :author_username,
+                   :author_name, :retweet_count, :like_count, :reply_count, :quote_count,
                    :stock_tags, :source_url, :retrieved_at, :media_urls::jsonb)
             ON CONFLICT (tweet_id) DO UPDATE SET
                 message_id = EXCLUDED.message_id,
@@ -528,9 +528,9 @@ def get_tweets_by_stock_symbol(symbol, days_back=30):
 
         results = execute_sql(
             """
-            SELECT tweet_id, discord_sent_date, tweet_created_date, tweet_content, 
+            SELECT tweet_id, discord_sent_date, tweet_created_date, tweet_content,
                    author_username, like_count, retweet_count, source_url
-            FROM twitter_data 
+            FROM twitter_data
             WHERE stock_tags LIKE :symbol_pattern AND discord_sent_date > :cutoff_date
             ORDER BY discord_sent_date DESC
         """,
@@ -808,10 +808,10 @@ def upsert_x_posts_db(
             db_start = time.time()
             execute_sql(
                 """
-                INSERT INTO twitter_data 
-                (tweet_id, tweet_time, discord_message_time, tweet_text, 
+                INSERT INTO twitter_data
+                (tweet_id, tweet_time, discord_message_time, tweet_text,
                  tickers, author_id, conversation_id)
-                VALUES (:tweet_id, :tweet_time, :discord_message_time, :tweet_text, 
+                VALUES (:tweet_id, :tweet_time, :discord_message_time, :tweet_text,
                        :tickers, :author_id, :conversation_id)
                 ON CONFLICT (tweet_id) DO NOTHING
                 """,
@@ -1146,9 +1146,9 @@ def reprocess_incomplete_tweets(
         query = """
             SELECT tweet_id, message_id
             FROM twitter_data
-            WHERE author_username IS NULL 
+            WHERE author_username IS NULL
                OR author_username = ''
-               OR content IS NULL 
+               OR content IS NULL
                OR content = ''
             ORDER BY retrieved_at DESC NULLS LAST
             LIMIT :limit
@@ -1255,10 +1255,10 @@ def get_twitter_pipeline_status() -> Dict[str, Any]:
 
         # Count complete tweets
         complete = execute_sql(
-            """SELECT COUNT(*) FROM twitter_data 
-               WHERE author_username IS NOT NULL 
-               AND author_username != '' 
-               AND content IS NOT NULL 
+            """SELECT COUNT(*) FROM twitter_data
+               WHERE author_username IS NOT NULL
+               AND author_username != ''
+               AND content IS NOT NULL
                AND content != ''""",
             fetch_results=True,
         )
@@ -1269,7 +1269,7 @@ def get_twitter_pipeline_status() -> Dict[str, Any]:
 
         # Count Discord messages with Twitter links
         discord_links = execute_sql(
-            """SELECT COUNT(*) FROM discord_messages 
+            """SELECT COUNT(*) FROM discord_messages
                WHERE content LIKE '%twitter.com%' OR content LIKE '%x.com%'""",
             fetch_results=True,
         )

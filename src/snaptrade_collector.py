@@ -655,7 +655,7 @@ class SnapTradeCollector:
                 execute_sql(
                     """
                     INSERT INTO symbols (
-                        id, ticker, raw_symbol, description, asset_type, type_code, 
+                        id, ticker, raw_symbol, description, asset_type, type_code,
                         exchange_code, exchange_name, exchange_mic, figi_code,
                         logo_url, base_currency_code, is_supported,
                         is_quotable, is_tradable, created_at, updated_at
@@ -1033,8 +1033,8 @@ class SnapTradeCollector:
         try:
             # Get positions from the most recent sync timestamp
             query = """
-            SELECT symbol, quantity, equity, price, average_buy_price, asset_type, currency, sync_timestamp, calculated_equity 
-            FROM positions 
+            SELECT symbol, quantity, equity, price, average_buy_price, asset_type, currency, sync_timestamp, calculated_equity
+            FROM positions
             WHERE sync_timestamp = (SELECT MAX(sync_timestamp) FROM positions)
             ORDER BY equity DESC
             """
@@ -1064,8 +1064,8 @@ class SnapTradeCollector:
         try:
             # Get the most recent position for this symbol
             query = """
-            SELECT symbol, quantity, equity, price, average_buy_price, asset_type, currency, sync_timestamp, calculated_equity 
-            FROM positions 
+            SELECT symbol, quantity, equity, price, average_buy_price, asset_type, currency, sync_timestamp, calculated_equity
+            FROM positions
             WHERE symbol = :symbol AND sync_timestamp = (SELECT MAX(sync_timestamp) FROM positions WHERE symbol = :symbol)
             """
             result = execute_sql(query, {"symbol": symbol}, fetch_results=True)

@@ -98,9 +98,9 @@ def log_message_to_database(
 
         execute_sql(
             """
-            INSERT INTO discord_messages 
-            (message_id, author, author_id, content, channel, timestamp, 
-             user_id, num_chars, num_words, tickers_detected, 
+            INSERT INTO discord_messages
+            (message_id, author, author_id, content, channel, timestamp,
+             user_id, num_chars, num_words, tickers_detected,
              is_reply, reply_to_id, mentions, attachments,
              is_bot, is_command, channel_type)
             VALUES (:message_id, :author, :author_id, :content, :channel, :timestamp,

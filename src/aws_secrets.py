@@ -20,13 +20,19 @@ Required IAM permissions:
         "Action": [
             "secretsmanager:GetSecretValue"
         ],
-        "Resource": "arn:aws:secretsmanager:REGION:ACCOUNT:secret:llm-portfolio/*"
+        "Resource": "arn:aws:secretsmanager:us-east-1:298921514475:secret:qqqAppsecrets-FeRqIW"
     }
 
-Environment Variables:
-    AWS_SECRETS_PREFIX: Secret name prefix (default: "llm-portfolio")
+Environment Variables (in /etc/llm-portfolio/llm.env):
+    AWS_SECRET_NAME: Preferred - direct secret name (e.g., "qqqAppsecrets")
+    AWS_SECRETS_PREFIX: Fallback prefix if AWS_SECRET_NAME not set (default: "llm-portfolio")
+    AWS_SECRETS_ENV: Fallback environment suffix (default: "production")
     AWS_REGION: AWS region (default: "us-east-1")
     USE_AWS_SECRETS: Set to "1" to enable (auto-detected on EC2)
+
+Secret Resolution Order:
+    1. AWS_SECRET_NAME (preferred) -> "qqqAppsecrets"
+    2. {AWS_SECRETS_PREFIX}/{AWS_SECRETS_ENV} (fallback) -> "llm-portfolio/production"
 """
 
 import json
@@ -45,24 +51,59 @@ SECRET_KEY_MAPPING = {
     "API_SECRET_KEY": "API_SECRET_KEY",  # For FastAPI bearer token auth
     # Database - Supabase (primary and only)
     "DATABASE_URL": "DATABASE_URL",
+    "DATABASE_DIRECT_URL": "DATABASE_DIRECT_URL",
     "SUPABASE_SERVICE_ROLE_KEY": "SUPABASE_SERVICE_ROLE_KEY",
     "SUPABASE_URL": "SUPABASE_URL",
-    "SUPABASE_KEY": "SUPABASE_KEY",
+    "SUPABASE_ANON_KEY": "SUPABASE_ANON_KEY",
+    "SUPABASE_SESSION_POOLER": "SUPABASE_SESSION_POOLER",
+    # JWT
+    "JWT_PUBLIC_KEY": "JWT_PUBLIC_KEY",
+    "JWT_SECRET": "JWT_SECRET",
     # OpenAI (required for NLP)
     "OPENAI_API_KEY": "OPENAI_API_KEY",
+    "OPENAI_MODEL_TRIAGE": "OPENAI_MODEL_TRIAGE",
+    "OPENAI_MODEL_MAIN": "OPENAI_MODEL_MAIN",
+    "OPENAI_MODEL_ESCALATION": "OPENAI_MODEL_ESCALATION",
+    "OPENAI_MODEL_LONG": "OPENAI_MODEL_LONG",
+    "OPENAI_MODEL_SUMMARY": "OPENAI_MODEL_SUMMARY",
+    "OPENAI_MAX_OUTPUT_TOKENS": "OPENAI_MAX_OUTPUT_TOKENS",
+    "OPENAI_REASONING_EFFORT_MAIN": "OPENAI_REASONING_EFFORT_MAIN",
+    "OPENAI_PROMPT_VERSION": "OPENAI_PROMPT_VERSION",
+    "OPENAI_PROMPT_CACHE_KEY": "OPENAI_PROMPT_CACHE_KEY",
+    "OPENAI_PROMPT_CACHE_RETENTION": "OPENAI_PROMPT_CACHE_RETENTION",
+    "OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS": "OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS",
+    "OPENAI_LONG_CONTEXT_THRESHOLD_CHARS": "OPENAI_LONG_CONTEXT_THRESHOLD_CHARS",
+    "OPENAI_ESCALATION_THRESHOLD": "OPENAI_ESCALATION_THRESHOLD",
     # Discord Bot
     "DISCORD_BOT_TOKEN": "DISCORD_BOT_TOKEN",
+    "DISCORD_CLIENT_ID": "DISCORD_CLIENT_ID",
+    "DISCORD_CLIENT_SECRET": "DISCORD_CLIENT_SECRET",
     "LOG_CHANNEL_IDS": "LOG_CHANNEL_IDS",
-    # SnapTrade (optional)
+    # SnapTrade
     "SNAPTRADE_CLIENT_ID": "SNAPTRADE_CLIENT_ID",
     "SNAPTRADE_CONSUMER_KEY": "SNAPTRADE_CONSUMER_KEY",
-    "SNAPTRADE_CLIENT_SECRET": "SNAPTRADE_CLIENT_SECRET",  # For webhook signature verification
+    "SNAPTRADE_CLIENT_SECRET": "SNAPTRADE_CLIENT_SECRET",
     "SNAPTRADE_USER_ID": "SNAPTRADE_USER_ID",
     "SNAPTRADE_USER_SECRET": "SNAPTRADE_USER_SECRET",
+    "SNAPTRADE_BROKER": "SNAPTRADE_BROKER",
+    # Robinhood
+    "ROBINHOOD_ACCOUNT_ID": "ROBINHOOD_ACCOUNT_ID",
+    "ROBINHOOD_USERNAME": "ROBINHOOD_USERNAME",
+    # Databento
+    "DATABENTO_API_KEY": "DATABENTO_API_KEY",
+    "DATABENTO_USER_ID": "DATABENTO_USER_ID",
+    # Google OAuth
+    "GOOGLE_CLIENT_ID": "GOOGLE_CLIENT_ID",
+    "GOOGLE_CLIENT_SECRET": "GOOGLE_CLIENT_SECRET",
+    # External APIs
+    "LOGO_DEV_API_KEY": "LOGO_DEV_API_KEY",
+    "LOGO_DEV_API_SECRET": "LOGO_DEV_API_SECRET",
+    "LOGO_KIT_API_KEY": "LOGO_KIT_API_KEY",
+    "FINHUB_API_KEY": "FINHUB_API_KEY",
+    # GitHub
+    "GITHUB_PERSONAL_ACCESS_TOKEN": "Github_Personal_Access_Token",
     # Twitter (optional)
     "TWITTER_BEARER_TOKEN": "TWITTER_BEARER_TOKEN",
-    # Databento (optional)
-    "DATABENTO_API_KEY": "DATABENTO_API_KEY",
 }
 
 
@@ -190,14 +231,17 @@ def load_secrets_to_env(
 
     Args:
         secret_name: Name of the secret in AWS Secrets Manager.
-                     Defaults to "llm-portfolio/production"
+                     Resolution order:
+                     1. Explicit argument passed to this function
+                     2. AWS_SECRET_NAME env var (preferred: "qqqAppsecrets")
+                     3. {AWS_SECRETS_PREFIX}/{AWS_SECRETS_ENV} fallback
         overwrite: If True, overwrite existing environment variables
 
     Returns:
         Number of environment variables set
 
     Example:
-        # At application startup
+        # At application startup (set AWS_SECRET_NAME=qqqAppsecrets in /etc/llm-portfolio/llm.env)
         from src.aws_secrets import load_secrets_to_env
 
         if os.environ.get("USE_AWS_SECRETS") == "1":
@@ -280,32 +324,68 @@ def create_secret_template() -> dict:
         template = create_secret_template()
         print(json.dumps(template, indent=2))
 
-        # Then create in AWS:
-        # aws secretsmanager create-secret --name llm-portfolio/production --secret-string '...'
+        # Then create/update in AWS:
+        # aws secretsmanager create-secret --name qqqAppsecrets --secret-string '$(cat template.json)'
+        # aws secretsmanager update-secret --secret-id qqqAppsecrets --secret-string '$(cat template.json)'
     """
     return {
         # Required - API Authentication
         "API_SECRET_KEY": "your_api_secret_key_for_fastapi",
         # Required - Supabase
         "DATABASE_URL": "postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres",
+        "DATABASE_DIRECT_URL": "postgresql://postgres:[password]@db.[project].supabase.co:5432/postgres",
         "SUPABASE_SERVICE_ROLE_KEY": "sb_secret_your_key",
         "SUPABASE_URL": "https://[project].supabase.co",
-        "SUPABASE_KEY": "your_supabase_anon_key",
+        "SUPABASE_ANON_KEY": "your_supabase_anon_key",
+        "SUPABASE_SESSION_POOLER": "postgresql://postgres.[project]:[password]@[region].pooler.supabase.com:5432/postgres",
+        # JWT
+        "JWT_PUBLIC_KEY": "",
+        "JWT_SECRET": "",
         # Required - OpenAI
         "OPENAI_API_KEY": "sk-your_openai_key",
+        "OPENAI_MODEL_TRIAGE": "gpt-5-mini",
+        "OPENAI_MODEL_MAIN": "gpt-5-mini",
+        "OPENAI_MODEL_ESCALATION": "gpt-5.1",
+        "OPENAI_MODEL_LONG": "gpt-5.1",
+        "OPENAI_MODEL_SUMMARY": "gpt-5-mini",
+        "OPENAI_MAX_OUTPUT_TOKENS": "3500",
+        "OPENAI_REASONING_EFFORT_MAIN": "medium",
+        "OPENAI_PROMPT_VERSION": "v1.0",
+        "OPENAI_PROMPT_CACHE_KEY": "discord_parser_v1",
+        "OPENAI_PROMPT_CACHE_RETENTION": "24h",
+        "OPENAI_LONG_CONTEXT_THRESHOLD_TOKENS": "500",
+        "OPENAI_LONG_CONTEXT_THRESHOLD_CHARS": "2000",
+        "OPENAI_ESCALATION_THRESHOLD": "0.84",
         # Required - Discord
         "DISCORD_BOT_TOKEN": "your_discord_bot_token",
+        "DISCORD_CLIENT_ID": "",
+        "DISCORD_CLIENT_SECRET": "",
         "LOG_CHANNEL_IDS": "channel_id1,channel_id2",
-        # Optional - SnapTrade
+        # SnapTrade
         "SNAPTRADE_CLIENT_ID": "",
         "SNAPTRADE_CONSUMER_KEY": "",
         "SNAPTRADE_CLIENT_SECRET": "",
         "SNAPTRADE_USER_ID": "",
         "SNAPTRADE_USER_SECRET": "",
+        "SNAPTRADE_BROKER": "ROBINHOOD",
+        # Robinhood
+        "ROBINHOOD_ACCOUNT_ID": "",
+        "ROBINHOOD_USERNAME": "",
+        # Databento
+        "DATABENTO_API_KEY": "",
+        "DATABENTO_USER_ID": "",
+        # Google OAuth
+        "GOOGLE_CLIENT_ID": "",
+        "GOOGLE_CLIENT_SECRET": "",
+        # External APIs
+        "LOGO_DEV_API_KEY": "",
+        "LOGO_DEV_API_SECRET": "",
+        "LOGO_KIT_API_KEY": "",
+        "FINHUB_API_KEY": "",
+        # GitHub
+        "Github_Personal_Access_Token": "",
         # Optional - Twitter
         "TWITTER_BEARER_TOKEN": "",
-        # Optional - Databento
-        "DATABENTO_API_KEY": "",
     }
 
 

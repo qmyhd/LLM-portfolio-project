@@ -69,7 +69,7 @@ def get_ohlcv(
     try:
         rows = execute_sql(
             """
-            SELECT 
+            SELECT
                 date,
                 open,
                 high,

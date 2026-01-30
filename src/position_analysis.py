@@ -3,8 +3,11 @@ Enhanced position tracking analysis for chart.py integration.
 Provides deeper insights into position management over time.
 """
 
+import logging
 from datetime import datetime
 from typing import Dict, List
+
+logger = logging.getLogger(__name__)
 
 
 def analyze_position_history(
@@ -162,11 +165,6 @@ def analyze_position_history(
     return analysis
 
 
-import logging
-
-logger = logging.getLogger(__name__)
-
-
 def get_current_position_size(symbol: str) -> float:
     """Get current position size for a symbol from positions table."""
     try:
@@ -174,7 +172,7 @@ def get_current_position_size(symbol: str) -> float:
 
         result = execute_sql(
             """
-            SELECT quantity FROM positions 
+            SELECT quantity FROM positions
             WHERE symbol = :symbol AND sync_timestamp = (SELECT MAX(sync_timestamp) FROM positions WHERE symbol = :symbol)
         """,
             {"symbol": symbol},
@@ -199,7 +197,7 @@ def get_current_price(symbol: str) -> float:
 
         result = execute_sql(
             """
-            SELECT price FROM realtime_prices 
+            SELECT price FROM realtime_prices
             WHERE symbol = :symbol ORDER BY timestamp DESC LIMIT 1
         """,
             {"symbol": symbol},
@@ -224,7 +222,7 @@ def get_stored_positions():
 
         result = execute_sql(
             """
-            SELECT symbol, quantity, price, equity, average_buy_price, 
+            SELECT symbol, quantity, price, equity, average_buy_price,
                    open_pnl, account_id, sync_timestamp
             FROM positions
             ORDER BY symbol

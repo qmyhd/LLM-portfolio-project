@@ -788,7 +788,7 @@ Discord Insights:
 Recent relevant messages:
 {recent_stock_messages if recent_stock_messages else "No recent stock messages"}
 
-Write a concise daily journal entry (max 120 words) that summarizes the portfolio performance, 
+Write a concise daily journal entry (max 120 words) that summarizes the portfolio performance,
 highlights key movers, and incorporates relevant sentiment from Discord discussions.
 The entry should be insightful, analytical, and provide context for the current portfolio state.
 """

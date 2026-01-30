@@ -506,11 +506,11 @@ def get_table_sizes():
         # PostgreSQL table sizes query
         query = text(
             """
-            SELECT 
+            SELECT
                 tablename,
                 pg_size_pretty(pg_total_relation_size(tablename::regclass)) as size,
                 pg_total_relation_size(tablename::regclass) as size_bytes
-            FROM pg_tables 
+            FROM pg_tables
             WHERE schemaname = 'public'
             ORDER BY size_bytes DESC
         """
@@ -1027,7 +1027,7 @@ def get_unprocessed_messages(
         query = f"""
         SELECT dm.message_id, dm.author, dm.content, dm.channel, dm.timestamp
         FROM discord_messages dm
-        LEFT JOIN processing_status ps 
+        LEFT JOIN processing_status ps
             ON dm.message_id = ps.message_id AND dm.channel = ps.channel
         WHERE (ps.{column} IS NULL OR ps.{column} IS FALSE)
         """

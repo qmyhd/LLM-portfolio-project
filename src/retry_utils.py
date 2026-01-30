@@ -11,14 +11,14 @@ cause endless retry loops that waste resources and obscure the real problem.
 
 Usage:
     from src.retry_utils import hardened_retry
-    
+
     @hardened_retry(max_retries=3, delay=1)
     def risky_operation():
         # Code that might fail
         pass
 
 Non-retryable exceptions:
-- sqlalchemy.exc.ArgumentError: SQL parameter mismatch  
+- sqlalchemy.exc.ArgumentError: SQL parameter mismatch
 - pandas.errors.ParserError: CSV parsing failure
 - ValueError: Often indicates data format issues
 - TypeError: Type mismatch errors
@@ -76,15 +76,15 @@ NON_RETRYABLE_EXCEPTIONS = tuple(NON_RETRYABLE)
 def hardened_retry(max_retries: int = 3, delay: float = 1.0, backoff_factor: float = 2.0):
     """
     Hardened retry decorator that prevents infinite loops on non-retryable errors.
-    
+
     Args:
         max_retries: Maximum number of retry attempts
         delay: Initial delay between retries in seconds
         backoff_factor: Factor to multiply delay by after each retry
-        
+
     Returns:
         Decorated function with hardened retry logic
-        
+
     Raises:
         Immediately raises non-retryable exceptions without retrying
     """
@@ -138,10 +138,10 @@ def hardened_retry(max_retries: int = 3, delay: float = 1.0, backoff_factor: flo
 def database_retry(max_retries: int = 3, delay: float = 1.0):
     """
     Specialized retry decorator for database operations.
-    
+
     This version includes database-specific exceptions and is more conservative
     about what gets retried.
-    
+
     Args:
         max_retries: Maximum number of retry attempts
         delay: Initial delay between retries
@@ -209,9 +209,9 @@ def database_retry(max_retries: int = 3, delay: float = 1.0):
 def csv_processing_retry(max_retries: int = 2, delay: float = 0.5):
     """
     Specialized retry decorator for CSV processing operations.
-    
+
     Very conservative retries since CSV parsing errors are usually permanent.
-    
+
     Args:
         max_retries: Maximum number of retry attempts (default: 2)
         delay: Initial delay between retries (default: 0.5s)
