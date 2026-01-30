@@ -69,7 +69,7 @@ async def get_portfolio():
         # Get positions from database
         positions_data = execute_sql(
             """
-            SELECT 
+            SELECT
                 p.symbol,
                 p.quantity,
                 p.average_cost,
@@ -86,7 +86,7 @@ async def get_portfolio():
         # Get account balances
         balances_data = execute_sql(
             """
-            SELECT 
+            SELECT
                 SUM(cash) as total_cash,
                 SUM(buying_power) as total_buying_power
             FROM account_balances

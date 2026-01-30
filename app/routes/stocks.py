@@ -210,7 +210,7 @@ async def get_stock_ideas(
         where_clause = " AND ".join(conditions)
 
         query = f"""
-            SELECT 
+            SELECT
                 dpi.id,
                 dpi.message_id,
                 dpi.primary_symbol,
@@ -361,7 +361,7 @@ async def get_stock_ohlcv(
         # Get orders for chart overlay
         orders_data = execute_sql(
             """
-            SELECT 
+            SELECT
                 DATE(filled_at) as date,
                 side,
                 filled_price as price,

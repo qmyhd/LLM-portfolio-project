@@ -86,7 +86,7 @@ async def get_orders(
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         query = f"""
-            SELECT 
+            SELECT
                 o.order_id as id,
                 o.symbol,
                 o.side,

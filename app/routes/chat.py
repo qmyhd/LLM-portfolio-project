@@ -70,7 +70,7 @@ async def chat_about_stock(
         # Get recent ideas
         ideas_data = execute_sql(
             """
-            SELECT 
+            SELECT
                 dpi.direction,
                 dpi.labels,
                 dpi.raw_chunk,
@@ -100,7 +100,7 @@ async def chat_about_stock(
         # Get position if owned
         position_data = execute_sql(
             """
-            SELECT 
+            SELECT
                 p.quantity,
                 p.average_cost
             FROM positions p

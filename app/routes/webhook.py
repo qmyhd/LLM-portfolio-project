@@ -5,8 +5,9 @@ Endpoints:
 - POST /webhook/snaptrade - Handle SnapTrade webhook events
 
 Security:
-- HMAC-SHA256 signature verification using SNAPTRADE_CONSUMER_KEY
+- HMAC-SHA256 signature verification using SNAPTRADE_CLIENT_SECRET
 - Replay protection via eventTimestamp (5-minute window)
+- Signature header: X-SnapTrade-Signature or Signature
 """
 
 import asyncio
@@ -52,14 +53,14 @@ class WebhookResponse(BaseModel):
 
 def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> bool:
     """
-    Verify SnapTrade webhook signature using SNAPTRADE_CONSUMER_KEY.
+    Verify SnapTrade webhook signature using SNAPTRADE_CLIENT_SECRET.
 
-    SnapTrade signs webhooks with HMAC-SHA256 using the consumer key (client secret).
+    SnapTrade signs webhooks with HMAC-SHA256 using the client secret.
 
     Args:
         payload: Raw request body
-        signature: X-SnapTrade-Signature header
-        secret: SNAPTRADE_CONSUMER_KEY (client secret)
+        signature: Signature header value (X-SnapTrade-Signature or Signature)
+        secret: SNAPTRADE_CLIENT_SECRET
 
     Returns:
         True if signature is valid
@@ -115,6 +116,7 @@ def verify_event_timestamp(event_timestamp: Optional[str]) -> bool:
 async def handle_snaptrade_webhook(
     request: Request,
     x_snaptrade_signature: Optional[str] = Header(None, alias="X-SnapTrade-Signature"),
+    signature: Optional[str] = Header(None, alias="Signature"),
 ):
     """
     Handle incoming SnapTrade webhook events.
@@ -127,12 +129,14 @@ async def handle_snaptrade_webhook(
     - ORDER_CANCELLED: Order cancelled
 
     Security:
-    - HMAC-SHA256 signature verification using SNAPTRADE_CONSUMER_KEY
+    - HMAC-SHA256 signature verification using SNAPTRADE_CLIENT_SECRET
+    - Accepts signature in either X-SnapTrade-Signature or Signature header
     - Replay protection via eventTimestamp (5-minute window)
 
     Args:
         request: Raw request with webhook payload
-        x_snaptrade_signature: Webhook signature for verification
+        x_snaptrade_signature: Webhook signature (X-SnapTrade-Signature header)
+        signature: Webhook signature (Signature header, fallback)
 
     Returns:
         Processing status
@@ -141,19 +145,20 @@ async def handle_snaptrade_webhook(
         # Get raw body for signature verification
         raw_body = await request.body()
 
-        # Verify signature using SNAPTRADE_CONSUMER_KEY (not deprecated webhook secret)
-        consumer_key = os.getenv("SNAPTRADE_CONSUMER_KEY")
-        if consumer_key:
-            if not x_snaptrade_signature:
+        # Use whichever signature header is present
+        sig = x_snaptrade_signature or signature
+
+        # Verify signature using SNAPTRADE_CLIENT_SECRET (NOT consumer key)
+        client_secret = os.getenv("SNAPTRADE_CLIENT_SECRET")
+        if client_secret:
+            if not sig:
                 raise HTTPException(status_code=401, detail="Missing webhook signature")
 
-            if not verify_webhook_signature(
-                raw_body, x_snaptrade_signature, consumer_key
-            ):
+            if not verify_webhook_signature(raw_body, sig, client_secret):
                 raise HTTPException(status_code=401, detail="Invalid webhook signature")
         else:
             logger.warning(
-                "SNAPTRADE_CONSUMER_KEY not set - skipping signature verification"
+                "SNAPTRADE_CLIENT_SECRET not set - skipping signature verification"
             )
 
         # Parse payload
@@ -227,7 +232,7 @@ async def handle_snaptrade_webhook(
             execute_sql(
                 """
                 UPDATE orders
-                SET 
+                SET
                     status = 'filled',
                     filled_price = :price,
                     filled_quantity = :quantity,
@@ -265,7 +270,7 @@ async def handle_snaptrade_webhook(
             """
             INSERT INTO processing_status (table_name, status, last_run)
             VALUES (:table_name, :status, :last_run)
-            ON CONFLICT (table_name) 
+            ON CONFLICT (table_name)
             DO UPDATE SET status = :status, last_run = :last_run
             """,
             params={

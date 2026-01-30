@@ -63,7 +63,7 @@ async def search_symbols(
             FROM symbols
             WHERE UPPER(symbol) LIKE :prefix
                OR UPPER(name) LIKE :contains
-            ORDER BY 
+            ORDER BY
                 CASE WHEN UPPER(symbol) = :exact THEN 0
                      WHEN UPPER(symbol) LIKE :prefix THEN 1
                      ELSE 2
