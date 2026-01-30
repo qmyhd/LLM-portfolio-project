@@ -3,50 +3,12 @@ name: Plan
 description: "Researches and outlines multi-step implementation plans. Use for complex features requiring coordination across multiple files, modules, or schema changes."
 argument-hint: Outline the goal or problem to research and plan
 model: Claude Opus 4.5
-tools:
-  # Research & Analysis (read-only focus)
-  - read           # Read files for context
-  - search         # Search within the repo
-  - usages         # Find symbol usages to understand dependencies
-  - fetch          # Fetch external resources
-  - githubRepo     # Inspect GitHub for context
-  # MCP tools for reasoning
-  - sequentialthinking/*  # Step-by-step reasoning
-  - memory/*              # Knowledge graph for storing plans
-  - context7/*            # Library documentation lookup
-  # Limited write for plan documents only
-  - new            # Create plan documents in reports/ or docs/
-  # Note: NO edit, runCommands - planning should not modify existing code
+tools: [read, azure-mcp/search, search/usages, web/fetch, web/githubRepo, "sequentialthinking/*", "memory/*", "context7/*", vscode/getProjectSetupInfo,vscode/installExtension,vscode/newWorkspace,vscode/runCommand]
 target: vscode
 handoffs:
-  # Implementation handoff
-  - label: "🚀 Implement This Plan"
-    agent: portfolio-assistant
-    prompt: |
-      Please implement the plan I've outlined above.
-      
-      Key steps to follow:
-      1. [STEP 1 FROM PLAN]
-      2. [STEP 2 FROM PLAN]
-      ...
-      
-      Start with the first step and report progress.
-    send: false
-  # Documentation for understanding
-  - label: "📚 Research Docs First"
-    agent: docs-agent
-    prompt: |
-      Before I finalize this plan, I need to understand some parts of the codebase better.
-      Please explain: [WHAT NEEDS CLARIFICATION]
-    send: false
-  # Library research
-  - label: "📖 Check Library Docs"
-    agent: Context7-Expert
-    prompt: |
-      For this plan, I need to verify the correct API for a library.
-      Library: [LIBRARY NAME]
-      What I need to know: [SPECIFIC QUESTION]
-    send: false
+  - portfolio-assistant
+  - docs-agent
+  - Context7-Expert
 ---
 
 # Planning Agent Instructions

@@ -4,17 +4,14 @@ description: "Specializes in extracting information from project documentation, 
 argument-hint: "Ask about project documentation, code explanations, or how modules work"
 model: Claude Opus 4.5
 tools:
-  # Read-only tools for documentation exploration
-  - read           # Open and read files (docs, source, READMEs)
-  - search         # Search within the repository
-  - usages         # Find symbol usages to understand code flow
-  - fetch          # Fetch external documentation URLs
-  - githubRepo     # Inspect GitHub repositories
-  # MCP tools for enhanced search and reasoning
-  - context7/*     # External library documentation lookup
-  - sequentialthinking/*  # Step-by-step reasoning for complex explanations
-  - memory/*       # Knowledge graph for storing/retrieving project knowledge
-  # Note: NO edit, runCommands, or new tools - this agent is read-only
+  - read
+  - search
+  - search/usages
+  - web/fetch
+  - web/githubRepo
+  - context7/*
+  - sequentialthinking/*
+  - memory/*
 target: vscode
 handoffs:
   - label: "🔄 Return to Coding"

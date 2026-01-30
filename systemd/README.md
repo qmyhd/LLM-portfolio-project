@@ -4,32 +4,51 @@ This guide covers installing and managing the LLM Portfolio Journal services on 
 
 ## Prerequisites
 
-1. **EC2 Instance with Amazon Linux 2023 or Ubuntu 22.04+**
+1. **EC2 Instance with Ubuntu 22.04+**
 2. **Python 3.11+ with virtual environment**
-3. **AWS IAM role with Secrets Manager access**
+3. **AWS IAM role with Secrets Manager access** (ARN: `arn:aws:secretsmanager:us-east-1:298921514475:secret:qqqAppsecrets-FeRqIW`)
 4. **PostgreSQL/Supabase connectivity**
 
 ## Service Overview
 
 | Service | Type | Purpose |
 |---------|------|---------|
-| `discord-bot.service` | Long-running | Discord bot for message collection |
 | `api.service` | Long-running | FastAPI backend server |
+| `discord-bot.service` | Long-running | Discord bot for message collection |
 | `nightly-pipeline.service` | One-shot | Daily OHLCV, NLP, refresh jobs |
 | `nightly-pipeline.timer` | Timer | Triggers nightly pipeline at 1 AM ET |
 
 ## Installation Steps
 
-### 1. Create Log Directories
+### 1. Create AWS Secrets Configuration (REQUIRED)
+
+All services read AWS Secrets Manager configuration from a central env file.
+
+**⚠️ Services will fail to start if this file is missing!** Each service has an
+`ExecStartPre` check that ensures `/etc/llm-portfolio/llm.env` exists before starting.
+This provides a clear error message instead of cryptic AWS credential failures.
+
+```bash
+sudo mkdir -p /etc/llm-portfolio
+sudo tee /etc/llm-portfolio/llm.env > /dev/null << 'EOF'
+# AWS Secrets Manager Configuration
+USE_AWS_SECRETS=1
+AWS_REGION=us-east-1
+AWS_SECRET_NAME=qqqAppsecrets
+EOF
+sudo chmod 644 /etc/llm-portfolio/llm.env
+```
+
+### 2. Create Log Directories
 
 ```bash
 sudo mkdir -p /var/log/discord-bot
 sudo mkdir -p /var/log/portfolio-api
 sudo mkdir -p /var/log/portfolio-nightly
-sudo chown -R ec2-user:ec2-user /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+sudo chown -R ubuntu:ubuntu /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
 ```
 
-### 2. Set System Timezone (for timer accuracy)
+### 3. Set System Timezone (for timer accuracy)
 
 ```bash
 # Set timezone to Eastern for market-aligned scheduling
@@ -37,7 +56,7 @@ sudo timedatectl set-timezone America/New_York
 timedatectl  # Verify
 ```
 
-### 3. Copy Service Files
+### 4. Copy Service Files
 
 ```bash
 # From project root
@@ -46,16 +65,16 @@ sudo cp systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 ```
 
-### 4. Enable and Start Services
+### 5. Enable and Start Services
 
 ```bash
+# API Server (FastAPI backend)
+sudo systemctl enable api.service
+sudo systemctl start api.service
+
 # Discord Bot (always running)
 sudo systemctl enable discord-bot.service
 sudo systemctl start discord-bot.service
-
-# API Server (if running FastAPI backend)
-sudo systemctl enable api.service
-sudo systemctl start api.service
 
 # Nightly Pipeline Timer
 sudo systemctl enable nightly-pipeline.timer
@@ -67,8 +86,8 @@ sudo systemctl start nightly-pipeline.timer
 ### Check Service Status
 
 ```bash
-systemctl status discord-bot.service
 systemctl status api.service
+systemctl status discord-bot.service
 systemctl status nightly-pipeline.timer
 systemctl list-timers  # View all scheduled timers
 ```
@@ -77,6 +96,7 @@ systemctl list-timers  # View all scheduled timers
 
 ```bash
 # Real-time logs
+journalctl -u api.service -f
 journalctl -u discord-bot.service -f
 
 # Last 100 lines
@@ -87,20 +107,21 @@ journalctl -u discord-bot.service -b
 
 # Log files (if using StandardOutput=append)
 tail -f /var/log/discord-bot/combined.log
+tail -f /var/log/portfolio-api/combined.log
 ```
 
 ### Restart Services
 
 ```bash
-sudo systemctl restart discord-bot.service
 sudo systemctl restart api.service
+sudo systemctl restart discord-bot.service
 ```
 
 ### Stop Services
 
 ```bash
-sudo systemctl stop discord-bot.service
 sudo systemctl stop api.service
+sudo systemctl stop discord-bot.service
 sudo systemctl stop nightly-pipeline.timer
 ```
 
@@ -113,17 +134,36 @@ journalctl -u nightly-pipeline.service -f
 
 ## Troubleshooting
 
-### Service Fails to Start
+### Service Fails to Start - Missing Env File
+
+If you see this error:
+```
+ExecStartPre=/usr/bin/test -f /etc/llm-portfolio/llm.env failed
+```
+
+**Solution**: Create the required env file (Step 1 above):
+```bash
+sudo mkdir -p /etc/llm-portfolio
+sudo tee /etc/llm-portfolio/llm.env > /dev/null << 'EOF'
+USE_AWS_SECRETS=1
+AWS_REGION=us-east-1
+AWS_SECRET_NAME=qqqAppsecrets
+EOF
+sudo chmod 644 /etc/llm-portfolio/llm.env
+```
+
+### Service Fails to Start - Other Issues
 
 ```bash
 # Check detailed logs
+journalctl -u api.service -n 50 --no-pager
 journalctl -u discord-bot.service -n 50 --no-pager
 
 # Verify Python path
-/home/ec2-user/LLM-portfolio-project/.venv/bin/python --version
+/home/ubuntu/llm-portfolio/.venv/bin/python --version
 
 # Test script directly
-cd /home/ec2-user/LLM-portfolio-project
+cd /home/ubuntu/llm-portfolio
 .venv/bin/python scripts/start_bot_with_secrets.py
 ```
 
@@ -131,8 +171,8 @@ cd /home/ec2-user/LLM-portfolio-project
 
 ```bash
 # Fix ownership
-sudo chown -R ec2-user:ec2-user /home/ec2-user/LLM-portfolio-project
-sudo chmod +x /home/ec2-user/LLM-portfolio-project/scripts/*.py
+sudo chown -R ubuntu:ubuntu /home/ubuntu/llm-portfolio
+sudo chmod +x /home/ubuntu/llm-portfolio/scripts/*.py
 ```
 
 ### Timer Not Firing
@@ -150,7 +190,7 @@ sudo systemctl start nightly-pipeline.service
 
 ## Security Notes
 
-- Services run as `ec2-user` (not root)
+- Services run as `ubuntu` (not root)
 - `NoNewPrivileges=true` prevents privilege escalation
 - `ProtectSystem=strict` makes /usr, /boot read-only
 - Secrets loaded from AWS Secrets Manager (no .env files)

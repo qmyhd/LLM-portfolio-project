@@ -1,39 +1,54 @@
 # EC2 Deployment Guide
 
-> **Last Updated:** January 26, 2026  
-> **Target:** Amazon Linux 2023 on t4g.micro (ARM64)
+> **Last Updated:** January 29, 2026
+> **Target:** Ubuntu 22.04 LTS (or 24.04 LTS)
 
 This guide covers deploying the LLM Portfolio Journal to EC2 with:
 - AWS Secrets Manager for secure credential storage
-- Discord bot running continuously via systemd
+- Discord bot and FastAPI server running continuously via systemd
 - Reliable daily data pipeline via systemd timers
+- Nginx reverse proxy with SSL (Certbot)
 - OHLCV backfill from Databento
 
 ## Current Production Configuration
 
-| Secret | Name | Purpose |
-|--------|------|---------|
-| Main App | `qqqAppsecrets` | Discord, OpenAI, Supabase, SnapTrade, Databento |
-| RDS Database | `RDS/ohlcvdata` | OHLCV PostgreSQL credentials |
+| Component | Configuration |
+|-----------|--------------|
+| OS | Ubuntu 22.04/24.04 LTS |
+| Instance | t3.micro or t3.small (x86_64) |
+| Python | 3.11+ |
+| Process Manager | systemd |
+| Reverse Proxy | Nginx with Certbot SSL |
+| Secret | `qqqAppsecrets` |
 
 ## Architecture Overview
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                        AWS EC2 (t4g.micro)                      │
+│                     Ubuntu EC2 Instance                         │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                 │
-│  ┌─────────────────┐     ┌─────────────────┐                   │
-│  │    systemd      │     │ systemd Timer   │                   │
-│  │  Discord Bot    │     │  Nightly Jobs   │                   │
-│  └────────┬────────┘     └────────┬────────┘                   │
-│           │                       │                             │
-│           └───────────┬───────────┘                             │
-│                       │                                         │
-│               ┌───────▼───────┐                                 │
-│               │ AWS Secrets   │                                 │
-│               │   Manager     │                                 │
-│               └───────────────┘                                 │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────────┐ │
+│  │   Nginx     │  │  api.service│  │   discord-bot.service   │ │
+│  │  (SSL/443)  │──│  (FastAPI)  │  │   (Discord Bot)         │ │
+│  └──────┬──────┘  └──────┬──────┘  └───────────┬─────────────┘ │
+│         │                │                     │               │
+│         │                └──────────┬──────────┘               │
+│         │                           │                          │
+│         │                ┌──────────▼──────────┐               │
+│         │                │ /etc/llm-portfolio/ │               │
+│         │                │     llm.env         │               │
+│         │                └──────────┬──────────┘               │
+│         │                           │                          │
+│         │                ┌──────────▼──────────┐               │
+│         │                │  AWS Secrets Manager │              │
+│         │                │   (qqqAppsecrets)    │              │
+│         │                └─────────────────────┘               │
+│         │                                                      │
+│  ┌──────▼──────────────────────────────────────────────────┐   │
+│  │               nightly-pipeline.timer                     │  │
+│  │   (OHLCV backfill + NLP batch + SnapTrade sync)         │  │
+│  └─────────────────────────────────────────────────────────┘   │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
                                │
@@ -41,21 +56,17 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
             ▼                  ▼                  ▼
      ┌──────────┐       ┌──────────┐       ┌──────────┐
      │ Supabase │       │  OpenAI  │       │ SnapTrade│
-     │ (RDS/S3) │       │   API    │       │   API    │
+     │ (Postgres)│      │   API    │       │   API    │
      └──────────┘       └──────────┘       └──────────┘
 ```
 
 ## Prerequisites
 
 ### AWS Resources
-- **EC2 Instance**: t4g.micro (ARM64) recommended (~$6/month)
-- **IAM Role**: Attached to EC2 with these permissions:
-  - `secretsmanager:GetSecretValue` for your secrets
-  - `s3:GetObject`, `s3:PutObject` for OHLCV bucket (optional)
-- **Security Group**: Allow outbound HTTPS (443)
-- **Secrets Manager Secrets**: 
-  - `qqqAppsecrets` - Main app secrets (Discord, OpenAI, Supabase, etc.)
-  - `RDS/ohlcvdata` - RDS database credentials for OHLCV
+- **EC2 Instance**: t3.micro or t3.small (~$8-15/month)
+- **IAM Role**: Attached to EC2 with `secretsmanager:GetSecretValue`
+- **Security Group**: Allow inbound 22 (SSH), 80 (HTTP), 443 (HTTPS); outbound all
+- **Secrets Manager Secret**: `qqqAppsecrets`
 
 ### Secrets Manager Setup
 
@@ -70,22 +81,10 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
   "LOG_CHANNEL_IDS": "channel_id1,channel_id2",
   "SNAPTRADE_CLIENT_ID": "your_client_id",
   "SNAPTRADE_CONSUMER_KEY": "your_consumer_key",
+  "SNAPTRADE_CLIENT_SECRET": "your_client_secret",
   "SNAPTRADE_USER_ID": "your_user_id",
   "SNAPTRADE_USER_SECRET": "your_user_secret",
-  "TWITTER_BEARER_TOKEN": "your_twitter_token",
   "DATABENTO_API_KEY": "db-your_databento_key"
-}
-```
-
-**RDS Secret (`RDS/ohlcvdata`)** - AWS RDS format:
-
-```json
-{
-  "host": "your-db.region.rds.amazonaws.com",
-  "port": 5432,
-  "username": "postgres",
-  "password": "your_rds_password",
-  "dbname": "postgres"
 }
 ```
 
@@ -97,10 +96,7 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
     {
       "Effect": "Allow",
       "Action": "secretsmanager:GetSecretValue",
-      "Resource": [
-        "arn:aws:secretsmanager:us-east-1:*:secret:qqqAppsecrets*",
-        "arn:aws:secretsmanager:us-east-1:*:secret:RDS/ohlcvdata*"
-      ]
+      "Resource": "arn:aws:secretsmanager:us-east-1:298921514475:secret:qqqAppsecrets-FeRqIW"
     }
   ]
 }
@@ -108,147 +104,192 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
 
 ---
 
-## Quick Start (User Data)
+## Quick Start
 
-The easiest way to deploy is using EC2 User Data for automatic setup.
+### Option 1: Automated Bootstrap (Recommended)
 
-### Option 1: Launch Template with User Data
-
-1. Copy the contents of `scripts/ec2_user_data.sh`
-2. Create an EC2 Launch Template
-3. Paste the script in **User Data** section
-4. Launch instance with the template
-
-### Option 2: Manual Launch with User Data
+SSH into your instance and run:
 
 ```bash
-aws ec2 run-instances \
-  --image-id ami-0c101f26f147fa7fd \
-  --instance-type t4g.micro \
-  --iam-instance-profile Name=llm-portfolio-role \
-  --user-data file://scripts/ec2_user_data.sh \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=llm-portfolio}]'
+ssh ubuntu@your-ec2-ip
+
+# Clone and run bootstrap
+git clone https://github.com/qmyhd/LLM-portfolio-project.git /home/ubuntu/llm-portfolio
+cd /home/ubuntu/llm-portfolio
+chmod +x scripts/bootstrap.sh
+./scripts/bootstrap.sh
 ```
+
+### Option 2: Using EC2 User Data
+
+1. Copy contents of `scripts/ec2_user_data.sh`
+2. Paste into EC2 Launch Template → **User Data**
+3. Launch instance
 
 ---
 
 ## Manual Setup
 
-If you prefer manual setup instead of User Data:
+If you prefer step-by-step manual setup:
 
-### Step 1: SSH and Clone
+### Step 1: Install System Dependencies
 
 ```bash
-ssh ec2-user@your-ec2-host
+ssh ubuntu@your-ec2-ip
 
-# Clone repository
-git clone https://github.com/qmyhd/LLM-portfolio-project.git
-cd LLM-portfolio-project
+# Update system
+sudo apt update && sudo apt upgrade -y
 
-# Setup Python environment
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install boto3  # Required for AWS Secrets Manager
+# Install Python 3.11 and dependencies
+sudo apt install -y python3.11 python3.11-venv python3.11-dev \
+    libpq-dev build-essential git nginx certbot python3-certbot-nginx
 ```
 
-### Step 2: Configure AWS Secrets Manager
-
-Create a `.env` file that signals to use AWS Secrets Manager:
+### Step 2: Clone Repository
 
 ```bash
-cat > .env << 'EOF'
+cd /home/ubuntu
+git clone https://github.com/qmyhd/LLM-portfolio-project.git llm-portfolio
+cd llm-portfolio
+
+# Create virtual environment
+python3.11 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
+```
+
+### Step 3: Configure AWS Secrets
+
+Create the central AWS secrets configuration file:
+
+```bash
+sudo mkdir -p /etc/llm-portfolio
+sudo tee /etc/llm-portfolio/llm.env > /dev/null << 'EOF'
 # AWS Secrets Manager Configuration
 USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
-
-# Main app secrets (Discord, OpenAI, Supabase, SnapTrade, Databento)
 AWS_SECRET_NAME=qqqAppsecrets
-
-# RDS secrets (OHLCV database) - loaded separately
-AWS_RDS_SECRET_NAME=RDS/ohlcvdata
 EOF
+sudo chmod 644 /etc/llm-portfolio/llm.env
 ```
 
-### Step 3: Test Secrets Access
+### Step 4: Verify Secrets Access
 
 ```bash
+cd /home/ubuntu/llm-portfolio
+source .venv/bin/activate
+
+# Run the secrets check script
+python scripts/check_secrets.py
+
+# Or test manually
 python -c "
 import os
 os.environ['USE_AWS_SECRETS'] = '1'
 os.environ['AWS_SECRET_NAME'] = 'qqqAppsecrets'
-os.environ['AWS_RDS_SECRET_NAME'] = 'RDS/ohlcvdata'
 from src.aws_secrets import load_secrets_to_env
 count = load_secrets_to_env()
-print(f'Loaded {count} secrets')
-print(f'RDS_HOST: {os.environ.get(\"RDS_HOST\", \"NOT SET\")}')
+print(f'✅ Loaded {count} secrets')
 "
 ```
 
-### Step 4: Run Setup Script
-
-```bash
-chmod +x scripts/setup_ec2_services.sh
-./scripts/setup_ec2_services.sh --systemd
-```
-
----
-
-## Discord Bot - Continuous Running (systemd)
-
-Systemd provides robust process management with OS-level integration.
-
-### Installation
+### Step 5: Install Systemd Services
 
 ```bash
 # Create log directories
 sudo mkdir -p /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
-sudo chown -R ec2-user:ec2-user /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+sudo chown -R ubuntu:ubuntu /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
 
 # Copy service files
 sudo cp systemd/*.service /etc/systemd/system/
 sudo cp systemd/*.timer /etc/systemd/system/
-
-# Reload systemd
 sudo systemctl daemon-reload
 
-# Enable and start Discord bot
-sudo systemctl enable discord-bot.service
-sudo systemctl start discord-bot.service
-
-# Enable and start nightly pipeline timer
-sudo systemctl enable nightly-pipeline.timer
-sudo systemctl start nightly-pipeline.timer
+# Enable services
+sudo systemctl enable api.service discord-bot.service nightly-pipeline.timer
 ```
 
-### Useful Commands
+### Step 6: Configure Nginx and SSL
 
 ```bash
-# Check status
-sudo systemctl status discord-bot.service
-sudo systemctl status nightly-pipeline.timer
+# Install nginx config (Ubuntu standard: sites-available + sites-enabled)
+sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+sudo ln -sf /etc/nginx/sites-available/api.conf /etc/nginx/sites-enabled/api.conf
 
-# View logs (real-time)
-sudo journalctl -u discord-bot.service -f
+# Remove default site if present
+sudo rm -f /etc/nginx/sites-enabled/default
 
-# View last 100 lines
-sudo journalctl -u discord-bot.service -n 100
+# Test nginx config
+sudo nginx -t
 
-# Restart service
-sudo systemctl restart discord-bot.service
+# Obtain SSL certificate (requires DNS pointing to this server)
+sudo certbot --nginx -d api.llmportfolio.app
 
-# Stop service
-sudo systemctl stop discord-bot.service
+# Start nginx
+sudo systemctl enable nginx
+sudo systemctl start nginx
+```
 
-# View all scheduled timers
-systemctl list-timers
+> **Note:** If your nginx uses `/etc/nginx/conf.d/` instead (check with `ls /etc/nginx/`),
+> use `sudo cp nginx/api.conf /etc/nginx/conf.d/api.conf` instead.
+
+### Step 7: Start Services
+
+```bash
+# Start all services
+sudo systemctl start api.service
+sudo systemctl start discord-bot.service
+sudo systemctl start nightly-pipeline.timer
+
+# Verify status
+sudo systemctl status api.service discord-bot.service nightly-pipeline.timer
 ```
 
 ---
 
-## Daily Data Pipeline
+## Service Management
 
-The daily pipeline runs three tasks with file-based locking to prevent concurrent runs:
+### Systemd Services
+
+| Service | Type | Purpose |
+|---------|------|---------|
+| `api.service` | Long-running | FastAPI backend (port 8000) |
+| `discord-bot.service` | Long-running | Discord bot for message collection |
+| `nightly-pipeline.service` | One-shot | Daily OHLCV + NLP + SnapTrade sync |
+| `nightly-pipeline.timer` | Timer | Triggers nightly pipeline at 1 AM ET |
+
+### Common Commands
+
+```bash
+# Check status
+sudo systemctl status api.service
+sudo systemctl status discord-bot.service
+systemctl list-timers
+
+# View logs (real-time)
+sudo journalctl -u api.service -f
+sudo journalctl -u discord-bot.service -f
+sudo journalctl -u nightly-pipeline.service -f
+
+# View last 100 lines
+sudo journalctl -u discord-bot.service -n 100
+
+# Restart services
+sudo systemctl restart api.service
+sudo systemctl restart discord-bot.service
+
+# Stop services
+sudo systemctl stop api.service
+sudo systemctl stop discord-bot.service
+```
+
+---
+
+## Daily Pipeline
+
+The nightly pipeline runs automatically via systemd timer at 1 AM ET:
 
 1. **SnapTrade Sync** - Fetch positions, orders, balances
 2. **Discord NLP Processing** - Parse unprocessed messages with OpenAI
@@ -257,7 +298,7 @@ The daily pipeline runs three tasks with file-based locking to prevent concurren
 ### Manual Run
 
 ```bash
-cd /home/ec2-user/LLM-portfolio-project
+cd /home/ubuntu/llm-portfolio
 source .venv/bin/activate
 
 # Run all tasks
@@ -268,42 +309,11 @@ source .venv/bin/activate
 ./scripts/run_pipeline_with_secrets.sh --discord
 ./scripts/run_pipeline_with_secrets.sh --ohlcv
 
-# Dry run (preview only)
-./scripts/run_pipeline_with_secrets.sh --dry-run
-```
-
-### Systemd Timer Schedule
-
-The nightly pipeline is managed by systemd timers (see `systemd/nightly-pipeline.timer`):
-
-| Time (ET) | Timer | Task | Description |
-|-----------|-------|------|-------------|
-| 01:00 AM | nightly-pipeline.timer | Full pipeline | SnapTrade + Discord NLP + OHLCV |
-
-View scheduled timers:
-```bash
-systemctl list-timers
-```
-
-### Run Pipeline Manually
-
-```bash
-# Trigger immediately via systemd
+# Or trigger via systemd
 sudo systemctl start nightly-pipeline.service
-
-# Watch logs
-sudo journalctl -u nightly-pipeline.service -f
-
-# Or run directly
-cd /home/ec2-user/LLM-portfolio-project
-.venv/bin/python scripts/nightly_pipeline.py
 ```
 
----
-
-## OHLCV Backfill
-
-For historical data backfill:
+### OHLCV Backfill
 
 ```bash
 # Last 5 days (default)
@@ -315,265 +325,115 @@ python scripts/backfill_ohlcv.py --start 2024-01-01 --end 2024-12-31
 
 ---
 
-## Log Files
+## Health Checks
 
-| Log | Location |
-|-----|----------|
-| Discord bot | `/var/log/discord-bot/combined.log` |
-| Bot errors | `/var/log/discord-bot/error.log` |
-| API server | `/var/log/portfolio-api/combined.log` |
-| Nightly pipeline | `/var/log/portfolio-nightly/combined.log` |
-| EC2 User Data | `/var/log/user-data.log` |
+### API Health Endpoint
 
-View logs in real-time:
 ```bash
-tail -f /var/log/discord-bot/combined.log
-sudo journalctl -u discord-bot.service -f
+# Via nginx (HTTPS)
+curl https://api.llmportfolio.app/health
+
+# Local (direct)
+curl http://127.0.0.1:8000/health
+```
+
+### Database Connectivity
+
+```bash
+python -c "from src.db import healthcheck; print('DB OK' if healthcheck() else 'DB FAIL')"
+```
+
+### Secrets Access
+
+```bash
+python scripts/check_secrets.py
+```
+
+### Preflight Check (Full System)
+
+```bash
+./scripts/preflight_ec2.sh
 ```
 
 ---
 
-## Monitoring & Health Checks
+## Log Files
 
-### Check Bot Status
-
-```bash
-# systemd
-sudo systemctl status discord-bot.service
-sudo journalctl -u discord-bot.service -n 20
-```
-
-### Check Timer Status
-
-```bash
-# List all timers
-systemctl list-timers
-
-# Check specific timer
-sudo systemctl status nightly-pipeline.timer
-```
-
-### Check Database Connectivity
-
-```bash
-python -c "from src.db import healthcheck; print(healthcheck())"
-```
-
-### Check Pipeline Status
-
-```bash
-cat data/.pipeline_status.json
-```
-
-### Check AWS Secrets Access
-
-```bash
-python -c "
-from src.aws_secrets import fetch_secret
-secrets = fetch_secret('llm-portfolio/production')
-print(f'Secret has {len(secrets)} keys')
-"
-```
+| Log | Location | Command |
+|-----|----------|---------|
+| API server | `/var/log/portfolio-api/combined.log` | `tail -f /var/log/portfolio-api/combined.log` |
+| Discord bot | `/var/log/discord-bot/combined.log` | `tail -f /var/log/discord-bot/combined.log` |
+| Nightly pipeline | `/var/log/portfolio-nightly/combined.log` | `sudo journalctl -u nightly-pipeline.service -f` |
+| Nginx access | `/var/log/nginx/api_access.log` | `tail -f /var/log/nginx/api_access.log` |
+| Nginx error | `/var/log/nginx/api_error.log` | `tail -f /var/log/nginx/api_error.log` |
 
 ---
 
 ## Troubleshooting
 
+### Service Won't Start - Missing Env File
+
+```
+ExecStartPre=/usr/bin/test -f /etc/llm-portfolio/llm.env failed
+```
+
+**Solution:** Create the required env file:
+```bash
+sudo mkdir -p /etc/llm-portfolio
+sudo tee /etc/llm-portfolio/llm.env > /dev/null << 'EOF'
+USE_AWS_SECRETS=1
+AWS_REGION=us-east-1
+AWS_SECRET_NAME=qqqAppsecrets
+EOF
+sudo chmod 644 /etc/llm-portfolio/llm.env
+```
+
 ### Bot Won't Start
 
-1. Check systemd logs: `sudo journalctl -u discord-bot.service -n 50`
-2. Verify IAM role has `secretsmanager:GetSecretValue`
-3. Test secrets: `python -c "from src.aws_secrets import load_secrets_to_env; print(load_secrets_to_env())"`
-4. Test manually: `python scripts/start_bot_with_secrets.py`
+```bash
+# Check logs
+sudo journalctl -u discord-bot.service -n 50
 
-### Pipeline Fails
-
-1. Check log: `sudo journalctl -u nightly-pipeline.service -n 100`
-2. Check for lock file: `ls -la data/.pipeline.lock`
-3. Test individual tasks:
-   ```bash
-   ./scripts/run_pipeline_with_secrets.sh --snaptrade --dry-run
-   ```
+# Test manually
+cd /home/ubuntu/llm-portfolio
+source .venv/bin/activate
+python scripts/start_bot_with_secrets.py
+```
 
 ### Secrets Not Loading
 
-1. Check IAM role attached to EC2: `curl http://169.254.169.254/latest/meta-data/iam/security-credentials/`
-2. Verify secret exists: `aws secretsmanager describe-secret --secret-id llm-portfolio/production`
-3. Check region: Ensure `AWS_REGION` matches secret location
+```bash
+# Check IAM role
+curl -s http://169.254.169.254/latest/meta-data/iam/security-credentials/
+
+# Verify secret exists
+aws secretsmanager describe-secret --secret-id qqqAppsecrets
+
+# Run secrets check
+python scripts/check_secrets.py
+```
 
 ### Database Connection Issues
 
-1. Test secrets loaded: Check for `DATABASE_URL` in environment
-2. Check security group allows outbound 6543 (Supabase pooler)
-3. Test: `python -c "from src.db import test_connection; print(test_connection())"`
+```bash
+# Test connection
+python -c "from src.db import healthcheck, get_database_size; print(f'Health: {healthcheck()}, Size: {get_database_size()}')"
 
----
-
-## Alternative: Lambda + EventBridge (Serverless)
-
-For a fully serverless, decoupled architecture with no EC2 management:
-
-### Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                     EventBridge (Scheduler)                     │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐   │
-│  │ Every 30 min    │ │ Every 15 min    │ │ Daily 5:30 PM   │   │
-│  │ (market hours)  │ │                 │ │ (after close)   │   │
-│  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘   │
-│           ▼                   ▼                   ▼             │
-│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐   │
-│  │  SnapTrade      │ │  Discord NLP    │ │  OHLCV          │   │
-│  │  Sync Lambda    │ │  Lambda         │ │  Backfill       │   │
-│  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘   │
-│           │                   │                   │             │
-│           └───────────┬───────┴───────────────────┘             │
-│                       ▼                                         │
-│               ┌───────────────┐                                 │
-│               │ AWS Secrets   │                                 │
-│               │   Manager     │                                 │
-│               └───────────────┘                                 │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-                               │
-       ┌───────────────────────┼───────────────────────┐
-       ▼                       ▼                       ▼
-┌──────────┐            ┌──────────┐            ┌──────────┐
-│ Supabase │            │   RDS    │            │    S3    │
-│ (main)   │            │ (OHLCV)  │            │ (archive)│
-└──────────┘            └──────────┘            └──────────┘
+# Check security group allows outbound 6543 (Supabase pooler)
 ```
 
-### Benefits
-
-| Aspect | EC2 + Cron | Lambda + EventBridge |
-|--------|------------|----------------------|
-| Cost | ~$20/month fixed | Pay-per-invocation (~$5/month) |
-| Scaling | Manual | Automatic |
-| Maintenance | OS updates, restarts | Zero |
-| Reliability | Single point of failure | Highly available |
-| Cold starts | None | ~500ms |
-
-### Quick Deploy with SAM
-
-The project includes a SAM template for deploying all Lambda functions:
+### Nginx/SSL Issues
 
 ```bash
-# Install AWS SAM CLI
-pip install aws-sam-cli
+# Test nginx config
+sudo nginx -t
 
-# Deploy (development environment)
-python scripts/deploy_lambdas.py --env development
+# Check certificate status
+sudo certbot certificates
 
-# Deploy (production with guided setup)
-python scripts/deploy_lambdas.py --env production --guided
-
-# Validate template only
-python scripts/deploy_lambdas.py --validate-only
+# Renew certificate
+sudo certbot renew --force-renewal
 ```
-
-### Lambda Functions Created
-
-| Function | Schedule | Purpose |
-|----------|----------|---------|
-| `snaptrade-sync` | Every 30 min (market hours) | Sync positions, orders, balances |
-| `discord-nlp` | Every 15 min | Process pending Discord messages |
-| `ohlcv-backfill` | Daily 5:30 PM EST | Fetch daily OHLCV from Databento |
-
-### EventBridge Rules (Cron Expressions)
-
-```yaml
-# SnapTrade: Every 30 min, 9 AM - 4:30 PM EST (Mon-Fri)
-Schedule: cron(0/30 14-21 ? * MON-FRI *)
-
-# Discord NLP: Every 15 min (24/7)
-Schedule: rate(15 minutes)
-
-# OHLCV: Daily 5:30 PM EST (Mon-Fri)  
-Schedule: cron(30 22 ? * MON-FRI *)
-```
-
-### Manual Invocation
-
-```bash
-# Invoke SnapTrade sync
-aws lambda invoke \
-  --function-name llm-portfolio-snaptrade-sync-production \
-  --payload '{}' \
-  response.json
-
-# Invoke Discord NLP with custom batch size
-aws lambda invoke \
-  --function-name llm-portfolio-discord-nlp-production \
-  --payload '{"batch_size": 100, "dry_run": false}' \
-  response.json
-
-# Invoke OHLCV backfill for specific date
-aws lambda invoke \
-  --function-name llm-portfolio-ohlcv-backfill-production \
-  --payload '{"start_date": "2025-01-17", "end_date": "2025-01-17"}' \
-  response.json
-```
-
-### RDS Connection Support
-
-Lambda functions can connect to RDS using environment-based credentials:
-
-```json
-// In your Secrets Manager secret
-{
-  "RDS_HOST": "your-db.region.rds.amazonaws.com",
-  "RDS_PORT": "5432",
-  "RDS_DATABASE": "postgres",
-  "RDS_USER": "postgres",
-  "RDS_PASSWORD": "your_password"
-}
-```
-
-The `src/aws_secrets.py` module builds the connection URL automatically:
-
-```python
-from src.aws_secrets import get_rds_connection_url
-
-rds_url = get_rds_connection_url()
-# Returns: postgresql://postgres:pass@host:5432/postgres?sslmode=require
-```
-
-### Hybrid Architecture
-
-For a **Discord bot + serverless pipeline**, use:
-
-1. **EC2 (t4g.micro)**: Run Discord bot 24/7 for real-time message collection
-2. **Lambda + EventBridge**: Handle all batch processing (SnapTrade, NLP, OHLCV)
-
-This eliminates cron jobs from EC2 and makes the architecture more resilient.
-
-### SAM Template Reference
-
-The `template.yaml` file at project root defines:
-- **IAM Role**: Lambda execution role with Secrets Manager + S3 access
-- **S3 Bucket**: For OHLCV Parquet archives
-- **Lambda Layer**: Shared Python dependencies
-- **CloudWatch Alarms**: Error monitoring for each function
-
----
-
-## Cost Optimization
-
-| Resource | Cost (monthly) |
-|----------|----------------|
-| EC2 t4g.micro | ~$6 |
-| RDS t4g.micro (optional) | ~$13 |
-| S3 storage | ~$0.023/GB |
-| Secrets Manager | ~$0.40/secret |
-| Databento | Pay-per-query |
-| **Lambda** (optional) | ~$5 for typical usage |
-
-**EC2-only: ~$20-30/month**  
-**Lambda + EC2 hybrid: ~$15-20/month** (less EC2 load)
 
 ---
 
@@ -581,17 +441,29 @@ The `template.yaml` file at project root defines:
 
 ```bash
 # Pull latest code
-cd /home/ec2-user/LLM-portfolio-project
+cd /home/ubuntu/llm-portfolio
 git pull
 
-# Reinstall dependencies
+# Update dependencies
+source .venv/bin/activate
 pip install -r requirements.txt
 
-# Restart bot
-pm2 restart discord-bot
-# or
-sudo systemctl restart discord-bot
+# Restart services
+sudo systemctl restart api.service discord-bot.service
 ```
+
+---
+
+## Cost Optimization
+
+| Resource | Cost (monthly) |
+|----------|----------------|
+| EC2 t3.micro | ~$8 |
+| EC2 t3.small | ~$15 |
+| Secrets Manager | ~$0.40/secret |
+| Databento | Pay-per-query |
+
+**Typical monthly cost: ~$10-20**
 
 ---
 
@@ -599,14 +471,14 @@ sudo systemctl restart discord-bot
 
 | File | Purpose |
 |------|---------|
-| `scripts/ec2_user_data.sh` | EC2 User Data bootstrap script |
-| `scripts/start_bot_with_secrets.py` | Bot startup wrapper with AWS Secrets |
-| `scripts/run_pipeline_with_secrets.sh` | Pipeline wrapper for cron jobs |
-| `scripts/daily_pipeline.py` | Main pipeline orchestrator |
-| `scripts/setup_ec2_services.sh` | Manual PM2/systemd setup |
-| `scripts/deploy_lambdas.py` | SAM deployment script for Lambda |
-| `ecosystem.config.js` | PM2 configuration |
-| `docker/discord-bot.service` | systemd service file |
-| `template.yaml` | SAM/CloudFormation template for Lambda |
+| `systemd/api.service` | FastAPI systemd service |
+| `systemd/discord-bot.service` | Discord bot systemd service |
+| `systemd/nightly-pipeline.service` | Nightly pipeline service |
+| `systemd/nightly-pipeline.timer` | Nightly pipeline timer (1 AM ET) |
+| `nginx/api.conf` | Nginx reverse proxy config |
+| `scripts/bootstrap.sh` | Automated EC2 setup |
+| `scripts/check_secrets.py` | AWS Secrets Manager validation |
+| `scripts/preflight_ec2.sh` | EC2 readiness check |
+| `scripts/start_bot_with_secrets.py` | Bot startup with secrets |
+| `scripts/run_pipeline_with_secrets.sh` | Pipeline wrapper |
 | `src/aws_secrets.py` | AWS Secrets Manager helper |
-| `lambdas/` | Lambda handler functions |

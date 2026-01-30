@@ -52,7 +52,7 @@ The **LLM Portfolio Journal** is a sophisticated data-driven portfolio analytics
 ## 2. Directory Structure
 
 ```
-LLM-portfolio-project/
+llm-portfolio/
 ├── .github/                    # GitHub configuration
 │   ├── agents/                 # AI coding agent instructions
 │   └── copilot-instructions.md # Copilot guidelines

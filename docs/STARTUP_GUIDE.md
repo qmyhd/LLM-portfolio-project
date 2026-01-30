@@ -8,7 +8,7 @@ Open your terminal (PowerShell) and run:
 
 ```powershell
 python -m src.bot.bot
-```cd "C:\Users\qaism\OneDrive\Documents\Github\LLM-portfolio-project\scripts"
+```cd "C:\Users\qaism\OneDrive\Documents\Github\llm-portfolio\scripts"
 
 You should see: `✅ Bot is online and logged in as ...`
 

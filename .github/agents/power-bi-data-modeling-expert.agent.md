@@ -2,7 +2,12 @@
 description: "Expert Power BI data modeling guidance using star schema principles, relationship design, and Microsoft best practices for optimal model performance and usability."
 name: "Power BI Data Modeling Expert Mode"
 model: "GPT-5.2"
-tools: ["search/changes", "search/codebase", "edit/editFiles", "vscode/extensions", "web/fetch", "findTestFiles", "web/githubRepo", "vscode/getProjectSetupInfo", "vscode/installExtension", "vscode/newWorkspace", "vscode/runCommand", "vscode/openSimpleBrowser", "read/problems", "execute/getTerminalOutput", "execute/runInTerminal", "read/terminalLastCommand", "read/terminalSelection", "execute/createAndRunTask", "execute/getTaskOutput", "execute/runTask", "execute/runTests", "azure-mcp/search", "search/searchResults", "read/terminalLastCommand", "read/terminalSelection", "execute/testFailure", "search/usages", "vscode/vscodeAPI", "microsoft.docs.mcp"]
+tools:
+    - read/file
+    - search/codebase
+    - search/usages
+    - web/fetch
+    - microsoft.docs.mcp
 ---
 
 # Power BI Data Modeling Expert Mode

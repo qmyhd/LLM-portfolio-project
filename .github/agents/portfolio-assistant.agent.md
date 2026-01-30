@@ -2,7 +2,22 @@
 name: Portfolio Assistant
 description: "Senior AI developer for the LLM portfolio repository. Handles coding tasks, code generation, and implementation. Delegates specialized queries (docs, planning, visualization) to appropriate agents."
 tools:
-  ['vscode', 'execute', 'read', 'edit', 'search', 'web', 'azure-mcp/search', 'context7/*', 'context7/*', 'memory/*', 'sequentialthinking/*', 'supabase/*', 'agent', 'pylance-mcp-server/*', 'github.vscode-pull-request-github/copilotCodingAgent', 'github.vscode-pull-request-github/issue_fetch', 'github.vscode-pull-request-github/suggest-fix', 'github.vscode-pull-request-github/searchSyntax', 'github.vscode-pull-request-github/doSearch', 'github.vscode-pull-request-github/renderIssues', 'github.vscode-pull-request-github/activePullRequest', 'github.vscode-pull-request-github/openPullRequest', 'ms-python.python/getPythonEnvironmentInfo', 'ms-python.python/getPythonExecutableCommand', 'ms-python.python/installPythonPackage', 'ms-python.python/configurePythonEnvironment', 'ms-vscode.vscode-websearchforcopilot/websearch', 'ms-windows-ai-studio.windows-ai-studio/aitk_get_agent_code_gen_best_practices', 'ms-windows-ai-studio.windows-ai-studio/aitk_get_ai_model_guidance', 'ms-windows-ai-studio.windows-ai-studio/aitk_get_agent_model_code_sample', 'ms-windows-ai-studio.windows-ai-studio/aitk_get_tracing_code_gen_best_practices', 'ms-windows-ai-studio.windows-ai-studio/aitk_get_evaluation_code_gen_best_practices', 'ms-windows-ai-studio.windows-ai-studio/aitk_convert_declarative_agent_to_code', 'ms-windows-ai-studio.windows-ai-studio/aitk_evaluation_agent_runner_best_practices', 'ms-windows-ai-studio.windows-ai-studio/aitk_evaluation_planner', 'todo']
+  - read/file
+  - search/codebase
+  - search/changes
+  - search/usages
+  - read/problems
+  - edit/editFiles
+  - execute/runInTerminal
+  - execute/runTests
+  - web/fetch
+  - web/githubRepo
+  - context7/*
+  - memory/*
+  - sequentialthinking/*
+  - supabase/*
+  - pylance-mcp-server/*
+  - agent/runSubagent
 ---
 
 # Portfolio Assistant Instructions

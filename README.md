@@ -109,8 +109,8 @@ AWS_REGION=us-east-1
 
 EC2 backfill workflow:
 ```bash
-ssh ec2-user@your-ec2-host
-cd LLM-portfolio-project && git pull
+ssh ubuntu@your-ec2-host
+cd llm-portfolio && git pull
 python scripts/backfill_ohlcv.py --daily
 ```
 

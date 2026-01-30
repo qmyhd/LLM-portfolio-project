@@ -1,6 +1,6 @@
 # 🚀 LLM Portfolio Journal - Quick Start Guide
 
-> **Last Updated:** January 23, 2026  
+> **Last Updated:** January 29, 2026
 > **Version:** 1.0.0
 
 ## ⚡ One-Liner Setup
@@ -14,7 +14,7 @@ git clone https://github.com/qmyhd/LLM-portfolio-project.git && cd LLM-portfolio
 
 ## 📋 Prerequisites
 
-- **Python 3.11+** 
+- **Python 3.11+**
 - **PostgreSQL** (Supabase account or local)
 - **Git**
 - **API Keys:**
@@ -103,40 +103,32 @@ python -m src.bot.bot
 ### Architecture Overview
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        AWS EC2 (t3.micro)                   │
+│                   Ubuntu EC2 Instance                       │
 ├─────────────────────────────────────────────────────────────┤
-│  PM2 Process Manager                                        │
-│  ├── discord-bot (src/bot/bot.py)                          │
-│  └── Cron: Daily pipeline (6:30 AM ET)                     │
+│  systemd Services                                           │
+│  ├── api.service (FastAPI backend)                         │
+│  ├── discord-bot.service (Discord bot)                     │
+│  └── nightly-pipeline.timer (Daily jobs at 1 AM ET)        │
 ├─────────────────────────────────────────────────────────────┤
-│  AWS Secrets Manager                                        │
-│  ├── qqqAppsecrets (Main app secrets)                      │
-│  └── RDS/ohlcvdata (RDS database credentials)              │
+│  Nginx (SSL/443) → FastAPI (127.0.0.1:8000)                │
+├─────────────────────────────────────────────────────────────┤
+│  AWS Secrets Manager → qqqAppsecrets                       │
 └─────────────────────────────────────────────────────────────┘
-          │                      │
-          ▼                      ▼
-    Supabase (Main)         RDS PostgreSQL
-    (Positions, Discord)    (OHLCV data)
+                    │
+                    ▼
+              Supabase (PostgreSQL)
 ```
 
 ### Step 1: Create EC2 Instance
 
-```bash
-# AWS CLI - Create t3.micro instance
-aws ec2 run-instances \
-  --image-id ami-0c7217cdde317cfec \
-  --instance-type t3.micro \
-  --key-name your-key-pair \
-  --security-groups discord-bot-sg \
-  --iam-instance-profile Name=EC2SecretsManagerRole \
-  --tag-specifications 'ResourceType=instance,Tags=[{Key=Name,Value=portfolio-bot}]'
-```
+- **OS**: Ubuntu 22.04 LTS or 24.04 LTS
+- **Instance Type**: t3.micro or t3.small
+- **IAM Role**: Attach role with `secretsmanager:GetSecretValue` permission
+- **Security Group**: Allow inbound 22, 80, 443; outbound all
 
 ### Step 2: Configure AWS Secrets Manager
 
-Your secrets are stored in:
-- **`qqqAppsecrets`** - Main app secrets (Discord, OpenAI, Supabase, SnapTrade)
-- **`RDS/ohlcvdata`** - RDS database credentials
+Your secrets are stored in `qqqAppsecrets`.
 
 **IAM Policy Required:**
 ```json
@@ -145,14 +137,8 @@ Your secrets are stored in:
     "Statement": [
         {
             "Effect": "Allow",
-            "Action": [
-                "secretsmanager:GetSecretValue",
-                "secretsmanager:DescribeSecret"
-            ],
-            "Resource": [
-                "arn:aws:secretsmanager:us-east-1:*:secret:qqqAppsecrets*",
-                "arn:aws:secretsmanager:us-east-1:*:secret:RDS/ohlcvdata*"
-            ]
+            "Action": "secretsmanager:GetSecretValue",
+            "Resource": "arn:aws:secretsmanager:us-east-1:298921514475:secret:qqqAppsecrets-FeRqIW"
         }
     ]
 }
@@ -163,105 +149,93 @@ Your secrets are stored in:
 SSH into your instance and run:
 
 ```bash
-#!/bin/bash
-# EC2 Bootstrap Script
+ssh ubuntu@your-ec2-ip
 
 # Update system
-sudo yum update -y
-sudo yum install -y git python3.11 python3.11-pip nodejs npm
-
-# Install PM2 globally
-sudo npm install -g pm2
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y python3.11 python3.11-venv python3.11-dev \
+    libpq-dev build-essential git nginx certbot python3-certbot-nginx
 
 # Clone repository
-cd /home/ec2-user
-git clone https://github.com/qmyhd/LLM-portfolio-project.git
-cd LLM-portfolio-project
+cd /home/ubuntu
+git clone https://github.com/qmyhd/LLM-portfolio-project.git llm-portfolio
+cd llm-portfolio
 
 # Create virtual environment
 python3.11 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
 
-# Create .env with AWS Secrets Manager integration
-cat > .env << 'EOF'
-# AWS Secrets Manager Configuration
-AWS_SECRET_NAME=qqqAppsecrets
-AWS_RDS_SECRET_NAME=RDS/ohlcvdata
+# Create AWS Secrets configuration
+sudo mkdir -p /etc/llm-portfolio
+sudo tee /etc/llm-portfolio/llm.env > /dev/null << 'EOF'
+USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
-
-# Secrets loaded at runtime from AWS Secrets Manager
-# No hardcoded credentials needed!
+AWS_SECRET_NAME=qqqAppsecrets
 EOF
+sudo chmod 644 /etc/llm-portfolio/llm.env
 
 # Test secrets loading
-python -c "from src.aws_secrets import load_secrets_to_env; load_secrets_to_env(); print('✅ Secrets loaded successfully')"
-
-# Start with PM2
-pm2 start ecosystem.config.js
-pm2 save
-pm2 startup
+python scripts/check_secrets.py
 
 echo "✅ EC2 Bootstrap Complete!"
 ```
 
-### Step 4: Configure PM2 Process Manager
-
-The `ecosystem.config.js` is pre-configured:
-
-```javascript
-module.exports = {
-  apps: [{
-    name: 'discord-bot',
-    script: 'python',
-    args: '-m src.bot.bot',
-    cwd: '/home/ec2-user/LLM-portfolio-project',
-    interpreter: '/home/ec2-user/LLM-portfolio-project/.venv/bin/python',
-    env: {
-      AWS_SECRET_NAME: 'qqqAppsecrets',
-      AWS_RDS_SECRET_NAME: 'RDS/ohlcvdata',
-      AWS_REGION: 'us-east-1'
-    }
-  }]
-};
-```
-
-### Step 5: Setup Cron Jobs
+### Step 4: Install Systemd Services
 
 ```bash
-# Edit crontab
-crontab -e
+# Create log directories
+sudo mkdir -p /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+sudo chown -R ubuntu:ubuntu /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
 
-# Add daily pipeline (6:30 AM ET = 11:30 UTC)
-30 11 * * 1-5 cd /home/ec2-user/LLM-portfolio-project && /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh >> /var/log/portfolio-pipeline.log 2>&1
+# Copy service files
+sudo cp systemd/*.service /etc/systemd/system/
+sudo cp systemd/*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
 
-# Add OHLCV backfill (7:00 AM ET = 12:00 UTC, weekdays)
-0 12 * * 1-5 cd /home/ec2-user/LLM-portfolio-project && source .venv/bin/activate && python scripts/backfill_ohlcv.py --daily >> /var/log/ohlcv-backfill.log 2>&1
+# Enable and start services
+sudo systemctl enable api.service discord-bot.service nightly-pipeline.timer
+sudo systemctl start api.service discord-bot.service nightly-pipeline.timer
+```
+
+### Step 5: Configure Nginx and SSL
+
+```bash
+# Install nginx config (Ubuntu standard: sites-available + sites-enabled)
+sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+sudo ln -sf /etc/nginx/sites-available/api.conf /etc/nginx/sites-enabled/api.conf
+sudo rm -f /etc/nginx/sites-enabled/default
+sudo nginx -t
+
+# Obtain SSL certificate (requires DNS pointing to this server)
+sudo certbot --nginx -d api.llmportfolio.app
+
+# Start nginx
+sudo systemctl enable nginx
+sudo systemctl start nginx
 ```
 
 ---
 
-## 🔧 PM2 Commands Reference
+## 🔧 Systemd Commands Reference
 
 ```bash
-# View running processes
-pm2 list
+# View service status
+sudo systemctl status api.service discord-bot.service
 
-# View logs
-pm2 logs discord-bot
+# View logs (real-time)
+sudo journalctl -u discord-bot.service -f
 
-# Restart bot
-pm2 restart discord-bot
+# Restart service
+sudo systemctl restart discord-bot.service
 
-# Stop all
-pm2 stop all
+# Stop service
+sudo systemctl stop discord-bot.service
 
-# Monitor resources
-pm2 monit
+# View scheduled timers
+systemctl list-timers
 ```
 
 ---
@@ -306,7 +280,7 @@ Once running, use these commands in Discord:
 1. **Never commit `.env` file** - It's in `.gitignore`
 2. **Use AWS Secrets Manager** in production - No hardcoded secrets
 3. **Use service role key** for database writes (bypasses RLS)
-4. **Rotate secrets regularly** - Update in Secrets Manager, restart PM2
+4. **Rotate secrets regularly** - Update in Secrets Manager, restart systemd services
 
 ---
 
@@ -339,8 +313,8 @@ python -c "from src.config import get_database_url; print(get_database_url()[:50
 # Test AWS credentials
 aws sts get-caller-identity
 
-# Test secret access
-aws secretsmanager get-secret-value --secret-id qqqAppsecrets --query SecretString --output text | python -c "import sys,json; print(list(json.loads(sys.stdin.read()).keys()))"
+# Run secrets check script
+python scripts/check_secrets.py
 ```
 
 ---
@@ -350,7 +324,6 @@ aws secretsmanager get-secret-value --secret-id qqqAppsecrets --query SecretStri
 - [AGENTS.md](../AGENTS.md) - Comprehensive AI contributor guide
 - [ARCHITECTURE.md](ARCHITECTURE.md) - System architecture
 - [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md) - Detailed EC2 setup
-- [BACKEND_CODE_WALKTHROUGH.md](BACKEND_CODE_WALKTHROUGH.md) - Code walkthrough
 
 ---
 
