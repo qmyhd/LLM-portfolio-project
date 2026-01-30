@@ -184,9 +184,9 @@ def generate_sql_inserts(
 
         sql = f"""
         INSERT INTO institutional_holdings (
-            filing_date, manager_cik, manager_name, 
-            cusip, ticker, company_name, 
-            value_usd, shares, share_type, 
+            filing_date, manager_cik, manager_name,
+            cusip, ticker, company_name,
+            value_usd, shares, share_type,
             is_put, is_call
         ) VALUES (
             '{filing_date}', '{manager_cik}', '{mgr_name}',

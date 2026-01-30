@@ -228,7 +228,7 @@ def get_nearest_idea(
     try:
         result = execute_sql(
             """
-            SELECT 
+            SELECT
                 di.idea_text,
                 di.confidence,
                 dm.created_at,
@@ -237,7 +237,7 @@ def get_nearest_idea(
             JOIN discord_messages dm ON dm.message_id = di.message_id
             WHERE di.primary_symbol = :symbol
                 AND dm.created_at BETWEEN :start_ts AND :end_ts
-            ORDER BY ABS(EXTRACT(EPOCH FROM (dm.created_at - :order_ts))) ASC, 
+            ORDER BY ABS(EXTRACT(EPOCH FROM (dm.created_at - :order_ts))) ASC,
                      di.confidence DESC
             LIMIT 1
             """,

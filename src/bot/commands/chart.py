@@ -259,15 +259,15 @@ def query_trade_data(
 
         # SQL query to select trade data using unified execute_sql
         query = """
-        SELECT 
+        SELECT
             symbol,
             action,
             time_executed as execution_date,
             execution_price,
             total_quantity,
             (execution_price * total_quantity) as trade_value
-        FROM orders 
-        WHERE symbol = :symbol 
+        FROM orders
+        WHERE symbol = :symbol
         AND time_executed BETWEEN :start_date AND :end_date
         AND status = 'executed'
         AND (execution_price * total_quantity) >= :min_trade

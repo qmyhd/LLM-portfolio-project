@@ -12,10 +12,12 @@ Environment="PATH=/home/ubuntu/llm-portfolio/.venv/bin:/usr/local/bin:/usr/bin:/
 Environment="PYTHONPATH=/home/ubuntu/llm-portfolio"
 Environment="PYTHONUNBUFFERED=1"
 
-# AWS Secrets Manager configuration
-Environment="USE_AWS_SECRETS=1"
-Environment="AWS_REGION=us-east-1"
-Environment="AWS_SECRET_NAME=llm-portfolio/production"
+# AWS Secrets Manager configuration (loaded from central env file)
+# REQUIRED: Create /etc/llm-portfolio/llm.env first - see systemd/README.md
+EnvironmentFile=/etc/llm-portfolio/llm.env
+
+# Pre-flight check: fail fast with clear error if env file missing
+ExecStartPre=/usr/bin/test -f /etc/llm-portfolio/llm.env
 
 # Run the nightly pipeline script
 # This orchestrates: OHLCV backfill, NLP batch processing, stock profile refresh

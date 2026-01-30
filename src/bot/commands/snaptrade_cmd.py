@@ -462,7 +462,7 @@ def register(bot: commands.Bot, twitter_client=None):
                 # Filter by symbol - also handle option-style symbols
                 result = execute_sql(
                     """
-                    SELECT 
+                    SELECT
                         o.symbol, o.action, o.status, o.order_type,
                         o.total_quantity, o.open_quantity, o.filled_quantity,
                         o.execution_price, o.limit_price, o.stop_price,
@@ -486,7 +486,7 @@ def register(bot: commands.Bot, twitter_client=None):
                 # All executed orders
                 result = execute_sql(
                     """
-                    SELECT 
+                    SELECT
                         o.symbol, o.action, o.status, o.order_type,
                         o.total_quantity, o.open_quantity, o.filled_quantity,
                         o.execution_price, o.limit_price, o.stop_price,

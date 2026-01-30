@@ -27,7 +27,7 @@ def register(bot: commands.Bot):
                 rows = execute_sql(
                     """
                     SELECT discord_date, tweet_date, content, stock_tags, author, channel
-                    FROM twitter_data 
+                    FROM twitter_data
                     WHERE stock_tags LIKE :symbol_pattern
                     ORDER BY discord_date DESC
                     LIMIT 10
@@ -75,7 +75,7 @@ def register(bot: commands.Bot):
                     SELECT COUNT(*) as total,
                            COUNT(DISTINCT stock_tags) as unique_stocks,
                            COUNT(DISTINCT channel) as channels
-                    FROM twitter_data 
+                    FROM twitter_data
                     WHERE stock_tags IS NOT NULL AND stock_tags != ''
                 """,
                     fetch_results=True,
@@ -96,7 +96,7 @@ def register(bot: commands.Bot):
                 top_stocks = execute_sql(
                     """
                     SELECT stock_tags, COUNT(*) as mentions
-                    FROM twitter_data 
+                    FROM twitter_data
                     WHERE stock_tags IS NOT NULL AND stock_tags != ''
                     GROUP BY stock_tags
                     ORDER BY mentions DESC
@@ -151,7 +151,7 @@ def register(bot: commands.Bot):
                 rows = execute_sql(
                     """
                     SELECT discord_date, tweet_date, content, author, channel, stock_tags
-                    FROM twitter_data 
+                    FROM twitter_data
                     WHERE stock_tags LIKE :symbol_pattern
                     ORDER BY discord_date DESC
                     LIMIT :count
@@ -164,7 +164,7 @@ def register(bot: commands.Bot):
                 rows = execute_sql(
                     """
                     SELECT discord_date, tweet_date, content, author, channel, stock_tags
-                    FROM twitter_data 
+                    FROM twitter_data
                     ORDER BY discord_date DESC
                     LIMIT :count
                 """,
@@ -228,7 +228,7 @@ def register(bot: commands.Bot):
                     SELECT COUNT(*) as total_tweets,
                            COUNT(DISTINCT stock_tags) as unique_stocks,
                            COUNT(DISTINCT author) as unique_authors
-                    FROM twitter_data 
+                    FROM twitter_data
                     WHERE channel = :channel AND stock_tags IS NOT NULL AND stock_tags != ''
                 """,
                     {"channel": channel_name},
@@ -242,7 +242,7 @@ def register(bot: commands.Bot):
                            COUNT(DISTINCT stock_tags) as unique_stocks,
                            COUNT(DISTINCT author) as unique_authors,
                            COUNT(DISTINCT channel) as unique_channels
-                    FROM twitter_data 
+                    FROM twitter_data
                     WHERE stock_tags IS NOT NULL AND stock_tags != ''
                 """,
                     fetch_results=True,
@@ -286,7 +286,7 @@ def register(bot: commands.Bot):
             recent_activity = execute_sql(
                 """
                 SELECT COUNT(*) as recent_tweets
-                FROM twitter_data 
+                FROM twitter_data
                 WHERE discord_date >= NOW() - INTERVAL '7 days'
                 AND stock_tags IS NOT NULL AND stock_tags != ''
             """,

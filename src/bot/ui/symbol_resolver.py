@@ -101,13 +101,13 @@ def _lookup_symbol_alias(alias: str) -> Optional[str]:
 
         result = execute_sql(
             """
-            SELECT ticker FROM symbol_aliases 
+            SELECT ticker FROM symbol_aliases
             WHERE LOWER(alias) = LOWER(:alias)
-            ORDER BY 
-                CASE source 
-                    WHEN 'manual' THEN 1 
-                    WHEN 'snaptrade' THEN 2 
-                    WHEN 'discord' THEN 3 
+            ORDER BY
+                CASE source
+                    WHEN 'manual' THEN 1
+                    WHEN 'snaptrade' THEN 2
+                    WHEN 'discord' THEN 3
                 END
             LIMIT 1
             """,
@@ -128,8 +128,8 @@ def _get_description_from_db(ticker: str) -> Optional[str]:
 
         result = execute_sql(
             """
-            SELECT description FROM symbols 
-            WHERE ticker = :ticker OR id = :ticker 
+            SELECT description FROM symbols
+            WHERE ticker = :ticker OR id = :ticker
             LIMIT 1
             """,
             params={"ticker": ticker},
@@ -155,8 +155,8 @@ def _search_symbols_by_description(
 
         result = execute_sql(
             """
-            SELECT ticker, description FROM symbols 
-            WHERE LOWER(description) LIKE :pattern 
+            SELECT ticker, description FROM symbols
+            WHERE LOWER(description) LIKE :pattern
             LIMIT 1
             """,
             params={"pattern": f"%{search_term.lower()}%"},
@@ -180,8 +180,8 @@ def _search_positions_by_symbol(ticker: str) -> Optional[Tuple[str, Optional[str
 
         result = execute_sql(
             """
-            SELECT symbol, symbol_description FROM positions 
-            WHERE symbol = :ticker 
+            SELECT symbol, symbol_description FROM positions
+            WHERE symbol = :ticker
             LIMIT 1
             """,
             params={"ticker": ticker},
@@ -217,9 +217,9 @@ def get_symbol_info(ticker: str) -> dict:
 
         result = execute_sql(
             """
-            SELECT ticker, description, logo_url, exchange_name, asset_type 
-            FROM symbols 
-            WHERE ticker = :ticker OR id = :ticker 
+            SELECT ticker, description, logo_url, exchange_name, asset_type
+            FROM symbols
+            WHERE ticker = :ticker OR id = :ticker
             LIMIT 1
             """,
             params={"ticker": ticker.upper()},
@@ -259,10 +259,10 @@ def search_symbols(query: str, limit: int = 10) -> List[dict]:
 
         db_result = execute_sql(
             """
-            SELECT ticker, description, logo_url 
-            FROM symbols 
+            SELECT ticker, description, logo_url
+            FROM symbols
             WHERE ticker LIKE :pattern OR LOWER(description) LIKE :pattern_lower
-            ORDER BY 
+            ORDER BY
                 CASE WHEN ticker = :exact THEN 0 ELSE 1 END,
                 ticker
             LIMIT :limit
