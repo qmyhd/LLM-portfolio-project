@@ -43,9 +43,9 @@ set -e
 
 # Configuration - customize these as needed
 REPO_URL="https://github.com/qmyhd/LLM-portfolio-project.git"
-PROJECT_DIR="/home/ec2-user/LLM-portfolio-project"
+PROJECT_DIR="/home/ubuntu/llm-portfolio"
 AWS_REGION="${AWS_REGION:-us-east-1}"
-SECRET_NAME="${SECRET_NAME:-llm-portfolio/production}"
+SECRET_NAME="${SECRET_NAME:-qqqAppsecrets}"
 PYTHON_VERSION="3.11"
 NODE_VERSION="20"
 
@@ -91,7 +91,7 @@ echo "📁 Step 2: Setting up directories..."
 
 # Create log directory
 mkdir -p /var/log/discord-bot
-chown ec2-user:ec2-user /var/log/discord-bot
+chown ubuntu:ubuntu /var/log/discord-bot
 
 echo "   ✅ Directories created"
 
@@ -101,20 +101,20 @@ echo "   ✅ Directories created"
 echo ""
 echo "📥 Step 3: Cloning repository..."
 
-# Switch to ec2-user for remaining operations
-cd /home/ec2-user
+# Switch to ubuntu for remaining operations
+cd /home/ubuntu
 
 if [ -d "$PROJECT_DIR" ]; then
     echo "   Repository already exists, pulling latest..."
     cd "$PROJECT_DIR"
-    sudo -u ec2-user git pull
+    sudo -u ubuntu git pull
 else
     echo "   Cloning fresh repository..."
-    sudo -u ec2-user git clone "$REPO_URL" "$PROJECT_DIR"
+    sudo -u ubuntu git clone "$REPO_URL" "$PROJECT_DIR"
     cd "$PROJECT_DIR"
 fi
 
-chown -R ec2-user:ec2-user "$PROJECT_DIR"
+chown -R ubuntu:ubuntu "$PROJECT_DIR"
 
 echo "   ✅ Repository ready"
 
@@ -128,18 +128,18 @@ cd "$PROJECT_DIR"
 
 # Create virtual environment
 if [ ! -d ".venv" ]; then
-    sudo -u ec2-user python${PYTHON_VERSION} -m venv .venv
+    sudo -u ubuntu python${PYTHON_VERSION} -m venv .venv
 fi
 
 # Upgrade pip
-sudo -u ec2-user .venv/bin/pip install --upgrade pip
+sudo -u ubuntu .venv/bin/pip install --upgrade pip
 
 # Install dependencies (including boto3 for AWS Secrets Manager)
-sudo -u ec2-user .venv/bin/pip install -r requirements.txt
-sudo -u ec2-user .venv/bin/pip install boto3
+sudo -u ubuntu .venv/bin/pip install -r requirements.txt
+sudo -u ubuntu .venv/bin/pip install boto3
 
 # Install package in development mode
-sudo -u ec2-user .venv/bin/pip install -e .
+sudo -u ubuntu .venv/bin/pip install -e .
 
 echo "   ✅ Python environment ready"
 
@@ -149,7 +149,18 @@ echo "   ✅ Python environment ready"
 echo ""
 echo "🔐 Step 5: Configuring AWS Secrets Manager..."
 
-# Create environment file that signals to use AWS Secrets Manager
+# Create central AWS secrets configuration file (used by systemd services)
+sudo mkdir -p /etc/llm-portfolio
+sudo tee /etc/llm-portfolio/llm.env > /dev/null << EOF
+# AWS Secrets Manager Configuration
+# This file is read by all systemd services for consistent secret loading
+USE_AWS_SECRETS=1
+AWS_REGION=${AWS_REGION}
+AWS_SECRET_NAME=qqqAppsecrets
+EOF
+sudo chmod 644 /etc/llm-portfolio/llm.env
+
+# Also create project .env for local/manual runs
 cat > "$PROJECT_DIR/.env" << EOF
 # AWS Secrets Manager Configuration
 # This file tells the application to fetch secrets from AWS Secrets Manager
@@ -168,11 +179,11 @@ AWS_RDS_SECRET_NAME=RDS/ohlcvdata
 # are fetched from AWS Secrets Manager at runtime.
 EOF
 
-chown ec2-user:ec2-user "$PROJECT_DIR/.env"
+chown ubuntu:ubuntu "$PROJECT_DIR/.env"
 
 # Test secrets access (will fail if IAM role is not configured)
 echo "   Testing AWS Secrets Manager access..."
-sudo -u ec2-user .venv/bin/python -c "
+sudo -u ubuntu .venv/bin/python -c "
 import boto3
 import json
 client = boto3.client('secretsmanager', region_name='${AWS_REGION}')
@@ -240,7 +251,7 @@ main()
 EOF
 
 chmod +x "$PROJECT_DIR/scripts/start_bot_with_secrets.py"
-chown ec2-user:ec2-user "$PROJECT_DIR/scripts/start_bot_with_secrets.py"
+chown ubuntu:ubuntu "$PROJECT_DIR/scripts/start_bot_with_secrets.py"
 
 # Update ecosystem.config.js to use the wrapper script
 cat > "$PROJECT_DIR/ecosystem.config.js" << 'EOF'
@@ -260,14 +271,14 @@ module.exports = {
     {
       name: 'discord-bot',
       script: 'scripts/start_bot_with_secrets.py',
-      cwd: '/home/ec2-user/LLM-portfolio-project',
-      
+      cwd: '/home/ubuntu/llm-portfolio',
+
       // Use Python from virtual environment
-      interpreter: '/home/ec2-user/LLM-portfolio-project/.venv/bin/python',
-      
+      interpreter: '/home/ubuntu/llm-portfolio/.venv/bin/python',
+
       // Environment - signals to use AWS Secrets Manager
       env: {
-        PYTHONPATH: '/home/ec2-user/LLM-portfolio-project',
+        PYTHONPATH: '/home/ubuntu/llm-portfolio',
         PYTHONUNBUFFERED: '1',
         USE_AWS_SECRETS: '1',
         AWS_REGION: 'us-east-1',
@@ -300,17 +311,17 @@ module.exports = {
 };
 EOF
 
-chown ec2-user:ec2-user "$PROJECT_DIR/ecosystem.config.js"
+chown ubuntu:ubuntu "$PROJECT_DIR/ecosystem.config.js"
 
 # Start bot with PM2
 cd "$PROJECT_DIR"
-sudo -u ec2-user pm2 start ecosystem.config.js
+sudo -u ubuntu pm2 start ecosystem.config.js
 
 # Save PM2 process list
-sudo -u ec2-user pm2 save
+sudo -u ubuntu pm2 save
 
 # Configure PM2 to start on boot
-env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ec2-user --hp /home/ec2-user
+env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubuntu --hp /home/ubuntu
 
 echo "   ✅ PM2 configured and bot started"
 
@@ -324,25 +335,24 @@ echo "🕐 Step 7: Setting up cron jobs..."
 cat > "$PROJECT_DIR/scripts/run_pipeline_with_secrets.sh" << 'EOF'
 #!/bin/bash
 # Wrapper script to run daily pipeline with AWS Secrets Manager
-cd /home/ec2-user/LLM-portfolio-project
+cd /home/ubuntu/llm-portfolio
 source .venv/bin/activate
 export USE_AWS_SECRETS=1
 export AWS_REGION=us-east-1
-export AWS_SECRETS_PREFIX=llm-portfolio
-export AWS_SECRETS_ENV=production
+export AWS_SECRET_NAME=qqqAppsecrets
 
 # Run the pipeline
 python scripts/daily_pipeline.py "$@"
 EOF
 
 chmod +x "$PROJECT_DIR/scripts/run_pipeline_with_secrets.sh"
-chown ec2-user:ec2-user "$PROJECT_DIR/scripts/run_pipeline_with_secrets.sh"
+chown ubuntu:ubuntu "$PROJECT_DIR/scripts/run_pipeline_with_secrets.sh"
 
-# Create cron jobs for ec2-user
+# Create cron jobs for ubuntu
 CRON_FILE=$(mktemp)
 
 # Preserve existing cron jobs if any
-sudo -u ec2-user crontab -l 2>/dev/null > "$CRON_FILE" || true
+sudo -u ubuntu crontab -l 2>/dev/null > "$CRON_FILE" || true
 
 # Check if our jobs already exist
 if ! grep -q "daily_pipeline.py" "$CRON_FILE" 2>/dev/null; then
@@ -354,11 +364,11 @@ if ! grep -q "daily_pipeline.py" "$CRON_FILE" 2>/dev/null; then
 
 # Daily full pipeline at 1:00 AM ET (6:00 AM UTC)
 # Runs: SnapTrade sync + Discord NLP processing + OHLCV backfill
-0 6 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh >> /var/log/discord-bot/daily_pipeline.log 2>&1
+0 6 * * * /home/ubuntu/llm-portfolio/scripts/run_pipeline_with_secrets.sh >> /var/log/discord-bot/daily_pipeline.log 2>&1   
 
 # Evening SnapTrade sync at 8:00 PM ET (1:00 AM UTC next day)
 # Captures end-of-day positions after market close
-0 1 * * * /home/ec2-user/LLM-portfolio-project/scripts/run_pipeline_with_secrets.sh --snaptrade >> /var/log/discord-bot/snaptrade_sync.log 2>&1
+0 1 * * * /home/ubuntu/llm-portfolio/scripts/run_pipeline_with_secrets.sh --snaptrade >> /var/log/discord-bot/snaptrade_sync
 
 # Weekly log cleanup (keep 30 days)
 0 0 * * 0 find /var/log/discord-bot -name "*.log" -mtime +30 -delete
@@ -368,8 +378,8 @@ if ! grep -q "daily_pipeline.py" "$CRON_FILE" 2>/dev/null; then
 
 EOF
 
-    # Install crontab for ec2-user
-    sudo -u ec2-user crontab "$CRON_FILE"
+    # Install crontab for ubuntu
+    sudo -u ubuntu crontab "$CRON_FILE"
     echo "   ✅ Cron jobs installed"
 else
     echo "   Cron jobs already configured"
@@ -385,7 +395,7 @@ echo "🔍 Step 8: Verifying installation..."
 
 # Check PM2 status
 echo "   PM2 Status:"
-sudo -u ec2-user pm2 status
+sudo -u ubuntu pm2 status
 
 # Check bot logs (wait a moment for startup)
 sleep 5

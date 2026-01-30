@@ -18,17 +18,17 @@
 #   - EC2 instance with Amazon Linux 2023 or Ubuntu
 #   - Python 3.11+ with virtual environment at .venv/
 #   - Node.js (for PM2 option)
-#   - Project cloned to /home/ec2-user/LLM-portfolio-project
+#   - Project cloned to /home/ubuntu/llm-portfolio
 #
 # =============================================================================
 
 set -e
 
 # Configuration
-PROJECT_DIR="${PROJECT_DIR:-/home/ec2-user/LLM-portfolio-project}"
+PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/llm-portfolio}"
 VENV_DIR="$PROJECT_DIR/.venv"
 LOG_DIR="/var/log"
-USER="${USER:-ec2-user}"
+USER="${USER:-ubuntu}"
 
 echo "=============================================="
 echo "  LLM Portfolio Journal - EC2 Services Setup"

@@ -17,7 +17,7 @@
 set -e
 
 # Configuration
-PROJECT_DIR="${PROJECT_DIR:-/home/ec2-user/LLM-portfolio-project}"
+PROJECT_DIR="${PROJECT_DIR:-/home/ubuntu/llm-portfolio}"
 VENV_DIR="$PROJECT_DIR/.venv"
 LOG_DIR="/var/log/discord-bot"
 

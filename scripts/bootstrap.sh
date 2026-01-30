@@ -161,11 +161,7 @@ setup_project() {
     if [ ! -d "${PROJECT_DIR}" ]; then
         log_info "Cloning repository..."
         cd /home/ubuntu
-        git clone https://github.com/YOUR_USERNAME/LLM-portfolio-project.git ${PROJECT_NAME} || {
-            log_warn "Clone failed - assuming project already exists or manual clone needed"
-        }
-    fi
-    
+        git clone https://github.com/qmyhd/LLM-portfolio-project.git ${PROJECT_NAME} || {
     cd "${PROJECT_DIR}"
     
     # Create virtual environment
@@ -193,13 +189,14 @@ install_nginx() {
     log_info "Installing Nginx..."
     sudo apt install -y nginx
     
-    # Copy nginx config
+# Copy nginx config (Ubuntu standard: sites-available + sites-enabled)
     if [ -f "${PROJECT_DIR}/nginx/api.conf" ]; then
         log_info "Configuring Nginx..."
-        sudo cp ${PROJECT_DIR}/nginx/api.conf /etc/nginx/conf.d/api.conf
-        
+        sudo cp ${PROJECT_DIR}/nginx/api.conf /etc/nginx/sites-available/api.conf
+        sudo ln -sf /etc/nginx/sites-available/api.conf /etc/nginx/sites-enabled/api.conf
+
         # Update server_name with actual domain
-        sudo sed -i "s/server_name .*;/server_name ${DOMAIN};/" /etc/nginx/conf.d/api.conf
+        sudo sed -i "s/server_name .*;/server_name ${DOMAIN};/" /etc/nginx/sites-available/api.conf
         
         # Remove default site if exists
         sudo rm -f /etc/nginx/sites-enabled/default
@@ -251,128 +248,44 @@ setup_ssl() {
 # =============================================================================
 setup_services() {
     log_info "Setting up systemd services..."
-    
-    # Create API service
-    sudo tee /etc/systemd/system/llm-api.service > /dev/null << EOF
-[Unit]
-Description=LLM Portfolio FastAPI Backend
-After=network.target
 
-[Service]
-Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=${PROJECT_DIR}
-Environment="PATH=${VENV_DIR}/bin"
-Environment="USE_AWS_SECRETS=1"
-ExecStart=${VENV_DIR}/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
+    # Create central AWS Secrets Manager configuration file
+    log_info "Creating central AWS secrets configuration..."
+    sudo mkdir -p /etc/llm-portfolio
+    sudo tee /etc/llm-portfolio/llm.env > /dev/null << EOF
+# AWS Secrets Manager Configuration
+# This file is read by all systemd services for consistent secret loading
+# REQUIRED: All services will fail to start if this file is missing
+USE_AWS_SECRETS=1
+AWS_REGION=us-east-1
+AWS_SECRET_NAME=qqqAppsecrets
 EOF
+    sudo chmod 644 /etc/llm-portfolio/llm.env
 
-    # Create Discord bot service
-    sudo tee /etc/systemd/system/discord-bot.service > /dev/null << EOF
-[Unit]
-Description=LLM Portfolio Discord Bot
-After=network.target
+    # Create log directories
+    sudo mkdir -p /var/log/portfolio-api /var/log/discord-bot /var/log/portfolio-nightly
+    sudo chown -R ubuntu:ubuntu /var/log/portfolio-api /var/log/discord-bot /var/log/portfolio-nightly
 
-[Service]
-Type=simple
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=${PROJECT_DIR}
-Environment="PATH=${VENV_DIR}/bin"
-Environment="USE_AWS_SECRETS=1"
-ExecStart=${VENV_DIR}/bin/python -m src.bot.bot
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-EOF
-
-    # Create OHLCV daily update timer
-    sudo tee /etc/systemd/system/ohlcv-daily.service > /dev/null << EOF
-[Unit]
-Description=Daily OHLCV Data Update
-After=network.target
-
-[Service]
-Type=oneshot
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=${PROJECT_DIR}
-Environment="PATH=${VENV_DIR}/bin"
-Environment="USE_AWS_SECRETS=1"
-ExecStart=${VENV_DIR}/bin/python scripts/backfill_ohlcv.py --daily
-EOF
-
-    sudo tee /etc/systemd/system/ohlcv-daily.timer > /dev/null << EOF
-[Unit]
-Description=Run OHLCV update daily at 6 AM UTC
-
-[Timer]
-OnCalendar=*-*-* 06:00:00
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
-
-    # Create SnapTrade sync timer
-    sudo tee /etc/systemd/system/snaptrade-notify.service > /dev/null << EOF
-[Unit]
-Description=SnapTrade Notification Sync
-After=network.target
-
-[Service]
-Type=oneshot
-User=ubuntu
-Group=ubuntu
-WorkingDirectory=${PROJECT_DIR}
-Environment="PATH=${VENV_DIR}/bin"
-Environment="USE_AWS_SECRETS=1"
-ExecStart=${VENV_DIR}/bin/python scripts/snaptrade_notify.py
-EOF
-
-    sudo tee /etc/systemd/system/snaptrade-notify.timer > /dev/null << EOF
-[Unit]
-Description=Run SnapTrade sync every 5 minutes
-
-[Timer]
-OnCalendar=*:0/5
-Persistent=true
-
-[Install]
-WantedBy=timers.target
-EOF
+    # Copy canonical systemd service files from repository
+    log_info "Copying systemd service files from repository..."
+    if [ -d "${PROJECT_DIR}/systemd" ]; then
+        sudo cp ${PROJECT_DIR}/systemd/*.service /etc/systemd/system/
+        sudo cp ${PROJECT_DIR}/systemd/*.timer /etc/systemd/system/
+    else
+        log_error "systemd/ directory not found in project"
+        return 1
+    fi
 
     # Reload systemd
     sudo systemctl daemon-reload
-    
-    # Enable services (don't start yet - need secrets)
-    sudo systemctl enable llm-api.service
-    sudo systemctl enable discord-bot.service
-    sudo systemctl enable ohlcv-daily.timer
-    sudo systemctl enable snaptrade-notify.timer
-    
-    log_info "Systemd services created and enabled"
-    log_warn "Services NOT started yet - configure AWS Secrets Manager first"
-}
 
-# =============================================================================
-# Step 8: Configure AWS CLI
-# =============================================================================
-setup_aws() {
-    log_info "Installing AWS CLI..."
-    
-    # Install AWS CLI v2
-    if ! command -v aws &> /dev/null; then
-        cd /tmp
-        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    # Enable services (don't start yet - need secrets)
+    sudo systemctl enable api.service
+    sudo systemctl enable discord-bot.service
+    sudo systemctl enable nightly-pipeline.timer
+
+    log_info "Systemd services created and enabled"
+    log_warn "Services NOT started yet - verify AWS Secrets Manager access first"
         unzip -q awscliv2.zip
         sudo ./aws/install
         rm -rf awscliv2.zip aws
@@ -417,19 +330,17 @@ print_summary() {
     echo "Python environment: ${VENV_DIR}"
     echo ""
     echo "NEXT STEPS:"
-    echo "1. Configure AWS Secrets Manager:"
-    echo "   - Create secret 'llm-portfolio/production' with all required keys"
-    echo "   - Attach IAM role with SecretsManager:GetSecretValue permission"
+    echo "1. Verify AWS Secrets Manager access:"
+    echo "   aws secretsmanager get-secret-value --secret-id qqqAppsecrets --query 'Name'"
     echo ""
     echo "2. Start services:"
-    echo "   sudo systemctl start llm-api"
-    echo "   sudo systemctl start discord-bot"
-    echo "   sudo systemctl start ohlcv-daily.timer"
-    echo "   sudo systemctl start snaptrade-notify.timer"
+    echo "   sudo systemctl start api.service"
+    echo "   sudo systemctl start discord-bot.service"
+    echo "   sudo systemctl start nightly-pipeline.timer"
     echo ""
     echo "3. Check service status:"
-    echo "   sudo systemctl status llm-api"
-    echo "   sudo journalctl -u llm-api -f"
+    echo "   sudo systemctl status api.service discord-bot.service"
+    echo "   sudo journalctl -u api.service -f"
     echo ""
     if [ "$SKIP_SSL" = false ] && [ "$SKIP_NGINX" = false ]; then
         echo "4. SSL should be configured for ${DOMAIN}"
@@ -437,7 +348,7 @@ print_summary() {
     fi
     echo ""
     echo "5. Test API endpoint:"
-    echo "   curl https://${DOMAIN}/api/health"
+    echo "   curl https://${DOMAIN}/health"
     echo ""
 }
 
