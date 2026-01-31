@@ -107,9 +107,8 @@ def get_ohlcv(
         # Ensure numeric types
         for col in ["Open", "High", "Low", "Close"]:
             df[col] = pd.to_numeric(df[col], errors="coerce")
-        df["Volume"] = (
-            pd.to_numeric(df["Volume"], errors="coerce").fillna(0).astype(int)
-        )
+        volume_numeric = pd.to_numeric(df["Volume"], errors="coerce")
+        df["Volume"] = pd.Series(volume_numeric).fillna(0).astype(int)
 
         # Drop any rows with NaN in OHLC columns
         df = df.dropna(subset=["Open", "High", "Low", "Close"])
@@ -120,6 +119,69 @@ def get_ohlcv(
     except Exception as e:
         logger.error(f"Error fetching OHLCV for {symbol}: {e}")
         raise
+
+
+def get_latest_closes_batch(symbols: list[str]) -> dict[str, float]:
+    """
+    Get the most recent closing prices for multiple symbols in a single query.
+
+    This is much more efficient than calling get_latest_close() in a loop.
+
+    Args:
+        symbols: List of stock ticker symbols
+
+    Returns:
+        Dictionary mapping symbol to latest closing price.
+        Symbols without data are omitted from the result.
+
+    Example:
+        >>> prices = get_latest_closes_batch(["AAPL", "MSFT", "GOOGL"])
+        >>> print(prices)
+        {"AAPL": 185.50, "MSFT": 420.25, "GOOGL": 175.30}
+    """
+    if not symbols:
+        return {}
+
+    # Normalize symbols
+    symbols = [s.upper().strip() for s in symbols]
+
+    try:
+        # Use a subquery to get the latest date for each symbol, then join to get prices
+        rows = execute_sql(
+            """
+            WITH latest_dates AS (
+                SELECT symbol, MAX(date) as max_date
+                FROM ohlcv_daily
+                WHERE symbol = ANY(:symbols)
+                GROUP BY symbol
+            )
+            SELECT o.symbol, o.close
+            FROM ohlcv_daily o
+            JOIN latest_dates ld ON o.symbol = ld.symbol AND o.date = ld.max_date
+            """,
+            params={"symbols": symbols},
+            fetch_results=True,
+        )
+
+        if not rows:
+            logger.debug(f"No price data found for any of {len(symbols)} symbols")
+            return {}
+
+        # Build result dictionary
+        result = {}
+        for row in rows:
+            row_data = dict(row._mapping) if hasattr(row, "_mapping") else row
+            symbol = row_data["symbol"] if isinstance(row_data, dict) else row[0]
+            close = row_data["close"] if isinstance(row_data, dict) else row[1]
+            if close is not None:
+                result[symbol] = float(close)
+
+        logger.debug(f"Fetched prices for {len(result)}/{len(symbols)} symbols")
+        return result
+
+    except Exception as e:
+        logger.error(f"Error fetching batch prices: {e}")
+        return {}
 
 
 @hardened_retry(max_retries=3, delay=1)
@@ -156,7 +218,7 @@ def get_latest_close(symbol: str) -> Optional[float]:
         )
 
         if not rows or rows[0][0] is None:
-            logger.info(f"No price data found for {symbol}")
+            logger.debug(f"No price data found for {symbol}")
             return None
 
         close_price = float(rows[0][0])

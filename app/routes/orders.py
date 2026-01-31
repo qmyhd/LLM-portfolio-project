@@ -6,8 +6,9 @@ Endpoints:
 """
 
 import logging
+import math
 from datetime import datetime
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
@@ -16,6 +17,28 @@ from src.db import execute_sql
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def safe_float(value: Any, default: float = 0.0) -> float:
+    """Convert value to float, returning default if None or NaN."""
+    if value is None:
+        return default
+    try:
+        f = float(value)
+        return default if math.isnan(f) or math.isinf(f) else f
+    except (ValueError, TypeError):
+        return default
+
+
+def safe_float_optional(value: Any) -> Optional[float]:
+    """Convert value to float, returning None if None, NaN, or invalid."""
+    if value is None:
+        return None
+    try:
+        f = float(value)
+        return None if math.isnan(f) or math.isinf(f) else f
+    except (ValueError, TypeError):
+        return None
 
 
 class Order(BaseModel):
@@ -32,7 +55,6 @@ class Order(BaseModel):
     status: str  # "filled", "pending", "cancelled", etc.
     createdAt: str
     filledAt: Optional[str]
-    notified: bool  # Whether Discord notification was sent
 
 
 class OrdersResponse(BaseModel):
@@ -51,7 +73,6 @@ async def get_orders(
         None, description="Filter by status (filled, pending, cancelled)"
     ),
     ticker: Optional[str] = Query(None, description="Filter by ticker symbol"),
-    notified: Optional[bool] = Query(None, description="Filter by notification status"),
 ):
     """
     Get order history with optional filters.
@@ -61,15 +82,17 @@ async def get_orders(
         offset: Pagination offset
         status: Filter by order status
         ticker: Filter by ticker symbol
-        notified: Filter by notification status
 
     Returns:
         List of orders with metadata
     """
     try:
         # Build query with optional filters
-        conditions = []
-        params = {"limit": limit + 1, "offset": offset}  # +1 to check hasMore
+        conditions: list[str] = []
+        params: dict[str, Any] = {
+            "limit": limit + 1,
+            "offset": offset,
+        }  # +1 to check hasMore
 
         if status:
             conditions.append("o.status = :status")
@@ -79,29 +102,24 @@ async def get_orders(
             conditions.append("UPPER(o.symbol) = UPPER(:ticker)")
             params["ticker"] = ticker
 
-        if notified is not None:
-            conditions.append("o.notified = :notified")
-            params["notified"] = notified
-
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
         query = f"""
             SELECT
-                o.order_id as id,
+                o.brokerage_order_id as id,
                 o.symbol,
-                o.side,
+                o.action as side,
                 o.order_type as type,
-                o.quantity,
+                o.total_quantity as quantity,
                 COALESCE(o.filled_quantity, 0) as filled_quantity,
                 o.limit_price as price,
-                o.filled_price,
+                o.execution_price as filled_price,
                 o.status,
-                o.created_at,
-                o.filled_at,
-                COALESCE(o.notified, false) as notified
+                o.time_placed as created_at,
+                o.time_executed as filled_at
             FROM orders o
             WHERE {where_clause}
-            ORDER BY o.created_at DESC
+            ORDER BY o.time_placed DESC NULLS LAST
             LIMIT :limit OFFSET :offset
         """
 
@@ -113,22 +131,24 @@ async def get_orders(
 
         orders = []
         for row in orders_list:
+            row_dict: dict[str, Any] = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)  # type: ignore[arg-type]
             orders.append(
                 Order(
-                    id=str(row["id"]),
-                    symbol=row["symbol"] or "UNKNOWN",
-                    side=row["side"] or "buy",
-                    type=row["type"] or "market",
-                    quantity=float(row["quantity"] or 0),
-                    filledQuantity=float(row["filled_quantity"] or 0),
-                    price=float(row["price"]) if row["price"] else None,
-                    filledPrice=(
-                        float(row["filled_price"]) if row["filled_price"] else None
+                    id=str(row_dict["id"]),
+                    symbol=row_dict["symbol"] or "UNKNOWN",
+                    side=row_dict["side"] or "buy",
+                    type=row_dict["type"] or "market",
+                    quantity=safe_float(row_dict["quantity"]),
+                    filledQuantity=safe_float(row_dict["filled_quantity"]),
+                    price=safe_float_optional(row_dict["price"]),
+                    filledPrice=safe_float_optional(row_dict["filled_price"]),
+                    status=row_dict["status"] or "unknown",
+                    createdAt=(
+                        str(row_dict["created_at"]) if row_dict["created_at"] else ""
                     ),
-                    status=row["status"] or "unknown",
-                    createdAt=str(row["created_at"]) if row["created_at"] else "",
-                    filledAt=str(row["filled_at"]) if row["filled_at"] else None,
-                    notified=bool(row["notified"]),
+                    filledAt=(
+                        str(row_dict["filled_at"]) if row_dict["filled_at"] else None
+                    ),
                 )
             )
 
@@ -141,7 +161,11 @@ async def get_orders(
         # Remove limit/offset from params for count query
         count_params = {k: v for k, v in params.items() if k not in ["limit", "offset"]}
         count_result = execute_sql(count_query, params=count_params, fetch_results=True)
-        total = int(count_result[0]["total"]) if count_result else 0
+        if count_result:
+            count_row: dict[str, Any] = dict(count_result[0]._mapping) if hasattr(count_result[0], "_mapping") else dict(count_result[0])  # type: ignore[arg-type]
+            total = int(count_row["total"])
+        else:
+            total = 0
 
         return OrdersResponse(
             orders=orders,

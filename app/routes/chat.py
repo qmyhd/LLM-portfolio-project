@@ -37,7 +37,7 @@ class ChatResponse(BaseModel):
 @router.post("/{ticker}/chat", response_model=ChatResponse)
 async def chat_about_stock(
     ticker: str = Path(..., description="Stock ticker symbol"),
-    request: ChatRequest = ...,
+    request: Optional[ChatRequest] = None,
 ):
     """
     Chat with AI about a stock using OpenAI.
@@ -56,6 +56,9 @@ async def chat_about_stock(
     """
     symbol = ticker.upper()
 
+    if request is None:
+        raise HTTPException(status_code=400, detail="Request body is required")
+
     try:
         # Gather context about the stock
         context_parts = []
@@ -73,11 +76,11 @@ async def chat_about_stock(
             SELECT
                 dpi.direction,
                 dpi.labels,
-                dpi.raw_chunk,
+                dpi.idea_text,
                 dm.created_at,
-                dm.author_name
+                dm.author
             FROM discord_parsed_ideas dpi
-            LEFT JOIN discord_messages dm ON dpi.message_id = dm.message_id
+            LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
             WHERE UPPER(dpi.primary_symbol) = :symbol
             ORDER BY dm.created_at DESC
             LIMIT 5
@@ -89,10 +92,13 @@ async def chat_about_stock(
         if ideas_data:
             ideas_context = f"\n\nRecent trading ideas for {symbol}:\n"
             for idea in ideas_data:
-                direction = idea.get("direction", "neutral")
-                labels = idea.get("labels", [])
-                raw_text = idea.get("raw_chunk", "")[:200]
-                author = idea.get("author_name", "Unknown")
+                idea_dict = (
+                    dict(idea._mapping) if hasattr(idea, "_mapping") else dict(idea)
+                )
+                direction = idea_dict.get("direction") or "neutral"
+                labels = idea_dict.get("labels") or []
+                raw_text = (idea_dict.get("idea_text") or "")[:200]
+                author = idea_dict.get("author") or "Unknown"
                 ideas_context += f"- [{direction.upper()}] {', '.join(labels) if labels else 'No labels'}: \"{raw_text}\" - {author}\n"
             context_parts.append(ideas_context)
             sources.append("Discord trading ideas")
@@ -102,7 +108,7 @@ async def chat_about_stock(
             """
             SELECT
                 p.quantity,
-                p.average_cost
+                p.average_buy_price
             FROM positions p
             WHERE UPPER(p.symbol) = :symbol
               AND p.quantity > 0
@@ -113,9 +119,13 @@ async def chat_about_stock(
         )
 
         if position_data:
-            pos = position_data[0]
-            qty = pos["quantity"]
-            avg_cost = pos["average_cost"]
+            pos = (
+                dict(position_data[0]._mapping)
+                if hasattr(position_data[0], "_mapping")
+                else dict(position_data[0])
+            )
+            qty = pos.get("quantity") or 0
+            avg_cost = pos.get("average_buy_price") or 0
             context_parts.append(
                 f"\nYou own {qty} shares of {symbol} at avg cost ${avg_cost:.2f}"
             )

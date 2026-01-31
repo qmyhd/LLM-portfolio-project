@@ -25,6 +25,28 @@ logger = logging.getLogger(__name__)
 security = HTTPBearer(auto_error=False)
 
 
+def is_auth_disabled() -> bool:
+    """
+    Check if authentication is disabled for local development.
+
+    Auth is disabled when:
+    - DISABLE_AUTH=true (explicit), OR
+    - ENVIRONMENT=development AND API_SECRET_KEY is not set
+
+    Returns:
+        True if auth should be skipped
+    """
+    # Explicit disable flag
+    if os.getenv("DISABLE_AUTH", "").lower() in ("true", "1", "yes"):
+        return True
+
+    # Auto-disable in development if no key is configured
+    env = os.getenv("ENVIRONMENT", "development")
+    has_key = bool(os.getenv("API_SECRET_KEY"))
+
+    return env == "development" and not has_key
+
+
 def get_api_secret_key() -> str:
     """
     Get the API secret key from environment.
@@ -49,21 +71,29 @@ def get_api_secret_key() -> str:
 
 async def require_api_key(
     credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
-) -> str:
+) -> Optional[str]:
     """
     FastAPI dependency that validates API key authentication.
 
     Expects: Authorization: Bearer <API_SECRET_KEY>
 
+    In development mode (DISABLE_AUTH=true or no API_SECRET_KEY set),
+    authentication is skipped entirely.
+
     Args:
         credentials: The HTTP authorization credentials from the request
 
     Returns:
-        The validated API key (for logging/auditing if needed)
+        The validated API key (for logging/auditing if needed), or None if auth disabled
 
     Raises:
-        HTTPException: 401 if credentials are missing or invalid
+        HTTPException: 401 if credentials are missing or invalid (production only)
     """
+    # Skip auth in development mode
+    if is_auth_disabled():
+        logger.debug("Auth disabled - skipping authentication")
+        return None
+
     if credentials is None:
         logger.warning("Request missing Authorization header")
         raise HTTPException(

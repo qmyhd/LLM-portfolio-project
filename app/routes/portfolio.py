@@ -7,14 +7,14 @@ Endpoints:
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.db import execute_sql
 from src.snaptrade_collector import SnapTradeCollector
-from src.price_service import get_latest_close
+from src.price_service import get_latest_closes_batch
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,11 +72,10 @@ async def get_portfolio():
             SELECT
                 p.symbol,
                 p.quantity,
-                p.average_cost,
+                p.average_buy_price as average_cost,
                 p.raw_symbol,
-                a.account_id
+                p.account_id
             FROM positions p
-            JOIN accounts a ON p.account_id = a.account_id
             WHERE p.quantity > 0
             ORDER BY p.symbol
             """,
@@ -94,18 +93,29 @@ async def get_portfolio():
             fetch_results=True,
         )
 
+        # Extract all symbols and batch fetch prices (single query instead of N queries)
+        position_rows = []
+        symbols_to_fetch = []
+        for row in positions_data or []:
+            row_dict: dict[str, Any] = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)  # type: ignore[arg-type]
+            position_rows.append(row_dict)
+            symbols_to_fetch.append(row_dict["symbol"])
+
+        # Batch fetch all prices in ONE database query
+        prices_map = get_latest_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
+
         positions = []
         total_value = 0.0
         total_cost = 0.0
         total_day_change = 0.0
 
-        for row in positions_data or []:
-            symbol = row["symbol"]
-            quantity = float(row["quantity"] or 0)
-            avg_cost = float(row["average_cost"] or 0)
+        for row_dict in position_rows:
+            symbol = row_dict["symbol"]
+            quantity = float(row_dict["quantity"] or 0)
+            avg_cost = float(row_dict["average_cost"] or 0)
 
-            # Get current price from OHLCV data
-            current_price = get_latest_close(symbol) or avg_cost
+            # Get current price from batch-fetched prices, fallback to avg_cost
+            current_price = prices_map.get(symbol, avg_cost)
 
             # Calculate position metrics
             market_value = quantity * current_price
@@ -139,10 +149,16 @@ async def get_portfolio():
             total_day_change += day_change
 
         # Get cash and buying power
-        cash = float(balances_data[0]["total_cash"] or 0) if balances_data else 0
-        buying_power = (
-            float(balances_data[0]["total_buying_power"] or 0) if balances_data else 0
-        )
+        if balances_data:
+            bal_row = balances_data[0]
+            bal_dict: dict[str, Any] = (
+                dict(bal_row._mapping) if hasattr(bal_row, "_mapping") else dict(bal_row)  # type: ignore[arg-type]
+            )
+            cash = float(bal_dict["total_cash"] or 0)
+            buying_power = float(bal_dict["total_buying_power"] or 0)
+        else:
+            cash = 0
+            buying_power = 0
 
         # Add cash to total value
         total_portfolio_value = total_value + cash
@@ -182,14 +198,17 @@ async def get_portfolio():
 
         # Get last update time
         last_updated = execute_sql(
-            "SELECT MAX(updated_at) as last_update FROM positions",
+            "SELECT MAX(sync_timestamp) as last_update FROM positions",
             fetch_results=True,
         )
-        last_update_str = (
-            str(last_updated[0]["last_update"])
-            if last_updated and last_updated[0]["last_update"]
-            else ""
-        )
+        last_update_str = ""
+        if last_updated:
+            last_row = last_updated[0]
+            last_dict: dict[str, Any] = (
+                dict(last_row._mapping) if hasattr(last_row, "_mapping") else dict(last_row)  # type: ignore[arg-type]
+            )
+            if last_dict.get("last_update"):
+                last_update_str = str(last_dict["last_update"])
 
         return PortfolioResponse(
             summary=summary,
@@ -214,11 +233,16 @@ async def sync_portfolio():
     """
     try:
         collector = SnapTradeCollector()
-        collector.sync_all()
+        results = collector.collect_all_data(write_parquet=False)
 
         return {
-            "status": "success",
+            "status": "success" if results.get("success") else "partial",
             "message": "Portfolio sync completed",
+            "accounts": results.get("accounts", 0),
+            "balances": results.get("balances", 0),
+            "positions": results.get("positions", 0),
+            "orders": results.get("orders", 0),
+            "errors": results.get("errors", []),
         }
     except Exception as e:
         logger.error(f"Error syncing portfolio: {e}")
