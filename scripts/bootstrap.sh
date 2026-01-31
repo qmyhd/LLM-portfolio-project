@@ -121,8 +121,7 @@ install_python() {
     sudo apt install -y \
         python${PYTHON_VERSION} \
         python${PYTHON_VERSION}-venv \
-        python${PYTHON_VERSION}-dev \
-        python${PYTHON_VERSION}-distutils
+        python${PYTHON_VERSION}-dev
     
     # Set Python 3.12 as default python3
     sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1

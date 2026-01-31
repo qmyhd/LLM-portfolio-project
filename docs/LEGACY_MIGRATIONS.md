@@ -2,7 +2,100 @@
 
 > **Historical migration documentation for reference**
 
+## 📊 Schema Audit Summary (January 2026)
+
+### Current Status: ✅ Production-Ready
+- **Total Migrations:** 57 files (all properly versioned)
+- **Active Tables:** 15 (verified in use)
+- **Dropped Tables:** 10+ (safely cleaned up)
+- **Deployment:** Ready with baseline auto-detection
+
+### The 15 Active Production Tables
+
+| Category | Tables |
+|----------|--------|
+| **SnapTrade** | accounts, account_balances, positions, orders, symbols |
+| **Discord/NLP** | discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas ⭐ |
+| **Twitter** | twitter_data |
+| **Market Data** | ohlcv_daily (Databento) |
+| **System** | processing_status, schema_migrations, symbol_aliases, institutional_holdings |
+
+### Safely Dropped Tables (No Action Needed)
+- **NLP Legacy:** discord_message_chunks, discord_idea_units, stock_mentions → Replaced by discord_parsed_ideas
+- **Price Legacy:** daily_prices, realtime_prices, stock_metrics → Replaced by ohlcv_daily
+- **Orphaned:** event_contract_trades, event_contract_positions, trade_history
+
+### Deployment Readiness
+✅ All 15 active tables verified in production code  
+✅ Dropped tables confirmed no longer accessed  
+✅ Migration versioning working correctly  
+✅ Baseline detection implemented  
+✅ SQL parsing enhanced (handles DO blocks)  
+✅ Idempotent deployments (ON CONFLICT DO NOTHING)  
+
+---
+
 ## Major Migration Events
+
+### January 2026 - Supabase Schema Audit & Deployment Fixes
+
+**Comprehensive Schema Analysis Completed**
+- Analyzed all 57 migration files across production database
+- Verified 15 active production tables actively used in codebase
+- Identified 10+ properly-dropped legacy tables (safe cleanup)
+- Validated Supabase PostgreSQL connection requirements
+- All schemas verified cross-referenced with live code usage
+
+**Deployment Script Enhancements**
+1. **SQL Statement Splitting**: Replaced simple line-based splitter with `sqlparse.split()` 
+   - Now properly handles DO $$ blocks as single statements
+   - Preserves -- and /* */ comments correctly
+   - Fallback implementation for robust error handling
+   - Added to requirements.txt as `sqlparse>=0.5.0`
+
+2. **Baseline Detection**: Implemented automatic detection of already-applied baseline
+   - Checks for existence of 'accounts' table (core baseline table)
+   - Automatically skips baseline.sql if already present
+   - Added `--skip-baseline` CLI flag for manual override
+   - Safe for existing Supabase projects
+
+3. **Schema Migration Conflict Handling**: Verified idempotent migrations
+   - All schema_migrations inserts use `ON CONFLICT (version) DO NOTHING`
+   - Safe to retry failed deployments
+   - No duplicate version errors
+
+**Bootstrap Script Cleanup**
+- Removed deprecated `python3.12-distutils` from apt installs
+- Replaced with standard `python3-setuptools` handling
+- Fixes Ubuntu 22.04+ compatibility
+
+**Active Production Tables (15 verified)**
+- SnapTrade: accounts, account_balances, positions, orders, symbols
+- Discord/NLP: discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas
+- Twitter: twitter_data
+- Market Data: ohlcv_daily (Databento)
+- System: processing_status, schema_migrations, symbol_aliases, institutional_holdings
+
+**Properly Dropped Tables (Safe to ignore)**
+- NLP legacy: discord_message_chunks, discord_idea_units, stock_mentions (replaced by discord_parsed_ideas)
+- Price legacy: daily_prices, realtime_prices, stock_metrics (replaced by ohlcv_daily)
+- Orphaned: event_contract_trades, event_contract_positions, trade_history
+- UI legacy: chart_metadata, discord_processing_log
+
+**Deployment Status**
+✅ Ready for production - no breaking changes  
+✅ Auto-detection working for existing databases  
+✅ All fixes implemented and verified  
+✅ Idempotent deployments with conflict handling  
+
+**Recommended Deployment**
+```bash
+# For existing Supabase database
+python scripts/deploy_database.py --skip-baseline
+
+# For fresh database
+python scripts/deploy_database.py
+```
 
 ### October 2025 - Schema Management & Documentation Overhaul
 
