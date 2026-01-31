@@ -1127,19 +1127,16 @@ def _get_python_type(col_info, table_name, col_name, type_mapping, jsonb_array_f
 
 def _table_name_to_class_name(table_name: str) -> str:
     """Convert table name to Python class name."""
-    # Handle special cases - current 19 tables as of migration 049
+    # Handle special cases - current 15 tables as of migration 054
     name_mapping = {
-        # SnapTrade/Brokerage (6 tables)
+        # SnapTrade/Brokerage (5 tables)
         "accounts": "Account",
         "account_balances": "AccountBalance",
         "positions": "Position",
         "orders": "Order",
         "symbols": "Symbol",
-        "trade_history": "TradeHistory",
-        # Market Data (3 tables)
-        "daily_prices": "DailyPrice",
-        "realtime_prices": "RealtimePrice",
-        "stock_metrics": "StockMetrics",
+        # Market Data (1 table - ohlcv_daily)
+        "ohlcv_daily": "OHLCVDaily",
         # Discord/Social (4 tables)
         "discord_messages": "DiscordMessage",
         "discord_market_clean": "DiscordMarketClean",
@@ -1147,11 +1144,10 @@ def _table_name_to_class_name(table_name: str) -> str:
         "discord_parsed_ideas": "DiscordParsedIdea",
         # Twitter (1 table)
         "twitter_data": "TwitterData",
-        # Event Contracts (2 tables)
-        "event_contract_positions": "EventContractPosition",
-        "event_contract_trades": "EventContractTrade",
         # Institutional (1 table)
         "institutional_holdings": "InstitutionalHolding",
+        # Symbol Management (1 table)
+        "symbol_aliases": "SymbolAlias",
         # System (2 tables)
         "processing_status": "ProcessingStatus",
         "schema_migrations": "SchemaMigration",
@@ -1166,19 +1162,16 @@ def _table_name_to_class_name(table_name: str) -> str:
 
 def _get_table_description(table_name: str) -> str:
     """Get description for table."""
-    # Current 19 tables as of migration 049
+    # Current 15 tables as of migration 054
     descriptions = {
-        # SnapTrade/Brokerage (6 tables)
+        # SnapTrade/Brokerage (5 tables)
         "accounts": "SnapTrade account information",
         "account_balances": "Account balance information",
         "positions": "SnapTrade position data",
         "orders": "Trading orders with comprehensive tracking",
         "symbols": "Symbol metadata and trading information",
-        "trade_history": "Trade history records",
-        # Market Data (3 tables)
-        "daily_prices": "Daily OHLCV price data",
-        "realtime_prices": "Real-time price updates",
-        "stock_metrics": "Financial metrics and ratios",
+        # Market Data (1 table - ohlcv_daily)
+        "ohlcv_daily": "Daily OHLCV price data from Databento",
         # Discord/Social (4 tables)
         "discord_messages": "Discord message data with analysis",
         "discord_market_clean": "Cleaned market-related Discord messages",
@@ -1186,11 +1179,10 @@ def _get_table_description(table_name: str) -> str:
         "discord_parsed_ideas": "LLM-parsed trading ideas from Discord",
         # Twitter (1 table)
         "twitter_data": "Twitter/X data from Discord shared links",
-        # Event Contracts (2 tables)
-        "event_contract_positions": "Event contract position data",
-        "event_contract_trades": "Event contract trade records",
         # Institutional (1 table)
         "institutional_holdings": "Institutional holdings data (13F)",
+        # Symbol Management (1 table)
+        "symbol_aliases": "Symbol alias mappings for ticker resolution",
         # System (2 tables)
         "processing_status": "Processing status tracking",
         "schema_migrations": "Schema version tracking",

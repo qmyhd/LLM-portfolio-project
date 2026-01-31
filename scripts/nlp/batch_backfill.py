@@ -53,6 +53,11 @@ from typing import Dict, Any, Optional
 # Add project root to path
 sys.path.insert(0, str(__file__).rsplit("scripts", 1)[0].rstrip("/\\"))
 
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )

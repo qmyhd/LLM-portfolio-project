@@ -16,6 +16,15 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+# Project root
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -23,9 +32,6 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
-
-# Project root
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def run_script(script_path: str, args: list[str] = None, timeout: int = 600) -> bool:

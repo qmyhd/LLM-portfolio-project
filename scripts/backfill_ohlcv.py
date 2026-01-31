@@ -28,6 +28,11 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv(project_root / ".env")
 
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging."""

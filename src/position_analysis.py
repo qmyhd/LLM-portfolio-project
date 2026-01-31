@@ -191,14 +191,14 @@ def get_current_position_size(symbol: str) -> float:
 
 
 def get_current_price(symbol: str) -> float:
-    """Get current price for a symbol from realtime_prices table."""
+    """Get current price for a symbol from ohlcv_daily table (latest close)."""
     try:
         from src.db import execute_sql
 
         result = execute_sql(
             """
-            SELECT price FROM realtime_prices
-            WHERE symbol = :symbol ORDER BY timestamp DESC LIMIT 1
+            SELECT close FROM ohlcv_daily
+            WHERE symbol = :symbol ORDER BY date DESC LIMIT 1
         """,
             {"symbol": symbol},
             fetch_results=True,

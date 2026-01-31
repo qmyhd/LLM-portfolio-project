@@ -1,3 +1,8 @@
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 import logging
 import discord
 from discord.ext import commands
