@@ -3,12 +3,36 @@ name: Plan
 description: "Researches and outlines multi-step implementation plans. Use for complex features requiring coordination across multiple files, modules, or schema changes."
 argument-hint: Outline the goal or problem to research and plan
 model: Claude Opus 4.5
-tools: [read, azure-mcp/search, search/usages, web/fetch, web/githubRepo, "sequentialthinking/*", "memory/*", "context7/*", vscode/getProjectSetupInfo,vscode/installExtension,vscode/newWorkspace,vscode/runCommand]
-target: vscode
+tools:
+  - read
+  - search
+  - search/usages
+  - fetch_webpage
+  - github_repo
+  - mcp_sequentialthi_sequentialthinking
+  - mcp_memory
+  - mcp_context7_resolve-library-id
+  - mcp_context7_get-library-docs
+  - get_project_setup_info
 handoffs:
-  - portfolio-assistant
-  - docs-agent
-  - Context7-Expert
+  - label: "🚀 Implement This Plan"
+    agent: portfolio-assistant
+    prompt: |
+      Please implement the plan I've outlined above.
+      
+      Start with the first step and report progress.
+    send: false
+  - label: "📚 Research Docs First"
+    agent: docs-agent
+    prompt: |
+      Before I finalize this plan, I need to understand some parts of the codebase better.
+    send: false
+  - label: "📖 Check Library Docs"
+    agent: Context7-Expert
+    prompt: |
+      For this plan, I need to verify the correct API for a library.
+    send: false
+target: vscode
 ---
 
 # Planning Agent Instructions

@@ -34,6 +34,7 @@ handoffs:
       how this library is currently used in our project.
       Please explain the existing integration.
     send: false
+target: vscode
 ---
 
 # Context7 Documentation Expert
