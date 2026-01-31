@@ -15,6 +15,11 @@ Security:
 - Bind to 127.0.0.1 (Nginx handles public traffic with SSL)
 """
 
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone

@@ -28,6 +28,11 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "src"))
 
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 from src.config import settings
 from src.db import get_sync_engine, test_connection, execute_sql
 

@@ -11,6 +11,11 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 from src.db import execute_sql
 from src.config import settings
 

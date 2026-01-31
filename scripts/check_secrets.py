@@ -98,7 +98,9 @@ def main():
     except Exception as e:
         print(f"\n❌ Failed to load secrets: {e}")
         print("\nPossible causes:")
-        print("  1. EC2 instance role doesn't have secretsmanager:GetSecretValue permission")
+        print(
+            "  1. EC2 instance role doesn't have secretsmanager:GetSecretValue permission"
+        )
         print("  2. Secret name doesn't exist in AWS Secrets Manager")
         print("  3. AWS region mismatch")
         print("\nTo debug:")
@@ -112,9 +114,11 @@ def main():
 
     required_keys = [
         "DATABASE_URL",
+        "SUPABASE_URL",
         "SUPABASE_SERVICE_ROLE_KEY",
         "OPENAI_API_KEY",
         "DISCORD_BOT_TOKEN",
+        "API_SECRET_KEY",
     ]
 
     recommended_keys = [

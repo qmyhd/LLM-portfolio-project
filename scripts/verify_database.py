@@ -41,6 +41,11 @@ import traceback
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
+# Bootstrap AWS secrets FIRST, before any other src imports
+from src.env_bootstrap import bootstrap_env
+
+bootstrap_env()
+
 try:
     from sqlalchemy import create_engine, inspect, text, MetaData
     from sqlalchemy.engine import Engine
@@ -697,8 +702,7 @@ class DatabaseSchemaVerifier:
             "positions": [["symbol"], ["account_id"]],
             "discord_messages": [["timestamp"], ["author"]],
             "symbols": [["ticker"]],  # Should be unique
-            "daily_prices": [["symbol"], ["date"]],
-            "realtime_prices": [["symbol"]],
+            "ohlcv_daily": [["symbol"], ["date"]],  # Replaces daily_prices
         }
 
         index_results = {}
