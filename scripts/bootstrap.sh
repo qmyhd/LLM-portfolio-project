@@ -161,7 +161,9 @@ setup_project() {
     if [ ! -d "${PROJECT_DIR}" ]; then
         log_info "Cloning repository..."
         cd /home/ubuntu
-        git clone https://github.com/qmyhd/LLM-portfolio-project.git ${PROJECT_NAME} || {
+        git clone https://github.com/qmyhd/LLM-portfolio-project.git ${PROJECT_NAME}
+    fi
+    
     cd "${PROJECT_DIR}"
     
     # Create virtual environment
@@ -286,10 +288,19 @@ EOF
 
     log_info "Systemd services created and enabled"
     log_warn "Services NOT started yet - verify AWS Secrets Manager access first"
-        unzip -q awscliv2.zip
-        sudo ./aws/install
-        rm -rf awscliv2.zip aws
-    fi
+}
+
+# =============================================================================
+# Step 8: Setup AWS CLI
+# =============================================================================
+setup_aws() {
+    log_info "Installing AWS CLI v2..."
+    
+    cd /tmp
+    curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+    unzip -q awscliv2.zip
+    sudo ./aws/install
+    rm -rf awscliv2.zip aws
     
     log_info "AWS CLI version: $(aws --version)"
     log_info "Configure AWS credentials via IAM role attached to EC2 instance"
