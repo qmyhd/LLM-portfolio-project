@@ -1,0 +1,26 @@
+# Parser Regression Test Fixtures
+# Each line is a JSON object with test case data
+# Lines starting with # are comments
+#
+# Format:
+# {"content": "message text", "expected": {...}, "category": "...", "notes": "..."}
+#
+# Expected fields:
+# - ideas_count: exact number or [min, max] range
+# - min_ideas: minimum number of ideas expected
+# - not_noise: true if message should produce ideas
+# - instruments: expected instrument types
+# - primary_symbols: expected symbols (null for sector/macro)
+# - labels_any: at least one of these labels should appear
+# - labels_all: all of these labels must appear
+# - skip_quality_check: true to skip short-idea validation
+#
+# To capture real responses, run with --capture-fixtures flag (when implemented)
+
+{"content": "Bought 100 shares of AAPL at 185", "expected": {"ideas_count": 1, "not_noise": true, "primary_symbols": ["AAPL"], "labels_any": ["TRADE_EXECUTION"]}, "category": "trade_execution", "notes": "Simple buy order"}
+{"content": "Sold my NVDA position, taking profits here", "expected": {"ideas_count": 1, "not_noise": true, "primary_symbols": ["NVDA"], "labels_any": ["TRADE_EXECUTION"]}, "category": "trade_execution", "notes": "Profit-taking sale"}
+{"content": "Looking at SPY 450c for next week, premium around $2.50", "expected": {"ideas_count": 1, "not_noise": true, "instruments": ["option"], "primary_symbols": ["SPY"]}, "category": "options", "notes": "Call option with strike and premium"}
+{"content": "TSLA bearish below 200, targeting 180", "expected": {"ideas_count": 1, "not_noise": true, "primary_symbols": ["TSLA"], "labels_any": ["SENTIMENT_CONVICTION", "PRICE_TARGET"]}, "category": "analysis", "notes": "Bearish outlook with target"}
+{"content": "Trimmed my Amazon position by 25%", "expected": {"ideas_count": 1, "not_noise": true, "primary_symbols": ["AMZN"], "labels_any": ["TRADE_EXECUTION"]}, "category": "trade_execution", "notes": "Partial position reduction with company name alias"}
+{"content": "Good morning everyone!", "expected": {"ideas_count": 0, "not_noise": false}, "category": "noise", "notes": "Social greeting - should be filtered as noise"}
+{"content": "BTC short 65k", "expected": {"ideas_count": 1, "not_noise": true, "skip_quality_check": true}, "category": "crypto", "notes": "Short crypto alert - exempt from length check"}

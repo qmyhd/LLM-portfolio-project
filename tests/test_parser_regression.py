@@ -20,6 +20,8 @@ import sys
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Union
 
+import pytest
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -599,6 +601,7 @@ def run_parser_regression(verbose: bool = True) -> Dict[str, Any]:
 # =============================================================================
 
 
+@pytest.mark.openai
 def test_parser_regression_all_pass():
     """Pytest test: All regression cases should pass (soft fail - warnings only)."""
     result = run_parser_regression(verbose=False)

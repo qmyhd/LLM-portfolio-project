@@ -206,6 +206,7 @@ class TestLogoHelper:
 
     def test_fetch_from_logo_dev_success(self):
         """Test Logo.dev API success path."""
+        from src.bot.ui import logo_helper
         from src.bot.ui.logo_helper import _fetch_from_logo_dev
 
         mock_response = MagicMock()
@@ -214,7 +215,8 @@ class TestLogoHelper:
         mock_response.headers.get.return_value = "image/png"
 
         with patch("src.bot.ui.logo_helper.requests.get", return_value=mock_response):
-            with patch.dict("os.environ", {"LOGO_DEV_API_KEY": "pk_test_key"}):
+            # Patch module-level constant (already loaded from env at import time)
+            with patch.object(logo_helper, "LOGO_DEV_API_KEY", "pk_test_key"):
                 url = _fetch_from_logo_dev("AAPL")
                 assert url is not None
                 assert "logo.dev" in url
