@@ -51,7 +51,7 @@ class PriceLevel(BaseModel):
 class StockIdea(BaseModel):
     """Trading idea from Discord messages."""
 
-    id: int
+    id: str
     messageId: str
     symbol: str
     direction: str  # "bullish", "bearish", "neutral"
@@ -119,25 +119,30 @@ async def get_stock_profile(
     symbol = ticker.upper()
 
     try:
-        # Get symbol info from database
+        # Get symbol info from database (symbols table uses ticker, description, exchange_name)
         symbol_data = execute_sql(
             """
-            SELECT symbol, name, exchange
+            SELECT ticker, description, exchange_name
             FROM symbols
-            WHERE UPPER(symbol) = :symbol
+            WHERE UPPER(ticker) = :symbol
             """,
             params={"symbol": symbol},
             fetch_results=True,
         )
 
-        if not symbol_data:
-            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
-
-        symbol_info = symbol_data[0]
+        # If not found in symbols, still try to get price data
+        symbol_info: dict = {}
+        if symbol_data:
+            row = symbol_data[0]
+            symbol_info = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)  # type: ignore[arg-type]
 
         # Get current and previous close from OHLCV
         current_price = get_latest_close(symbol) or 0.0
         previous_close = get_previous_close(symbol) or current_price
+
+        # If no price data and no symbol info, return 404
+        if current_price == 0.0 and not symbol_info:
+            raise HTTPException(status_code=404, detail=f"Symbol {symbol} not found")
 
         # Calculate day change
         day_change = current_price - previous_close
@@ -156,9 +161,9 @@ async def get_stock_profile(
 
         return StockProfileCurrent(
             symbol=symbol,
-            name=symbol_info.get("name", symbol),
+            name=symbol_info.get("description", symbol),
             sector=None,  # Would need sector data
-            exchange=symbol_info.get("exchange"),
+            exchange=symbol_info.get("exchange_name"),
             currentPrice=round(current_price, 2),
             previousClose=round(previous_close, 2),
             dayChange=round(day_change, 2),
@@ -217,15 +222,13 @@ async def get_stock_ideas(
                 dpi.direction,
                 dpi.labels,
                 dpi.confidence,
-                dpi.entry_levels,
-                dpi.target_levels,
-                dpi.stop_levels,
-                dpi.raw_chunk,
-                dm.author_name,
+                dpi.levels,
+                dpi.idea_text,
+                dm.author,
                 dm.created_at,
-                dm.channel_type
+                dm.channel
             FROM discord_parsed_ideas dpi
-            LEFT JOIN discord_messages dm ON dpi.message_id = dm.message_id
+            LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
             WHERE {where_clause}
             ORDER BY dm.created_at DESC
             LIMIT :limit
@@ -235,62 +238,55 @@ async def get_stock_ideas(
 
         ideas = []
         for row in ideas_data or []:
-            # Parse levels from JSON arrays
+            # Convert row to dict for easier access
+            row_dict = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+
+            # Parse levels from JSONB - each level has kind: entry|target|stop|support|resistance
             entry_levels = []
             target_levels = []
             stop_levels = []
 
-            if row.get("entry_levels"):
-                for level in row["entry_levels"]:
-                    if isinstance(level, dict):
-                        entry_levels.append(
-                            PriceLevel(
-                                price=level.get("price", 0),
-                                label=level.get("label"),
-                            )
-                        )
-                    elif isinstance(level, (int, float)):
-                        entry_levels.append(PriceLevel(price=float(level), label=None))
+            levels_data = row_dict.get("levels") or []
+            for level in levels_data:
+                if isinstance(level, dict):
+                    kind = level.get("kind", "")
+                    price = (
+                        level.get("value")
+                        or level.get("price")
+                        or level.get("high")
+                        or 0
+                    )
+                    label = level.get("qualifier") or level.get("label")
+                    price_level = PriceLevel(
+                        price=float(price) if price else 0, label=label
+                    )
 
-            if row.get("target_levels"):
-                for level in row["target_levels"]:
-                    if isinstance(level, dict):
-                        target_levels.append(
-                            PriceLevel(
-                                price=level.get("price", 0),
-                                label=level.get("label"),
-                            )
-                        )
-                    elif isinstance(level, (int, float)):
-                        target_levels.append(PriceLevel(price=float(level), label=None))
-
-            if row.get("stop_levels"):
-                for level in row["stop_levels"]:
-                    if isinstance(level, dict):
-                        stop_levels.append(
-                            PriceLevel(
-                                price=level.get("price", 0),
-                                label=level.get("label"),
-                            )
-                        )
-                    elif isinstance(level, (int, float)):
-                        stop_levels.append(PriceLevel(price=float(level), label=None))
+                    if kind == "entry":
+                        entry_levels.append(price_level)
+                    elif kind == "target":
+                        target_levels.append(price_level)
+                    elif kind == "stop":
+                        stop_levels.append(price_level)
 
             ideas.append(
                 StockIdea(
-                    id=row["id"],
-                    messageId=str(row["message_id"]),
-                    symbol=row["primary_symbol"],
-                    direction=row.get("direction", "neutral"),
-                    labels=row.get("labels", []) or [],
-                    confidence=float(row.get("confidence", 0.5)),
+                    id=str(row_dict["id"]),
+                    messageId=str(row_dict["message_id"]),
+                    symbol=row_dict["primary_symbol"],
+                    direction=row_dict.get("direction") or "neutral",
+                    labels=row_dict.get("labels") or [],
+                    confidence=float(row_dict.get("confidence") or 0.5),
                     entryLevels=entry_levels,
                     targetLevels=target_levels,
                     stopLevels=stop_levels,
-                    rawText=row.get("raw_chunk", ""),
-                    author=row.get("author_name"),
-                    createdAt=str(row["created_at"]) if row.get("created_at") else "",
-                    channelType=row.get("channel_type"),
+                    rawText=row_dict.get("idea_text") or "",
+                    author=row_dict.get("author"),
+                    createdAt=(
+                        str(row_dict["created_at"])
+                        if row_dict.get("created_at")
+                        else ""
+                    ),
+                    channelType=row_dict.get("channel"),
                 )
             )
 
@@ -362,15 +358,15 @@ async def get_stock_ohlcv(
         orders_data = execute_sql(
             """
             SELECT
-                DATE(filled_at) as date,
-                side,
-                filled_price as price,
+                DATE(time_executed) as date,
+                action as side,
+                execution_price as price,
                 filled_quantity as quantity
             FROM orders
             WHERE UPPER(symbol) = :symbol
-              AND filled_at >= :start_date
+              AND time_executed >= :start_date
               AND status = 'filled'
-            ORDER BY filled_at
+            ORDER BY time_executed
             """,
             params={"symbol": symbol, "start_date": start_date.isoformat()},
             fetch_results=True,

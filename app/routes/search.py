@@ -53,22 +53,23 @@ async def search_symbols(
 
     try:
         # Search symbols table
-        # Match symbol prefix OR name contains
+        # Match ticker prefix OR description contains
         results_data = execute_sql(
             """
-            SELECT DISTINCT
-                symbol,
-                name,
-                exchange
+            SELECT
+                ticker,
+                description,
+                exchange_code,
+                asset_type
             FROM symbols
-            WHERE UPPER(symbol) LIKE :prefix
-               OR UPPER(name) LIKE :contains
+            WHERE UPPER(ticker) LIKE :prefix
+               OR UPPER(description) LIKE :contains
             ORDER BY
-                CASE WHEN UPPER(symbol) = :exact THEN 0
-                     WHEN UPPER(symbol) LIKE :prefix THEN 1
+                CASE WHEN UPPER(ticker) = :exact THEN 0
+                     WHEN UPPER(ticker) LIKE :prefix THEN 1
                      ELSE 2
                 END,
-                symbol
+                ticker
             LIMIT :limit
             """,
             params={
@@ -81,11 +82,19 @@ async def search_symbols(
         )
 
         results = []
+        seen_tickers = set()
         for row in results_data or []:
-            symbol = row["symbol"]
+            row_dict = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+            symbol = row_dict.get("ticker") or ""
 
-            # Determine type (ETF or stock based on common patterns)
-            is_etf = symbol in [
+            # Skip duplicates
+            if symbol in seen_tickers:
+                continue
+            seen_tickers.add(symbol)
+
+            # Determine type based on asset_type column or common ETF patterns
+            asset_type = row_dict.get("asset_type") or ""
+            is_etf = asset_type.lower() == "etf" or symbol in [
                 "SPY",
                 "QQQ",
                 "IWM",
@@ -101,7 +110,7 @@ async def search_symbols(
             results.append(
                 SearchResult(
                     symbol=symbol,
-                    name=row.get("name", symbol),
+                    name=row_dict.get("description") or symbol,
                     sector=None,  # Would need sector data in symbols table
                     type="etf" if is_etf else "stock",
                 )
