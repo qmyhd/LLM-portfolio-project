@@ -34,7 +34,7 @@ Sophisticated data-driven portfolio analytics system:
 - **UI System**: Standardized embed factory with color coding, interactive views (portfolio filters, help dropdown), and pagination
 - **NLP Pipeline**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
 - **OHLCV Pipeline**: Databento Historical API → Supabase `ohlcv_daily`
-- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 054_drop_chart_metadata.sql, 15 Supabase tables)
+- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 057_add_orders_notified.sql, 17 Supabase tables)
 
 ## 📁 Project Map & Service Purposes
 
@@ -259,7 +259,7 @@ TWITTER_BEARER_TOKEN=your_bearer_token
 - **Real-time writes**: All operations use `execute_sql()` → Supabase PostgreSQL with connection pooling
 - **🚨 KEY REQUIREMENT**: Must use `SUPABASE_SERVICE_ROLE_KEY` in connection string to bypass RLS policies
 
-### Key Tables (15 Supabase tables as of migration 054)
+### Key Tables (17 Supabase tables as of migration 057)
 ```sql
 -- SnapTrade Integration (5 tables) 
 accounts, account_balances, positions, orders, symbols
@@ -279,10 +279,13 @@ symbol_aliases
 -- Market Data (1 table)
 ohlcv_daily  -- Databento OHLCV source
 
+-- Stock Analytics (2 tables)
+stock_profile_current, stock_profile_history  -- Derived metrics for dashboard
+
 -- System Configuration (2 tables)
 processing_status, schema_migrations
 
--- DROPPED in migration 049-054:
+-- DROPPED in migration 049-057:
 -- discord_processing_log, chart_metadata, discord_message_chunks, discord_idea_units, stock_mentions
 -- daily_prices, realtime_prices, stock_metrics (replaced by ohlcv_daily)
 -- event_contract_trades, event_contract_positions, trade_history (no runtime usage)

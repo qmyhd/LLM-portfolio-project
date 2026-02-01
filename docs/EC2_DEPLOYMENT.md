@@ -1,6 +1,6 @@
 # EC2 Deployment Guide
 
-> **Last Updated:** January 29, 2026
+> **Last Updated:** February 1, 2026
 > **Target:** Ubuntu 22.04 LTS (or 24.04 LTS)
 
 This guide covers deploying the LLM Portfolio Journal to EC2 with:

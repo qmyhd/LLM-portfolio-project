@@ -1,7 +1,7 @@
 # LLM Portfolio Journal - Architecture Documentation
 
-> **Last Updated:** January 27, 2026  
-> **Database:** PostgreSQL (Supabase) - 15 active tables, RLS 100% compliant
+> **Last Updated:** February 1, 2026  
+> **Database:** PostgreSQL (Supabase) - 17 core tables, RLS 100% compliant
 
 ## Overview
 
@@ -31,15 +31,15 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 - **No Fallback**: System requires PostgreSQL - no SQLite support
 - **RLS Enabled**: All tables have Row Level Security enabled
 
-**Key Tables (15 Supabase):**
+**Key Tables (17 Core in Supabase):**
 - **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`
-- **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`
-- **NLP Pipeline**: `discord_parsed_ideas` (canonical table for parsed trading ideas)
+- **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`, `discord_parsed_ideas`
 - **Symbol Management**: `symbol_aliases` (ticker variants for resolution)
 - **Market Data**: `ohlcv_daily` (Databento OHLCV source)
+- **Stock Analytics**: `stock_profile_current`, `stock_profile_history` (derived metrics)
 - **System**: `twitter_data`, `processing_status`, `schema_migrations`, `institutional_holdings`
 
-**Dropped Legacy Tables (Migration 049-054):**
+**Dropped Legacy Tables (Migrations 049-054):**
 - `discord_message_chunks`, `discord_idea_units`, `stock_mentions`, `discord_processing_log`, `chart_metadata`
 - `daily_prices`, `realtime_prices`, `stock_metrics` (replaced by `ohlcv_daily`)
 - `event_contract_trades`, `event_contract_positions`, `trade_history` (no runtime usage)

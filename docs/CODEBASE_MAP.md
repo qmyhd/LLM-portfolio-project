@@ -1,7 +1,7 @@
 # LLM Portfolio Journal - Codebase Map & Architecture Guide
 
-> **Generated on:** January 20, 2026
-> **Status:** Up-to-date following January 2026 OHLCV pipeline (Databento integration, ohlcv_daily table).
+> **Generated on:** February 1, 2026
+> **Status:** Up-to-date following February 2026 cleanup (17 core tables, stock_profile tables, migrations 051-057 applied).
 
 ## 1. Project Overview
 The **LLM Portfolio Journal** is a data-driven application that integrates brokerage data (SnapTrade), market information (Databento OHLCV via RDS), and social sentiment (Discord, Twitter) for trading analytics. The NLP pipeline uses OpenAI structured outputs to parse Discord messages into structured trading ideas.
@@ -46,7 +46,7 @@ Active scripts for running the OpenAI-based NLP parsing pipeline.
 SQL files defining the database structure. Ordered by prefix (e.g., `000_`, `015_`).
 *   **Source of Truth**: These files dictate the database state.
 *   **Process**: Apply via `deploy_database.py`.
-*   **Current**: 37 migration files (000_baseline through 050_ohlcv_daily)
+*   **Current**: 44 migration files (000_baseline through 057_add_orders_notified)
 
 ### `src/nlp/` - NLP Processing Modules
 The canonical NLP pipeline for parsing Discord messages into structured trading ideas.

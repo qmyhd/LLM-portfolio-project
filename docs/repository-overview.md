@@ -1,6 +1,6 @@
 # LLM Portfolio Journal - Repository Overview
 
-> **Last Updated:** January 31, 2026
+> **Last Updated:** February 1, 2026
 
 ## 🎯 What This Project Does
 
@@ -47,11 +47,11 @@ OpenAI-powered semantic parsing:
 
 ### `/schema/` - Database Migrations
 
-55+ SQL migration files managing the PostgreSQL schema:
+44 SQL migration files managing the PostgreSQL schema:
 
 - `000_baseline.sql` - Initial schema
 - Sequential migrations (`015_*.sql` through `057_*.sql`)
-- **15 active tables** including: `positions`, `orders`, `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`
+- **17 core tables** including: `positions`, `orders`, `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `stock_profile_current`
 
 ### `/scripts/` - Operational Tools
 
@@ -167,13 +167,14 @@ python -m src.bot.bot
 
 ---
 
-## 📊 Key Tables (15 Active)
+## 📊 Key Tables (17 Core)
 
 | Category        | Tables                                                                                      |
 | --------------- | ------------------------------------------------------------------------------------------- |
 | **Brokerage**   | `accounts`, `account_balances`, `positions`, `orders`, `symbols`                            |
 | **Discord**     | `discord_messages`, `discord_market_clean`, `discord_trading_clean`, `discord_parsed_ideas` |
 | **Market Data** | `ohlcv_daily`                                                                               |
+| **Analytics**   | `stock_profile_current`, `stock_profile_history`                                            |
 | **Social**      | `twitter_data`                                                                              |
 | **System**      | `processing_status`, `schema_migrations`, `symbol_aliases`, `institutional_holdings`        |
 
