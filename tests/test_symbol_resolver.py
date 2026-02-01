@@ -233,6 +233,7 @@ class TestLogoHelper:
 
     def test_fetch_from_logokit_fallback(self):
         """Test Logokit fallback API."""
+        from src.bot.ui import logo_helper
         from src.bot.ui.logo_helper import _fetch_from_logokit
 
         mock_response = MagicMock()
@@ -241,7 +242,8 @@ class TestLogoHelper:
         mock_response.headers.get.return_value = "image/png"
 
         with patch("src.bot.ui.logo_helper.requests.get", return_value=mock_response):
-            with patch.dict("os.environ", {"LOGOKIT_API_KEY": "pk_test_key"}):
+            # Patch module-level constant (already loaded from env at import time)
+            with patch.object(logo_helper, "LOGOKIT_API_KEY", "pk_test_key"):
                 url = _fetch_from_logokit("AAPL")
                 assert url is not None
                 assert "logokit" in url

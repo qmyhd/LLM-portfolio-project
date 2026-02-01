@@ -29,6 +29,7 @@ load_dotenv()
 from src.nlp.openai_parser import triage_message
 from src.nlp.preclean import is_bot_command, is_url_only
 
+import pytest
 
 FIXTURE_PATH = Path(__file__).parent / "fixtures" / "triage_regression.jsonl"
 
@@ -150,6 +151,7 @@ def run_triage_regression(verbose: bool = True) -> Dict[str, Any]:
 # =============================================================================
 
 
+@pytest.mark.openai
 def test_triage_regression_all_pass():
     """Pytest test: All regression cases must pass."""
     result = run_triage_regression(verbose=False)

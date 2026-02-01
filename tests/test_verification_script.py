@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 
 
+@pytest.mark.integration
 class TestVerificationScript:
     """Test the unified verify_database.py script."""
 
