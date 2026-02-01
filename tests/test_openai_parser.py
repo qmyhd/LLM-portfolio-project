@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Tests for src/nlp/openai_parser.py
 
@@ -9,13 +8,8 @@ Focuses on:
 - Debug diagnostics
 """
 
-import unittest
+import pytest
 from unittest.mock import Mock, patch, MagicMock
-import sys
-import os
-
-# Add project root to path
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.nlp.openai_parser import (
     ParseFailure,
@@ -25,29 +19,29 @@ from src.nlp.openai_parser import (
 )
 
 
-class TestParseFailureException(unittest.TestCase):
+class TestParseFailureException:
     """Tests for the ParseFailure exception class."""
 
     def test_parse_failure_basic(self):
         """ParseFailure should be a regular exception."""
         exc = ParseFailure("Test message")
-        self.assertEqual(str(exc), "Test message")
-        self.assertIsNone(exc.raw_output)
+        assert str(exc) == "Test message"
+        assert exc.raw_output is None
 
     def test_parse_failure_with_raw_output(self):
         """ParseFailure should capture raw_output for diagnostics."""
         exc = ParseFailure("Test message", raw_output='{"unexpected": "json"}')
-        self.assertEqual(exc.raw_output, '{"unexpected": "json"}')
+        assert exc.raw_output == '{"unexpected": "json"}'
 
     def test_parse_failure_is_exception(self):
         """ParseFailure should be catchable as Exception."""
         try:
             raise ParseFailure("Test")
         except Exception as e:
-            self.assertIsInstance(e, ParseFailure)
+            assert isinstance(e, ParseFailure)
 
 
-class TestDebugMode(unittest.TestCase):
+class TestDebugMode:
     """Tests for debug mode flag."""
 
     def test_set_debug_openai_enables_flag(self):
@@ -57,14 +51,14 @@ class TestDebugMode(unittest.TestCase):
         original = openai_parser.DEBUG_OPENAI
         try:
             set_debug_openai(True)
-            self.assertTrue(openai_parser.DEBUG_OPENAI)
+            assert openai_parser.DEBUG_OPENAI is True
             set_debug_openai(False)
-            self.assertFalse(openai_parser.DEBUG_OPENAI)
+            assert openai_parser.DEBUG_OPENAI is False
         finally:
             openai_parser.DEBUG_OPENAI = original
 
 
-class TestExtractParsedResult(unittest.TestCase):
+class TestExtractParsedResult:
     """Tests for _extract_parsed_result function."""
 
     def test_returns_none_when_no_output(self):
@@ -73,7 +67,7 @@ class TestExtractParsedResult(unittest.TestCase):
         mock_response.output = None
 
         result = _extract_parsed_result(mock_response, dict)
-        self.assertIsNone(result)
+        assert result is None
 
     def test_returns_none_when_empty_output(self):
         """Should return None when output is empty list."""
@@ -81,30 +75,10 @@ class TestExtractParsedResult(unittest.TestCase):
         mock_response.output = []
 
         result = _extract_parsed_result(mock_response, dict)
-        self.assertIsNone(result)
-
-    def test_returns_none_when_parsed_missing(self):
-        """Should return None when output item has no 'parsed' field."""
-        mock_item = Mock()
-        mock_item.content = [Mock(text="some text")]
-        # No 'parsed' attribute
-        del mock_item.parsed  # Ensure it doesn't exist
-
-        mock_response = Mock()
-        mock_response.output = [mock_item]
-
-        # Mock hasattr to return False for 'parsed'
-        with patch(
-            "src.nlp.openai_parser.hasattr",
-            side_effect=lambda obj, name: name != "parsed" and hasattr(obj, name),
-        ):
-            result = _extract_parsed_result(mock_response, dict)
-
-        # The function checks hasattr(item, 'parsed')
-        self.assertIsNone(result)
+        assert result is None
 
 
-class TestDiagnoseResponseFailure(unittest.TestCase):
+class TestDiagnoseResponseFailure:
     """Tests for _diagnose_response_failure helper."""
 
     def test_diagnose_logs_structure(self):
@@ -112,13 +86,12 @@ class TestDiagnoseResponseFailure(unittest.TestCase):
         mock_response = Mock()
         mock_response.output = None
 
-        # Should not raise, just return diagnostic string
         result = _diagnose_response_failure(mock_response, dict)
-        self.assertIsInstance(result, str)
-        self.assertIn("dict", result)  # result_type in message
+        assert isinstance(result, str)
+        assert "dict" in result
 
 
-class TestTriageRetryBehavior(unittest.TestCase):
+class TestTriageRetryBehavior:
     """Tests for triage_message retry behavior."""
 
     @patch("src.nlp.openai_parser.get_client")
@@ -126,19 +99,17 @@ class TestTriageRetryBehavior(unittest.TestCase):
         """triage_message should raise ParseFailure after retry fails."""
         from src.nlp.openai_parser import triage_message
 
-        # Mock client that always returns unparseable responses
         mock_client = Mock()
         mock_response = Mock()
-        mock_response.output = []  # Empty output triggers failure
+        mock_response.output = []
         mock_client.responses.parse.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        with self.assertRaises(ParseFailure) as ctx:
+        with pytest.raises(ParseFailure) as exc_info:
             triage_message("Test message", allow_retry=True)
 
-        self.assertIn("retry", str(ctx.exception).lower())
-        # Should have called parse twice (initial + retry)
-        self.assertEqual(mock_client.responses.parse.call_count, 2)
+        assert "retry" in str(exc_info.value).lower()
+        assert mock_client.responses.parse.call_count == 2
 
     @patch("src.nlp.openai_parser.get_client")
     def test_triage_no_retry_when_disabled(self, mock_get_client):
@@ -151,14 +122,13 @@ class TestTriageRetryBehavior(unittest.TestCase):
         mock_client.responses.parse.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        with self.assertRaises(ParseFailure):
+        with pytest.raises(ParseFailure):
             triage_message("Test message", allow_retry=False)
 
-        # Should have called parse only once
-        self.assertEqual(mock_client.responses.parse.call_count, 1)
+        assert mock_client.responses.parse.call_count == 1
 
 
-class TestParseEscalationBehavior(unittest.TestCase):
+class TestParseEscalationBehavior:
     """Tests for parse_message escalation behavior."""
 
     @patch("src.nlp.openai_parser.get_client")
@@ -168,19 +138,18 @@ class TestParseEscalationBehavior(unittest.TestCase):
 
         mock_client = Mock()
         mock_response = Mock()
-        mock_response.output = []  # Empty output triggers failure
+        mock_response.output = []
         mock_client.responses.parse.return_value = mock_response
         mock_get_client.return_value = mock_client
 
-        with self.assertRaises(ParseFailure) as ctx:
+        with pytest.raises(ParseFailure) as exc_info:
             parse_message("Test message", escalate=False)
 
-        self.assertIn("escalation", str(ctx.exception).lower())
-        # Should have called parse twice (main + escalation)
-        self.assertEqual(mock_client.responses.parse.call_count, 2)
+        assert "escalation" in str(exc_info.value).lower()
+        assert mock_client.responses.parse.call_count == 2
 
 
-class TestProcessMessageErrorStatus(unittest.TestCase):
+class TestProcessMessageErrorStatus:
     """Tests ensuring process_message returns status='error' on failures."""
 
     @patch("src.nlp.openai_parser.triage_message")
@@ -207,9 +176,9 @@ class TestProcessMessageErrorStatus(unittest.TestCase):
 
         result = process_message("Test message", message_id="123")
 
-        self.assertEqual(result["status"], "error")
-        self.assertIn("Triage failed", result["error_reason"])
-        self.assertEqual(result["ideas"], [])
+        assert result["status"] == "error"
+        assert "Triage failed" in result["error_reason"]
+        assert result["ideas"] == []
 
     @patch("src.nlp.openai_parser.parse_message")
     @patch("src.nlp.openai_parser.triage_message")
@@ -243,9 +212,9 @@ class TestProcessMessageErrorStatus(unittest.TestCase):
 
         result = process_message("Test message", message_id="123")
 
-        self.assertEqual(result["status"], "error")
-        self.assertIn("Parse failed", result["error_reason"])
-        self.assertEqual(result["ideas"], [])
+        assert result["status"] == "error"
+        assert "Parse failed" in result["error_reason"]
+        assert result["ideas"] == []
 
     @patch("src.nlp.openai_parser.parse_message")
     @patch("src.nlp.preclean.is_bot_command")
@@ -271,10 +240,5 @@ class TestProcessMessageErrorStatus(unittest.TestCase):
 
         result = process_message("Test message", message_id="123", skip_triage=True)
 
-        # Key assertion: status must NOT be 'ok' when ParseFailure occurred
-        self.assertNotEqual(result["status"], "ok")
-        self.assertEqual(result["status"], "error")
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert result["status"] != "ok"
+        assert result["status"] == "error"

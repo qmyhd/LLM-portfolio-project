@@ -2,17 +2,17 @@
 Test the unified database verification script.
 """
 
-import unittest
+import pytest
 import subprocess
 import sys
 import json
 from pathlib import Path
 
 
-class TestVerificationScript(unittest.TestCase):
+class TestVerificationScript:
     """Test the unified verify_database.py script."""
 
-    def setUp(self):
+    def setup_method(self):
         """Set up test fixtures."""
         self.script_path = "scripts.verify_database"
         self.project_root = Path(__file__).parent.parent
@@ -28,50 +28,39 @@ class TestVerificationScript(unittest.TestCase):
     def test_help_output(self):
         """Test that the script shows help without errors."""
         result = self.run_script(["--help"])
-        self.assertEqual(result.returncode, 0)
-        self.assertIn("Unified Database Schema Verification", result.stdout)
-        self.assertIn("--mode", result.stdout)
-        self.assertIn("--table", result.stdout)
+        assert result.returncode == 0
+        assert "Unified Database Schema Verification" in result.stdout
+        assert "--mode" in result.stdout
+        assert "--table" in result.stdout
 
     def test_basic_mode(self):
         """Test basic verification mode."""
         result = self.run_script(["--mode", "basic"])
-        # Should complete without crashing
-        self.assertIn("DATABASE SCHEMA VERIFICATION - BASIC MODE", result.stdout)
+        assert "DATABASE SCHEMA VERIFICATION - BASIC MODE" in result.stdout
 
     def test_json_output(self):
         """Test JSON output format."""
         result = self.run_script(["--mode", "basic", "--json"])
         try:
             data = json.loads(result.stdout)
-            self.assertIn("mode", data)
-            self.assertIn("timestamp", data)
-            self.assertIn("database_connected", data)
+            assert "mode" in data
+            assert "timestamp" in data
+            assert "database_connected" in data
         except json.JSONDecodeError:
-            self.fail("Output is not valid JSON")
+            pytest.fail("Output is not valid JSON")
 
     def test_table_specific_verification(self):
         """Test verification of a specific table."""
         result = self.run_script(["--table", "positions", "--mode", "comprehensive"])
-        # Should complete (return code 2 means verification failed, which is expected)
-        self.assertIn(result.returncode, [0, 2])  # 0 = success, 2 = verification failed
-        self.assertIn("COMPREHENSIVE MODE", result.stdout)
+        assert result.returncode in [0, 2]
+        assert "COMPREHENSIVE MODE" in result.stdout
 
     def test_performance_mode(self):
         """Test performance verification mode."""
         result = self.run_script(["--performance"])
-        # The script runs with --performance flag
-        # On Windows, emoji encoding can cause issues, so we just verify
-        # the script was invoked and didn't crash with an import error
         output = (result.stdout or "") + (result.stderr or "")
-        # Verify we got some output indicating the script ran
-        self.assertTrue(
+        assert (
             "Database source" in output
             or "PERFORMANCE" in output
-            or result.returncode in [0, 1, 2],
-            f"Script should run (got output: {output[:200]}...)",
-        )
-
-
-if __name__ == "__main__":
-    unittest.main()
+            or result.returncode in [0, 1, 2]
+        ), f"Script should run (got output: {output[:200]}...)"

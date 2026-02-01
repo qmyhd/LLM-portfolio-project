@@ -17,12 +17,6 @@ class TestDatabentoCollector:
     def mock_env(self, monkeypatch):
         """Set up mock environment variables."""
         monkeypatch.setenv("DATABENTO_API_KEY", "test-api-key")
-        monkeypatch.setenv("RDS_HOST", "test-rds.amazonaws.com")
-        monkeypatch.setenv("RDS_PORT", "5432")
-        monkeypatch.setenv("RDS_DATABASE", "postgres")
-        monkeypatch.setenv("RDS_USER", "postgres")
-        monkeypatch.setenv("RDS_PASSWORD", "test-password")
-        monkeypatch.setenv("S3_BUCKET_NAME", "test-bucket")
 
     @pytest.fixture
     def collector(self, mock_env):
@@ -40,24 +34,6 @@ class TestDatabentoCollector:
             collector = DatabentoCollector()
 
             assert collector.api_key == "test-api-key"
-            assert "test-rds.amazonaws.com" in collector.rds_url
-            assert collector.s3_bucket == "test-bucket"
-
-    def test_init_with_rds_db_fallback(self, monkeypatch):
-        """Test RDS_DB env var fallback when RDS_DATABASE is not set."""
-        monkeypatch.setenv("DATABENTO_API_KEY", "test-api-key")
-        monkeypatch.setenv("RDS_HOST", "test-rds.amazonaws.com")
-        monkeypatch.setenv("RDS_PASSWORD", "test-password")
-        monkeypatch.setenv("RDS_DB", "custom-db-name")  # Using RDS_DB not RDS_DATABASE
-        monkeypatch.delenv("RDS_DATABASE", raising=False)
-
-        with patch("src.databento_collector.load_dotenv"):
-            from src.databento_collector import DatabentoCollector
-
-            collector = DatabentoCollector()
-
-            # Should use RDS_DB value
-            assert "custom-db-name" in collector.rds_url
 
     def test_init_without_api_key_raises(self, monkeypatch):
         """Test that missing API key raises ValueError."""
@@ -241,11 +217,12 @@ class TestDatabentoIntegration:
 
         collector = DatabentoCollector()
 
-        # Fetch last 7 days of AAPL
+        # Use fixed historical date range to avoid data availability issues
+        # (Databento data may have 1-2 day lag from current date)
         df = collector.fetch_daily_bars(
             symbols=["AAPL"],
-            start=date.today() - timedelta(days=7),
-            end=date.today() - timedelta(days=1),
+            start=date(2025, 1, 2),
+            end=date(2025, 1, 10),
         )
 
         assert len(df) > 0

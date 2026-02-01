@@ -138,4 +138,34 @@ addopts = [
 filterwarnings = [
     "ignore::DeprecationWarning",
     "ignore::PendingDeprecationWarning",
+    "ignore:All support for the `google.generativeai` package has ended:FutureWarning",
+]
+markers = [
+    "openai: marks tests that require OpenAI API (deselect with '-m \"not openai\"')",
+    "slow: marks tests as slow running (deselect with '-m \"not slow\"')",
+    "integration: marks integration tests that may require external services",
+]
+
+# ============================================
+# Coverage Configuration
+# ============================================
+[tool.coverage.run]
+source = ["src"]
+omit = [
+    "tests/*",
+    "scripts/*",
+    "**/__pycache__/*",
+    ".venv/*",
+]
+branch = true
+
+[tool.coverage.report]
+fail_under = 40
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
 ]

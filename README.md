@@ -3,6 +3,7 @@
 A data-driven portfolio analytics system integrating brokerage data, market information, and social sentiment analysis for trading insights.
 
 **Documentation:**
+
 - [AGENTS.md](AGENTS.md) - AI contributor guide
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - System architecture
 - [docs/README.md](docs/README.md) - Documentation hub
@@ -24,12 +25,14 @@ A data-driven portfolio analytics system integrating brokerage data, market info
 ## Quick Start
 
 ### Prerequisites
+
 - Python 3.9+ with virtual environment
 - PostgreSQL/Supabase database (required)
 - Discord bot token (optional)
 - API keys for SnapTrade, OpenAI (optional)
 
 ### Installation
+
 ```bash
 # 1. Validate deployment readiness
 python tests/validate_deployment.py
@@ -42,10 +45,11 @@ cp .env.example .env  # Add your API keys
 ```
 
 ### Core Commands
+
 ```bash
 python -m src.bot.bot                # Run Discord bot
 python scripts/backfill_ohlcv.py     # OHLCV price data backfill
-make test                            # Run tests
+pytest tests/ -v                     # Run tests
 ```
 
 ---
@@ -53,11 +57,13 @@ make test                            # Run tests
 ## Configuration
 
 Copy the example environment file and configure your API keys:
+
 ```bash
 cp .env.example .env
 ```
 
 ### Required Environment Variables
+
 ```ini
 # Database (PostgreSQL/Supabase)
 DATABASE_URL=postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres
@@ -68,6 +74,7 @@ OPENAI_API_KEY=your_openai_key
 ```
 
 ### Optional Integrations
+
 ```ini
 # Brokerage data (SnapTrade)
 SNAPTRADE_CLIENT_ID=your_client_id
@@ -108,6 +115,7 @@ AWS_REGION=us-east-1
 ```
 
 EC2 backfill workflow:
+
 ```bash
 ssh ubuntu@your-ec2-host
 cd llm-portfolio && git pull
@@ -125,6 +133,7 @@ PostgreSQL-only architecture with Supabase integration:
 - **Service Role Key**: Must use `sb_secret_*` key in connection string to bypass RLS
 
 ### Connection Configuration
+
 ```ini
 # Supabase Transaction Pooler (recommended)
 DATABASE_URL=postgresql://postgres.[project]:[service-role-key]@[region].pooler.supabase.com:6543/postgres
@@ -138,6 +147,7 @@ DATABASE_DIRECT_URL=postgresql://postgres.[project]:[service-role-key]@[region].
 ## Usage Examples
 
 ### Discord Bot Commands
+
 ```bash
 python -m src.bot.bot
 
@@ -149,6 +159,7 @@ python -m src.bot.bot
 ```
 
 ### OHLCV Backfill
+
 ```bash
 python scripts/backfill_ohlcv.py --daily              # Last 5 days
 python scripts/backfill_ohlcv.py --full               # Full historical
@@ -161,7 +172,9 @@ python scripts/backfill_ohlcv.py --prune              # Remove old data
 ## Testing
 
 ```bash
-make test                                      # Full test suite
+pytest tests/ -v                                   # Full test suite
+pytest tests/ -v --cov=src                         # With coverage
+pytest tests/ -v -m "not openai"                   # Skip API tests
 python scripts/verify_database.py --mode comprehensive  # Schema validation
 python tests/test_integration.py               # Integration tests
 python scripts/bootstrap.py                    # System health check

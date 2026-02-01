@@ -6,6 +6,7 @@
 ## 🚨 Critical Setup Sequence
 
 **ALWAYS follow this order before any development:**
+
 1. **Pre-validation**: `python tests/validate_deployment.py` - validates environment readiness
 2. **Automated setup**: `python scripts/bootstrap.py` - handles dependencies, database, migration
 3. **Environment config**: Copy `.env.example` to `.env` with your API keys
@@ -18,15 +19,13 @@ python -m src.bot.bot                  # Run Discord bot
 python scripts/bootstrap.py           # Complete setup
 
 # Development & debugging
-make test                              # Run pytest test suite
+pytest tests/ -v                       # Run pytest test suite
+pytest tests/ -v --cov=src             # Run tests with coverage
 python tests/test_integration.py      # Core integration tests
 python scripts/verify_database.py     # Database schema validation
 
 # OHLCV data backfill
 python scripts/backfill_ohlcv.py --daily  # Databento OHLCV
-
-# PowerShell-friendly alternatives (Windows)
-# All commands work in PowerShell via 'make' or direct Python calls
 ```
 
 ## 🧰 Copilot Toolsets
@@ -43,14 +42,15 @@ Leverage the curated Copilot tool palettes to stay efficient:
 ## 🎯 Critical Architecture Patterns
 
 ### Database Engine (PostgreSQL/Supabase Only)
+
 ```python
 # ALWAYS use these patterns for database operations:
 from src.db import execute_sql, get_connection, get_sync_engine
 
 # Universal query execution with named placeholders (REQUIRED)
 result = execute_sql(
-    "SELECT * FROM positions WHERE symbol = :symbol", 
-    params={'symbol': 'AAPL'}, 
+    "SELECT * FROM positions WHERE symbol = :symbol",
+    params={'symbol': 'AAPL'},
     fetch_results=True
 )
 
@@ -66,17 +66,19 @@ engine = get_sync_engine()
 ```
 
 ### Retry & Error Handling (Required for all external calls)
+
 ```python
 from src.retry_utils import hardened_retry, database_retry
 
 @hardened_retry(max_retries=3, delay=2)  # API calls
 def api_operation(): pass
 
-@database_retry(max_retries=3)  # Database operations  
+@database_retry(max_retries=3)  # Database operations
 def db_operation(): pass
 ```
 
 ### File Operations (Path-based, not strings)
+
 ```python
 from pathlib import Path
 # ALWAYS use Path objects, never string concatenation
@@ -85,6 +87,7 @@ data_file = BASE_DIR / "data" / "raw" / "positions.csv"
 ```
 
 ### Ticker Symbol Extraction (Core business logic)
+
 ```python
 from src.message_cleaner import extract_ticker_symbols
 # Handles $AAPL, $BRK.B format with 1-6 character limit
@@ -94,6 +97,7 @@ symbols = extract_ticker_symbols("Text with $AAPL and $MSFT")
 ## 🔧 Key Integration Points
 
 ### NLP Pipeline (OpenAI Structured Outputs)
+
 ```python
 from src.nlp.openai_parser import process_message
 from src.nlp.schemas import MessageParseResult, ParsedIdea
@@ -111,11 +115,12 @@ if result and result.ideas:
 ```
 
 ### Discord Bot (Modular Command Pattern)
+
 ```python
 # Commands located in src/bot/commands/
 # Registration pattern in each command file:
 def register(bot: commands.Bot, twitter_client=None):
-    @bot.command(name="command_name")  
+    @bot.command(name="command_name")
     async def command_func(ctx, param: str = "default"):
         # Command implementation - can use twitter_client if needed
         pass
@@ -126,6 +131,7 @@ bot = create_bot(command_prefix="!", twitter_client=twitter_client)
 ```
 
 ### Configuration (Pydantic + Environment)
+
 ```python
 from src.config import settings, get_database_url
 config = settings()  # Auto-loads from .env with validation
@@ -137,6 +143,7 @@ table_name = CHANNEL_TYPE_TO_TABLE["trading"]  # -> "discord_trading_clean"
 ```
 
 ### NLP Pipeline (OpenAI Structured Outputs)
+
 ```python
 # Parse Discord messages into structured idea units
 from src.nlp.openai_parser import process_message
@@ -155,12 +162,13 @@ if result and result.ideas:
 ```
 
 ### Ticker Accuracy (preclean.py)
+
 ```python
 # Deterministic ticker extraction before LLM + post-validation
 from src.nlp.preclean import (
     extract_candidate_tickers,      # Pre-LLM deterministic extraction
     validate_llm_tickers,           # Post-validate LLM output against candidates
-    is_reserved_signal_word,        # Check if word is trading terminology  
+    is_reserved_signal_word,        # Check if word is trading terminology
     RESERVED_SIGNAL_WORDS,          # 80+ terms: tgt, pt, target, support, etc.
     ALIAS_MAP,                      # Company names → tickers (~100 entries)
 )
@@ -171,6 +179,7 @@ candidates = extract_candidate_tickers("price target $50 for AAPL")
 ```
 
 ### Concurrency Guards (Advisory Locks)
+
 ```python
 # REQUIRED for delete+insert patterns on discord_parsed_ideas
 # Prevents race conditions when multiple workers process same message
@@ -182,16 +191,18 @@ execute_sql("SELECT pg_advisory_xact_lock(:lock_key)", params={"lock_key": lock_
 ## 🔍 Development Workflow
 
 ### Before Making Changes
+
 ```bash
 # 1. Validate current state
 python tests/validate_deployment.py
-# 2. Run integration tests  
+# 2. Run integration tests
 python test_integration.py
 # 3. Check database health
 python -c "from src.db import test_connection; print(test_connection())"
 ```
 
-### Schema Management & Migrations  
+### Schema Management & Migrations
+
 ```bash
 # Deploy latest schema changes
 python scripts/deploy_database.py
@@ -202,12 +213,14 @@ python scripts/run_timestamp_migration.py
 ```
 
 ### Testing Patterns
+
 - **Integration**: `python tests/test_integration.py` - tests ticker extraction, imports
-- **Unit tests**: `pytest tests/ --maxfail=1 --disable-warnings -v`  
+- **Unit tests**: `pytest tests/ --maxfail=1 --disable-warnings -v`
 - **Database**: Use `execute_sql("SELECT COUNT(*) FROM table_name", fetch_results=True)`
 - **Schema validation**: `python scripts/verify_database.py --verbose`
 
 ### File Structure Context
+
 - **Entry points**: `src/bot/bot.py`
 - **Price data**: `src/price_service.py` (RDS ohlcv_daily), `src/snaptrade_collector.py` (brokerage)
 - **OHLCV pipeline**: `src/databento_collector.py` → RDS/S3/Supabase
@@ -217,11 +230,13 @@ python scripts/run_timestamp_migration.py
 - **Bot commands**: `src/bot/commands/` (modular structure with `register()` functions)
 
 ### Data Flow Architecture
+
 ```
 SnapTrade + Discord + Twitter → PostgreSQL (Supabase) → NLP Parser → discord_parsed_ideas
 ```
 
 **NLP Pipeline Stage**:
+
 1. Discord messages stored in `discord_messages`
 2. `scripts/nlp/parse_messages.py` processes pending messages
 3. OpenAI structured outputs extract idea units with labels, symbols, levels

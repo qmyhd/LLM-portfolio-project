@@ -168,33 +168,3 @@ def test_chunk_indexing_db_compatibility():
             assert field in idea, f"Idea {idx} missing required field: {field}"
 
     print(f"✅ DB compatibility verified: All {len(ideas)} ideas have required fields")
-
-
-if __name__ == "__main__":
-    print("=" * 70)
-    print("CHUNK INDEXING UNIT TESTS")
-    print("=" * 70)
-
-    try:
-        print("\n1. Testing single-chunk message...")
-        test_single_chunk_indexing()
-
-        print("\n2. Testing multi-chunk message...")
-        test_multi_chunk_indexing()
-
-        print("\n3. Testing database compatibility...")
-        test_chunk_indexing_db_compatibility()
-
-        print("\n" + "=" * 70)
-        print("✅ ALL TESTS PASSED")
-        print("=" * 70)
-
-    except AssertionError as e:
-        print(f"\n❌ TEST FAILED: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n❌ UNEXPECTED ERROR: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)

@@ -13,7 +13,7 @@ class TestDividendReinvestmentDetection:
 
     def test_threshold_value(self):
         """Verify threshold is set correctly."""
-        assert DIVIDEND_REINVESTMENT_THRESHOLD == 2.00
+        assert DIVIDEND_REINVESTMENT_THRESHOLD == pytest.approx(2.00)
 
     def test_small_buy_is_drip(self):
         """Small BUY orders (< $2 notional) should be flagged as DRIP."""
@@ -24,7 +24,7 @@ class TestDividendReinvestmentDetection:
             "status": "EXECUTED",
         }
         formatter = OrderFormatter(order)
-        assert formatter.notional_value == 1.50
+        assert formatter.notional_value == pytest.approx(1.50)
         assert formatter.is_dividend_reinvestment is True
 
     def test_normal_buy_not_drip(self):
@@ -36,7 +36,7 @@ class TestDividendReinvestmentDetection:
             "status": "EXECUTED",
         }
         formatter = OrderFormatter(order)
-        assert formatter.notional_value == 50.00
+        assert formatter.notional_value == pytest.approx(50.00)
         assert formatter.is_dividend_reinvestment is False
 
     def test_sell_never_drip(self):
@@ -48,7 +48,7 @@ class TestDividendReinvestmentDetection:
             "status": "EXECUTED",
         }
         formatter = OrderFormatter(order)
-        assert formatter.notional_value == 0.50
+        assert formatter.notional_value == pytest.approx(0.50)
         assert formatter.is_dividend_reinvestment is False
 
     def test_edge_case_exactly_at_threshold(self):
@@ -60,7 +60,7 @@ class TestDividendReinvestmentDetection:
             "status": "EXECUTED",
         }
         formatter = OrderFormatter(order)
-        assert formatter.notional_value == 2.00
+        assert formatter.notional_value == pytest.approx(2.00)
         assert formatter.is_dividend_reinvestment is False
 
     def test_edge_case_just_under_threshold(self):
@@ -72,7 +72,7 @@ class TestDividendReinvestmentDetection:
             "status": "EXECUTED",
         }
         formatter = OrderFormatter(order)
-        assert formatter.notional_value == 1.99
+        assert formatter.notional_value == pytest.approx(1.99)
         assert formatter.is_dividend_reinvestment is True
 
     def test_buy_open_is_drip_candidate(self):
@@ -97,7 +97,3 @@ class TestDividendReinvestmentDetection:
         formatter = OrderFormatter(order)
         assert formatter.notional_value is None
         assert formatter.is_dividend_reinvestment is False
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

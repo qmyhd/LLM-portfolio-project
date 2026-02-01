@@ -559,7 +559,7 @@ def run_parser_regression(verbose: bool = True) -> Dict[str, Any]:
                     }
                 )
                 if verbose:
-                    print(f"  FAIL:")
+                    print("  FAIL:")
                     for fc in failed_checks:
                         print(f"    - {fc}")
 
@@ -610,21 +610,3 @@ def test_parser_regression_all_pass():
 
         for f in result["failures"]:
             warnings.warn(f"Parser regression: {f['content']} - {f['failures']}")
-
-
-# =============================================================================
-# CLI Entry Point
-# =============================================================================
-
-
-if __name__ == "__main__":
-    import argparse
-
-    parser = argparse.ArgumentParser(description="Run parser regression tests")
-    parser.add_argument("--quiet", "-q", action="store_true", help="Only show summary")
-    args = parser.parse_args()
-
-    result = run_parser_regression(verbose=not args.quiet)
-
-    # Exit with error code if any failures
-    sys.exit(1 if result["failed"] > 0 else 0)
