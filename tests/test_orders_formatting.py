@@ -8,8 +8,8 @@ Covers:
 - Nearest idea selection (mocked)
 """
 
-import unittest
-from datetime import datetime, timedelta
+import pytest
+from datetime import datetime
 from unittest.mock import patch, MagicMock
 
 from src.bot.formatting.orders_view import (
@@ -30,207 +30,206 @@ from src.bot.formatting.orders_view import (
 )
 
 
-class TestFormatMoney(unittest.TestCase):
+class TestFormatMoney:
     """Test format_money handles edge cases correctly."""
 
     def test_normal_value(self):
         """Normal monetary values format correctly."""
         result = format_money(1234.56)
-        self.assertIn("1,234", result)
-        self.assertIn("56", result)
+        assert "1,234" in result
+        assert "56" in result
 
         result = format_money(100)
-        self.assertIn("100", result)
+        assert "100" in result
 
     def test_negative_value(self):
         """Negative values show minus sign."""
         result = format_money(-50.5)
-        self.assertIn("-", result)
-        self.assertIn("50", result)
+        assert "-" in result
+        assert "50" in result
 
     def test_none_returns_na(self):
         """None returns N/A, not 'None' string."""
         result = format_money(None)
-        self.assertEqual(result, "N/A")
-        self.assertNotIn("None", result)
-        self.assertNotIn("none", result)
+        assert result == "N/A"
+        assert "None" not in result
 
     def test_nan_returns_na(self):
         """NaN values return N/A, not 'nan' string."""
         result = format_money(float("nan"))
-        self.assertEqual(result, "N/A")
-        self.assertNotIn("nan", result.lower())
+        assert result == "N/A"
+        assert "nan" not in result.lower()
 
     def test_include_sign_positive(self):
         """Positive values with include_sign show +."""
         result = format_money(100, include_sign=True)
-        self.assertIn("+", result)
-        self.assertIn("100", result)
+        assert "+" in result
+        assert "100" in result
 
     def test_zero_value(self):
         """Zero formats correctly, not as 'N/A'."""
-        # Zero is a valid value, should not be N/A
         result = format_money(0)
-        self.assertIn("0", result)
+        assert "0" in result
 
 
-class TestFormatPct(unittest.TestCase):
+class TestFormatPct:
     """Test format_pct handles edge cases correctly."""
 
     def test_normal_value(self):
         """Normal percentage values format correctly."""
-        self.assertEqual(format_pct(12.345), "+12.35%")
-        self.assertEqual(format_pct(-5.0), "-5.00%")
+        assert format_pct(12.345) == "+12.35%"
+        assert format_pct(-5.0) == "-5.00%"
 
     def test_none_returns_na(self):
         """None returns N/A."""
         result = format_pct(None)
-        self.assertEqual(result, "N/A")
-        self.assertNotIn("None", result)
+        assert result == "N/A"
+        assert "None" not in result
 
     def test_nan_returns_na(self):
         """NaN returns N/A."""
         result = format_pct(float("nan"))
-        self.assertEqual(result, "N/A")
-        self.assertNotIn("nan", result.lower())
+        assert result == "N/A"
+        assert "nan" not in result.lower()
 
 
-class TestFormatQty(unittest.TestCase):
+class TestFormatQty:
     """Test format_qty handles edge cases correctly."""
 
     def test_whole_number(self):
         """Whole numbers show without decimals."""
-        self.assertEqual(format_qty(10.0), "10")
-        self.assertEqual(format_qty(100), "100")
+        assert format_qty(10.0) == "10"
+        assert format_qty(100) == "100"
 
     def test_fractional_shares(self):
         """Fractional shares show decimals."""
         result = format_qty(0.001228)
-        self.assertIn("0.001228", result)
+        assert "0.001228" in result
 
     def test_none_returns_na(self):
         """None returns N/A."""
         result = format_qty(None)
-        self.assertEqual(result, "N/A")
-        self.assertNotIn("None", result)
+        assert result == "N/A"
+        assert "None" not in result
 
     def test_nan_returns_na(self):
         """NaN returns N/A."""
         result = format_qty(float("nan"))
-        self.assertEqual(result, "N/A")
-        self.assertNotIn("nan", result.lower())
+        assert result == "N/A"
+        assert "nan" not in result.lower()
 
     def test_zero_shows_zero(self):
         """Zero quantity shows '0', not 'N/A' or '0.0'."""
         result = format_qty(0)
-        # Zero is a valid qty, should show as "0"
-        self.assertEqual(result, "0")
-        self.assertNotIn("N/A", result)
+        assert result == "0"
+        assert "N/A" not in result
 
 
-class TestNormalizeSide(unittest.TestCase):
+class TestNormalizeSide:
     """Test action/side normalization."""
 
     def test_buy_variants(self):
         """Buy variants map to 'Bought'."""
         for action in ["BUY", "BUY_OPEN", "buy", "BOUGHT"]:
-            self.assertEqual(normalize_side(action), "Bought")
+            assert normalize_side(action) == "Bought"
 
     def test_sell_variants(self):
         """Sell variants map to 'Sold'."""
         for action in ["SELL", "SELL_CLOSE", "sell", "SOLD"]:
-            self.assertEqual(normalize_side(action), "Sold")
+            assert normalize_side(action) == "Sold"
 
     def test_none_returns_trade(self):
         """None returns 'Trade', not 'None'."""
         result = normalize_side(None)
-        self.assertEqual(result, "Trade")
-        self.assertNotIn("None", result)
+        assert result == "Trade"
+        assert "None" not in result
 
     def test_empty_returns_trade(self):
         """Empty string returns 'Trade'."""
         result = normalize_side("")
-        self.assertEqual(result, "Trade")
+        assert result == "Trade"
 
 
-class TestSafeStatus(unittest.TestCase):
+class TestSafeStatus:
     """Test status normalization."""
 
     def test_executed_variants(self):
         """Executed variants map correctly."""
-        self.assertEqual(safe_status({"status": "EXECUTED"}), "Executed")
-        self.assertEqual(safe_status({"status": "FILLED"}), "Executed")
+        assert safe_status({"status": "EXECUTED"}) == "Executed"
+        assert safe_status({"status": "FILLED"}) == "Executed"
 
     def test_canceled_variants(self):
         """Canceled variants map correctly."""
-        self.assertEqual(safe_status({"status": "CANCELED"}), "Canceled")
-        self.assertEqual(safe_status({"status": "CANCELLED"}), "Canceled")
+        assert safe_status({"status": "CANCELED"}) == "Canceled"
+        assert safe_status({"status": "CANCELLED"}) == "Canceled"
 
     def test_none_returns_unknown(self):
         """None/empty status returns 'Unknown'."""
         result = safe_status({"status": None})
-        self.assertEqual(result, "Unknown")
-        self.assertNotIn("None", result)
+        assert result == "Unknown"
+        assert "None" not in result
 
 
-class TestIsUuid(unittest.TestCase):
+class TestIsUuid:
     """Test UUID detection."""
 
     def test_valid_uuid(self):
         """Valid UUIDs are detected."""
-        self.assertTrue(is_uuid("6b4e77ed-a7c7-4012-bae7-3f62e0182828"))
-        self.assertTrue(is_uuid("12345678-1234-1234-1234-123456789abc"))
+        assert is_uuid("6b4e77ed-a7c7-4012-bae7-3f62e0182828") is True
+        assert is_uuid("12345678-1234-1234-1234-123456789abc") is True
 
     def test_ticker_not_uuid(self):
         """Regular tickers are not UUIDs."""
-        self.assertFalse(is_uuid("AAPL"))
-        self.assertFalse(is_uuid("AMZN"))
-        self.assertFalse(is_uuid("BRK.B"))
+        assert is_uuid("AAPL") is False
+        assert is_uuid("AMZN") is False
+        assert is_uuid("BRK.B") is False
 
     def test_none_not_uuid(self):
         """None is not a UUID."""
-        self.assertFalse(is_uuid(None))
-        self.assertFalse(is_uuid(""))
+        assert is_uuid(None) is False
+        assert is_uuid("") is False
 
 
-class TestParseOptionTicker(unittest.TestCase):
+class TestParseOptionTicker:
     """Test OCC option ticker parsing."""
 
     def test_call_option(self):
         """Call options parse correctly."""
         result = parse_option_ticker("AMZN  260123C00290000")
-        self.assertEqual(result["symbol"], "AMZN")
-        self.assertEqual(result["type"], "Call")
-        self.assertEqual(result["strike"], 290.0)
-        self.assertIn("AMZN", result["display"])
-        self.assertIn("290", result["display"])
-        self.assertIn("C", result["display"])
+        assert result is not None
+        assert result["symbol"] == "AMZN"
+        assert result["type"] == "Call"
+        assert result["strike"] == pytest.approx(290.0)
+        assert "AMZN" in result["display"]
+        assert "290" in result["display"]
+        assert "C" in result["display"]
 
     def test_put_option(self):
         """Put options parse correctly."""
         result = parse_option_ticker("SPY   241220P00580000")
-        self.assertEqual(result["symbol"], "SPY")
-        self.assertEqual(result["type"], "Put")
-        self.assertEqual(result["strike"], 580.0)
+        assert result is not None
+        assert result["symbol"] == "SPY"
+        assert result["type"] == "Put"
+        assert result["strike"] == pytest.approx(580.0)
 
     def test_none_returns_none(self):
         """None input returns None."""
-        self.assertIsNone(parse_option_ticker(None))
-        self.assertIsNone(parse_option_ticker(""))
+        assert parse_option_ticker(None) is None
+        assert parse_option_ticker("") is None
 
     def test_invalid_format(self):
         """Invalid format returns None."""
-        self.assertIsNone(parse_option_ticker("AAPL"))
-        self.assertIsNone(parse_option_ticker("not-an-option"))
+        assert parse_option_ticker("AAPL") is None
+        assert parse_option_ticker("not-an-option") is None
 
 
-class TestGetDisplaySymbol(unittest.TestCase):
+class TestGetDisplaySymbol:
     """Test display symbol resolution."""
 
     def test_regular_symbol(self):
         """Regular symbols return as-is."""
         order = {"symbol": "AAPL", "option_ticker": None}
-        self.assertEqual(get_display_symbol(order), "AAPL")
+        assert get_display_symbol(order) == "AAPL"
 
     def test_uuid_with_option_ticker(self):
         """UUID symbols use option_ticker display."""
@@ -239,8 +238,8 @@ class TestGetDisplaySymbol(unittest.TestCase):
             "option_ticker": "AMZN  260123C00290000",
         }
         result = get_display_symbol(order)
-        self.assertIn("AMZN", result)
-        self.assertIn("290", result)
+        assert "AMZN" in result
+        assert "290" in result
 
     def test_uuid_without_option_ticker(self):
         """UUID without option_ticker returns 'Option'."""
@@ -248,39 +247,38 @@ class TestGetDisplaySymbol(unittest.TestCase):
             "symbol": "6b4e77ed-a7c7-4012-bae7-3f62e0182828",
             "option_ticker": None,
         }
-        self.assertEqual(get_display_symbol(order), "Option")
+        assert get_display_symbol(order) == "Option"
 
 
-class TestFormatTimeDelta(unittest.TestCase):
+class TestFormatTimeDelta:
     """Test time delta formatting."""
 
     def test_same_time(self):
         """Very small deltas show 'same time'."""
-        self.assertEqual(_format_time_delta(30), "same time")
+        assert _format_time_delta(30) == "same time"
 
     def test_minutes(self):
         """Minutes format correctly."""
-        self.assertEqual(_format_time_delta(300), "+5m")  # 5 minutes
-        self.assertEqual(_format_time_delta(-1800), "-30m")  # -30 minutes
+        assert _format_time_delta(300) == "+5m"
+        assert _format_time_delta(-1800) == "-30m"
 
     def test_hours(self):
         """Hours format correctly."""
-        self.assertEqual(_format_time_delta(7200), "+2h")  # 2 hours
-        self.assertEqual(_format_time_delta(-3600), "-1h")  # -1 hour
+        assert _format_time_delta(7200) == "+2h"
+        assert _format_time_delta(-3600) == "-1h"
 
     def test_days(self):
         """Days format correctly."""
-        self.assertEqual(_format_time_delta(172800), "+2d")  # 2 days
-        self.assertEqual(_format_time_delta(-86400), "-1d")  # -1 day
+        assert _format_time_delta(172800) == "+2d"
+        assert _format_time_delta(-86400) == "-1d"
 
 
-class TestNearestIdeaSelection(unittest.TestCase):
+class TestNearestIdeaSelection:
     """Test nearest idea selection with mocked database."""
 
     @patch("src.db.execute_sql")
     def test_finds_nearest_idea(self, mock_sql):
         """Nearest idea is found and formatted correctly."""
-        # Mock database response
         mock_sql.return_value = [
             (
                 "AAPL looks bullish with strong support at $180",
@@ -292,12 +290,10 @@ class TestNearestIdeaSelection(unittest.TestCase):
 
         result = get_nearest_idea("AAPL", datetime.now())
 
-        self.assertIsNotNone(result)
-        self.assertEqual(
-            result["idea_text"], "AAPL looks bullish with strong support at $180"
-        )
-        self.assertAlmostEqual(result["confidence"], 0.85, places=2)
-        self.assertEqual(result["time_delta_str"], "-2h")
+        assert result is not None
+        assert result["idea_text"] == "AAPL looks bullish with strong support at $180"
+        assert result["confidence"] == pytest.approx(0.85, abs=0.01)
+        assert result["time_delta_str"] == "-2h"
 
     @patch("src.db.execute_sql")
     def test_no_matching_idea(self, mock_sql):
@@ -305,7 +301,7 @@ class TestNearestIdeaSelection(unittest.TestCase):
         mock_sql.return_value = []
 
         result = get_nearest_idea("AAPL", datetime.now())
-        self.assertIsNone(result)
+        assert result is None
 
     @patch("src.db.execute_sql")
     def test_database_error_returns_none(self, mock_sql):
@@ -313,15 +309,15 @@ class TestNearestIdeaSelection(unittest.TestCase):
         mock_sql.side_effect = Exception("DB error")
 
         result = get_nearest_idea("AAPL", datetime.now())
-        self.assertIsNone(result)
+        assert result is None
 
     def test_none_inputs(self):
         """None inputs return None."""
-        self.assertIsNone(get_nearest_idea(None, datetime.now()))
-        self.assertIsNone(get_nearest_idea("AAPL", None))
+        assert get_nearest_idea("", datetime.now()) is None  # type: ignore[arg-type]
+        assert get_nearest_idea("AAPL", None) is None  # type: ignore[arg-type]
 
 
-class TestFormatIdeaForEmbed(unittest.TestCase):
+class TestFormatIdeaForEmbed:
     """Test idea formatting for embed display."""
 
     def test_formats_correctly(self):
@@ -332,9 +328,10 @@ class TestFormatIdeaForEmbed(unittest.TestCase):
             "time_delta_str": "-2d",
         }
         result = format_idea_for_embed(idea)
-        self.assertIn('"AAPL looks bullish"', result)
-        self.assertIn("conf 0.85", result)
-        self.assertIn("-2d", result)
+        assert result is not None
+        assert '"AAPL looks bullish"' in result
+        assert "conf 0.85" in result
+        assert "-2d" in result
 
     def test_truncates_long_text(self):
         """Long text is truncated."""
@@ -344,15 +341,16 @@ class TestFormatIdeaForEmbed(unittest.TestCase):
             "time_delta_str": "+1d",
         }
         result = format_idea_for_embed(idea, max_length=100)
-        self.assertLessEqual(len(result), 150)  # Including metadata
-        self.assertIn("...", result)
+        assert result is not None
+        assert len(result) <= 150
+        assert "..." in result
 
     def test_none_returns_none(self):
         """None idea returns None."""
-        self.assertIsNone(format_idea_for_embed(None))
+        assert format_idea_for_embed(None) is None
 
 
-class TestOrderFormatter(unittest.TestCase):
+class TestOrderFormatter:
     """Test OrderFormatter class."""
 
     def test_basic_order(self):
@@ -369,9 +367,9 @@ class TestOrderFormatter(unittest.TestCase):
         }
         formatter = OrderFormatter(order, current_price=155.00)
 
-        self.assertEqual(formatter.symbol, "AAPL")
-        self.assertEqual(formatter.action_display, "Bought")
-        self.assertEqual(formatter.status_display, "Executed")
+        assert formatter.symbol == "AAPL"
+        assert formatter.action_display == "Bought"
+        assert formatter.status_display == "Executed"
 
     def test_option_order(self):
         """Option orders detect and display correctly."""
@@ -383,9 +381,9 @@ class TestOrderFormatter(unittest.TestCase):
         }
         formatter = OrderFormatter(order)
 
-        self.assertTrue(formatter.is_option)
-        self.assertIn("AMZN", formatter.symbol)
-        self.assertEqual(formatter.underlying_symbol, "AMZN")
+        assert formatter.is_option is True
+        assert "AMZN" in formatter.symbol
+        assert formatter.underlying_symbol == "AMZN"
 
     def test_to_embed_dict_no_nan(self):
         """Embed dict never contains 'nan' or 'None' strings."""
@@ -399,14 +397,13 @@ class TestOrderFormatter(unittest.TestCase):
         formatter = OrderFormatter(order)
         embed = formatter.to_embed_dict(include_idea=False)
 
-        # Check no "nan" or "None" strings in output
         for key, value in embed.items():
             if isinstance(value, str):
-                self.assertNotIn("nan", value.lower(), f"'nan' found in {key}")
-                self.assertNotIn("None", value, f"'None' found in {key}")
+                assert "nan" not in value.lower(), f"'nan' found in {key}"
+                assert "None" not in value, f"'None' found in {key}"
 
 
-class TestBestPrice(unittest.TestCase):
+class TestBestPrice:
     """Test best_price function."""
 
     def test_executed_order_uses_execution_price(self):
@@ -417,7 +414,7 @@ class TestBestPrice(unittest.TestCase):
             "limit_price": 149.00,
         }
         result = best_price(order)
-        self.assertIn("150", result)
+        assert "150" in result
 
     def test_pending_order_uses_limit_price(self):
         """Pending orders use limit_price."""
@@ -427,7 +424,7 @@ class TestBestPrice(unittest.TestCase):
             "limit_price": 149.00,
         }
         result = best_price(order)
-        self.assertIn("149", result)
+        assert "149" in result
 
     def test_nan_execution_price_falls_back(self):
         """NaN execution_price falls back to limit_price."""
@@ -437,9 +434,4 @@ class TestBestPrice(unittest.TestCase):
             "limit_price": 149.00,
         }
         result = best_price(order)
-        # Should not contain "nan"
-        self.assertNotIn("nan", result.lower())
-
-
-if __name__ == "__main__":
-    unittest.main()
+        assert "nan" not in result.lower()

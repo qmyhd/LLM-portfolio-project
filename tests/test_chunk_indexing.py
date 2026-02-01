@@ -18,6 +18,8 @@ Usage:
 import sys
 from pathlib import Path
 
+import pytest
+
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -28,6 +30,7 @@ load_dotenv()
 from src.nlp.openai_parser import process_message
 
 
+@pytest.mark.openai
 def test_single_chunk_indexing():
     """Test that single-chunk messages have all ideas at chunk_idx=0."""
     message = "Buy $AAPL at $150, sell $GOOGL at $180, watch $MSFT for breakout"
@@ -54,6 +57,7 @@ def test_single_chunk_indexing():
     print(f"✅ Single-chunk test passed: {len(ideas)} ideas all in chunk 0")
 
 
+@pytest.mark.openai
 def test_multi_chunk_indexing():
     """Test that multi-chunk messages have distinct chunk indices and local indices restart."""
     # Long structured message that will split into multiple chunks
@@ -138,6 +142,7 @@ $CVX also strong, dividend yield attractive at 3.5%. Good defensive play if mark
         )
 
 
+@pytest.mark.openai
 def test_chunk_indexing_db_compatibility():
     """Test that the returned idea dicts can be inserted into the database."""
     message = "Simple test: buy $AAPL"
@@ -168,33 +173,3 @@ def test_chunk_indexing_db_compatibility():
             assert field in idea, f"Idea {idx} missing required field: {field}"
 
     print(f"✅ DB compatibility verified: All {len(ideas)} ideas have required fields")
-
-
-if __name__ == "__main__":
-    print("=" * 70)
-    print("CHUNK INDEXING UNIT TESTS")
-    print("=" * 70)
-
-    try:
-        print("\n1. Testing single-chunk message...")
-        test_single_chunk_indexing()
-
-        print("\n2. Testing multi-chunk message...")
-        test_multi_chunk_indexing()
-
-        print("\n3. Testing database compatibility...")
-        test_chunk_indexing_db_compatibility()
-
-        print("\n" + "=" * 70)
-        print("✅ ALL TESTS PASSED")
-        print("=" * 70)
-
-    except AssertionError as e:
-        print(f"\n❌ TEST FAILED: {e}")
-        sys.exit(1)
-    except Exception as e:
-        print(f"\n❌ UNEXPECTED ERROR: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)

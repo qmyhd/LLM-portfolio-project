@@ -6,12 +6,15 @@
 ## 🚀 Quick Start for AI Coding Agents
 
 ### System Overview
+
 Sophisticated data-driven portfolio analytics system:
+
 - **Data Sources**: SnapTrade API + Discord bot + Twitter/X API + Databento OHLCV
 
 ## ⚠️ Important Notes for Agents
 
 ### Copilot Toolsets & MCP Helpers
+
 - **reader** – Inspect fresh diffs, diagnostics, and symbol usage before touching code.
 - **semantic_search** – Pair semantic queries with the sequential thinking tool for cross-file reasoning.
 - **codebase** – Combine global search, change history, and usages to orient quickly.
@@ -21,12 +24,14 @@ Sophisticated data-driven portfolio analytics system:
 - **Advanced MCP** – Use Supabase commands for schema checks, sequential thinking for complex plans, memory/context7 for durable notes and live documentation.
 
 ### SETUP SEQUENCE (CRITICAL)
+
 - **Storage**: PostgreSQL/Supabase with connection pooling and real-time capabilities
 - **Processing**: Advanced ETL pipelines with ticker extraction, sentiment analysis, and position tracking
 - **NLP Intelligence**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
 - **Interface**: Discord bot with modular commands, interactive charts, and real-time data collection
 
 ### Current Architecture (2026)
+
 - **Database Engine**: PostgreSQL-only with SQLAlchemy 2.0, Supabase pooler optimization (port 6543)
 - **Configuration**: Pydantic-based settings with comprehensive environment variable mapping
 - **Error Handling**: Hardened retry patterns with intelligent exception filtering
@@ -39,6 +44,7 @@ Sophisticated data-driven portfolio analytics system:
 ## 📁 Project Map & Service Purposes
 
 ### Entry Points
+
 ```bash
 src/bot/bot.py                        # Discord bot entry point with Twitter integration
 scripts/backfill_ohlcv.py             # Databento OHLCV backfill CLI for EC2
@@ -46,6 +52,7 @@ scripts/nlp/parse_messages.py         # NLP parsing pipeline entry point
 ```
 
 ### Core Services
+
 ```
 src/
 ├── 📊 Data Collection Layer
@@ -54,7 +61,7 @@ src/
 │   ├── databento_collector.py        # Databento OHLCV daily bars → Supabase
 │   └── twitter_analysis.py           # Twitter/X integration and sentiment analysis
 │
-├── 💾 Database Management  
+├── 💾 Database Management
 │   ├── db.py                         # Advanced SQLAlchemy engine: get_connection() → PostgreSQL with pooling
 │   └── config.py                     # Unified configuration: Pydantic settings with field mapping
 │
@@ -78,7 +85,7 @@ src/
         ├── help.py                    # Interactive help with dropdown categories
         ├── commands/                  # Commands in commands/ subdirectory
         │   ├── chart.py               # Advanced charting with FIFO position tracking
-        │   ├── history.py             # Message history fetching with deduplication  
+        │   ├── history.py             # Message history fetching with deduplication
         │   ├── process.py             # Channel data processing and statistics
         │   ├── snaptrade_cmd.py       # Portfolio, orders, movers, and brokerage status
         │   ├── twitter_cmd.py         # Twitter data analysis commands
@@ -91,6 +98,7 @@ src/
 ```
 
 ### Schemas & Migration
+
 ```
 schema/
 ├── 000_baseline.sql                  # SSOT baseline schema with 18 confirmed tables
@@ -119,6 +127,7 @@ scripts/
 ```
 
 ### Data Conventions
+
 - **PostgreSQL-only**: All data persists to Supabase PostgreSQL with CSV backup for historical data
 - **Database requirement**: PostgreSQL/Supabase connection required via `get_database_url()` (no SQLite fallback)
 - **Symbol extraction**: Robust regex patterns for `$TICKER` format, handles complex API responses
@@ -127,19 +136,21 @@ scripts/
 ## ⚡ Essential Setup Commands
 
 ### 🚨 Step 1: Pre-Setup Validation (ALWAYS RUN FIRST)
+
 ```bash
 # CRITICAL: Run this before any setup to validate deployment readiness
 python tests/validate_deployment.py
 
 # This validates:
 # - Critical files and Python syntax
-# - Directory structure and entry points  
+# - Directory structure and entry points
 # - Core module imports and dependencies
 # - .gitignore patterns and git readiness
 # - Returns deployment readiness status
 ```
 
 ### 🎯 Step 2: Automated Bootstrap Setup (RECOMMENDED)
+
 ```bash
 # COMPREHENSIVE: Fully automated setup with health checks
 python scripts/bootstrap.py
@@ -154,49 +165,46 @@ python scripts/bootstrap.py
 ```
 
 ### 🔧 Step 3: Manual Environment Setup (If Bootstrap Fails)
+
 ```bash
 # Complete development setup
 python -m venv .venv
 .venv\Scripts\Activate.ps1  # Windows PowerShell
 pip install -r requirements.txt && pip install -e .
 
-# Alternative: Use Makefile (if available)
-make setup
-
 # Environment configuration
 cp .env.example .env  # Edit with your API keys
 ```
 
 ### 💾 Step 4: Database Setup
+
 ```bash
 # Database initialization and migration
-make init-db      # Create tables + enable RLS policies
-make verify-migration  # Check migration status
-
-# Manual database operations (if Makefile unavailable)
 python scripts/deploy_database.py       # Deploy schema to Supabase PostgreSQL
+python scripts/verify_database.py       # Verify migration status
 ```
 
 ## 🎯 Key Development Commands
 
 ### Discord Bot (Real-time Data Collection)
+
 ```bash
 # Run Discord bot for real-time data collection
 python -m src.bot.bot
-make bot  # Alternative via Makefile
 
 # Bot requires DISCORD_BOT_TOKEN in .env
 ```
 
 ### Development Workflow
-```bash
-make test         # Run test suite
-make lint         # Code linting
-make clean        # Clean up temp files
 
-# Manual testing
-pytest tests/ --maxfail=1 --disable-warnings -v
-python test_integration.py  # Comprehensive integration tests
+```bash
+# Run tests
+pytest tests/ -v                       # Full test suite
+pytest tests/ -v --cov=src             # Tests with coverage
+pytest tests/ -v -m "not openai"       # Skip API tests
+
+# Individual tests
+python tests/test_integration.py       # Integration tests
 ```
 
 ## 🔧 Essential Environment Variables
@@ -204,12 +212,13 @@ python test_integration.py  # Comprehensive integration tests
 Based on `.env.example`, configure these for full functionality:
 
 ### 🚨 Critical Dependencies (27+ packages)
+
 ```bash
 # Core Data & Database (ESSENTIAL)
 pandas>=2.3.1, sqlalchemy>=2.0.29, psycopg2-binary>=2.9.0
 python-dotenv>=1.0.1, pydantic-settings>=2.2, pydantic==2.11.7
 
-# Brokerage API (CORE FUNCTIONALITY)  
+# Brokerage API (CORE FUNCTIONALITY)
 snaptrade-python-sdk>=11.0.98
 
 # LLM APIs (NLP PARSING)
@@ -226,6 +235,7 @@ matplotlib>=3.9, mplfinance==0.12.10b0, plotly==6.2.0, dash==3.1.1
 ```
 
 ### Required for Core Features
+
 ```bash
 # Database (choose one)
 SUPABASE_URL=your_supabase_project_url
@@ -238,6 +248,7 @@ OPENAI_API_KEY=your_openai_key
 ```
 
 ### Optional Integrations
+
 ```bash
 # SnapTrade (brokerage data)
 SNAPTRADE_CLIENT_ID=your_client_id
@@ -254,14 +265,16 @@ TWITTER_BEARER_TOKEN=your_bearer_token
 ## 🗄️ Database Architecture
 
 ### PostgreSQL-Only Architecture (Unified Supabase)
+
 - **Primary & Only**: PostgreSQL/Supabase via `src/db.py` (advanced connection pooling, health checks)
 - **Database engine**: `src/db.py` with SQLAlchemy 2.0, unified `execute_sql()` interface, auto-commit for DML operations
 - **Real-time writes**: All operations use `execute_sql()` → Supabase PostgreSQL with connection pooling
 - **🚨 KEY REQUIREMENT**: Must use `SUPABASE_SERVICE_ROLE_KEY` in connection string to bypass RLS policies
 
 ### Key Tables (17 Supabase tables as of migration 057)
+
 ```sql
--- SnapTrade Integration (5 tables) 
+-- SnapTrade Integration (5 tables)
 accounts, account_balances, positions, orders, symbols
 
 -- Discord/Social Integration (4 tables)
@@ -292,6 +305,7 @@ processing_status, schema_migrations
 ```
 
 ### Schema Validation
+
 ```bash
 # Verify database schema compliance
 python scripts/verify_database.py --verbose
@@ -300,6 +314,7 @@ python scripts/verify_database.py --verbose
 ## 🤖 NLP Pipeline & LLM Integration
 
 ### NLP Parsing Pipeline
+
 ```python
 # Process a single message with OpenAI structured outputs
 from src.nlp.openai_parser import process_message
@@ -314,12 +329,14 @@ if result and result.ideas:
 ```
 
 ### Batch Processing (50% cost savings)
+
 ```bash
 # Build batch → submit → ingest results
 python scripts/nlp/batch_backfill.py --limit 500
 ```
 
 ### LLM API Integration
+
 - **Primary**: OpenAI API for structured outputs (NLP parsing)
 - **Model routing**: Triage → Main → Escalation models based on message complexity
 - **Retry logic**: `@hardened_retry(max_retries=3, delay=2)` for API calls
@@ -327,6 +344,7 @@ python scripts/nlp/batch_backfill.py --limit 500
 ## 🧪 Testing & Validation
 
 ### 🏥 Comprehensive Health Checks
+
 ```bash
 # Pre-deployment validation (run first)
 python tests/validate_deployment.py
@@ -337,27 +355,32 @@ python scripts/bootstrap.py
 # Core integration test
 python tests/test_integration.py
 
-# Complete test suite  
+# Complete test suite
 pytest tests/ --maxfail=1 --disable-warnings -v
 ```
 
 ### 🔬 Unit Testing Framework
-The project uses `unittest` with comprehensive test coverage:
+
+The project uses `pytest` with comprehensive test coverage:
 
 ```bash
 # Test Structure:
 tests/
-├── test_integration.py      # Ticker extraction & import consolidation
-├── test_core_functions.py   # Unit tests with edge cases
-└── test_safe_response_handling.py  # Data handling validation
+├── conftest.py              # Shared fixtures and pytest configuration
+├── test_integration.py      # Import validation
+├── test_preclean.py         # Ticker extraction & alias mapping
+├── test_core_functions.py   # Prompt builder tests
+└── fixtures/                # Test fixture data (JSONL)
 
-# Key Test Patterns:
-python -m unittest tests.test_core_functions.TestTickerExtraction
-python -m unittest tests.test_core_functions.TestMessageAppend  
-python -m unittest tests.test_core_functions.TestPromptBuilder
+# Run tests:
+pytest tests/ -v                       # Full suite
+pytest tests/test_preclean.py -v       # Single file
+pytest tests/ -v -m "not openai"       # Skip API tests
+pytest tests/ -v --cov=src             # With coverage
 ```
 
 ### 🔍 Individual Module Testing
+
 ```bash
 # Database connectivity
 python -c "from src.db import execute_sql; print(execute_sql('SELECT COUNT(*) FROM positions', fetch_results=True))"
@@ -370,6 +393,7 @@ python scripts/verify_database.py --verbose
 ```
 
 ### 📊 Health Monitoring & System Checks
+
 ```bash
 # Database health and size monitoring
 python -c "from src.db import healthcheck, get_database_size; print(f'Health: {healthcheck()}, Size: {get_database_size()}')"
@@ -379,12 +403,13 @@ python scripts/verify_database.py
 ```
 
 ### Data Validation Patterns
+
 ```python
 # Test ticker extraction
 from src.message_cleaner import extract_ticker_symbols
 symbols = extract_ticker_symbols("I bought $AAPL and $MSFT today")
 
-# Test sentiment analysis  
+# Test sentiment analysis
 from src.message_cleaner import calculate_sentiment
 sentiment = calculate_sentiment("Great earnings from $TSLA!")
 
@@ -396,11 +421,13 @@ conn = get_connection()  # Returns PostgreSQL connection
 ## 🔍 Symbol Extraction & Data Processing
 
 ### Ticker Symbol Pattern
+
 - **Regex**: `r'\$[A-Z]{1,6}(?:\.[A-Z]+)?'` matches `$AAPL`, `$BRK.B`, handles 1-6 character symbols
 - **SnapTrade parsing**: `extract_symbol_from_data()` walks nested dicts, handles "Unknown" symbols gracefully
 - **Fallback hierarchy**: `raw_symbol` → `symbol` → `ticker` → short `id` values (no UUIDs)
 
 ### Data Processing Pipeline
+
 1. **OHLCV Data**: `price_service.py` queries Supabase `ohlcv_daily` (Databento source)
 2. **Brokerage Data**: `snaptrade_collector.py` fetches positions, orders, accounts
 3. **Cleaning**: `message_cleaner.py` extracts tickers + sentiment from Discord messages
@@ -410,6 +437,7 @@ conn = get_connection()  # Returns PostgreSQL connection
 ## 🎛️ Discord Bot Operations
 
 ### Bot Commands (once running)
+
 ```bash
 # In Discord channels:
 !history [limit]              # Fetch message history with deduplication
@@ -422,16 +450,19 @@ conn = get_connection()  # Returns PostgreSQL connection
 ```
 
 ### Data Flow: !process vs NLP Parsing
+
 ```
 !process command:     Discord → discord_messages → discord_*_clean (ticker extraction, sentiment)
                       ↓ (Raw ingestion + basic cleaning)
-                      
+
 parse_messages.py:    discord_messages → OpenAI LLM → discord_parsed_ideas (structured ideas)
                       ↓ (Advanced NLP parsing)
 ```
+
 Both are needed! `!process` populates `discord_messages`, which NLP parsing then consumes.
 
 ### Bot Architecture
+
 - **Command registration**: Each command file in `commands/` has `register(bot)` function
 - **Event handling**: Centralized in `events.py` with Twitter client dependency injection
 - **Message logging**: Real-time ticker detection and sentiment analysis via `on_message` handler
@@ -440,6 +471,7 @@ Both are needed! `!process` populates `discord_messages`, which NLP parsing then
 ## ⚠️ Critical Development Patterns
 
 ### Error Handling & Retries
+
 ```python
 # Use established retry decorators
 from src.retry_utils import hardened_retry, database_retry
@@ -449,13 +481,14 @@ def api_call_function():
     # API integration code
     pass
 
-@database_retry(max_retries=3)  
+@database_retry(max_retries=3)
 def database_function():
     # Database operations
     pass
 ```
 
 ### Configuration Management
+
 ```python
 # Always use centralized config
 from src.config import settings
@@ -467,34 +500,38 @@ db_url = get_database_url()  # Returns PostgreSQL URL only (no SQLite fallback)
 ```
 
 ### Database Operations
+
 ```python
 # PostgreSQL database interface
 from src.db import execute_sql
 
 # Query with results using named placeholders
-results = execute_sql("SELECT * FROM positions WHERE symbol = :symbol", 
+results = execute_sql("SELECT * FROM positions WHERE symbol = :symbol",
                      params={'symbol': 'AAPL'}, fetch_results=True)
 
-# Execute without results using named placeholders  
-execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol", 
+# Execute without results using named placeholders
+execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol",
            params={'price': 150.00, 'symbol': 'AAPL'})
 ```
 
 ## 🚨 Important Notes for Agents
 
 ### SETUP SEQUENCE (CRITICAL)
+
 1. **ALWAYS run `python tests/validate_deployment.py` FIRST** - validates environment readiness
 2. **Use `python scripts/bootstrap.py` for automated setup** - handles dependencies, environment, database
 3. **Virtual environment is REQUIRED** - bootstrap warns if not detected
 4. **Environment variables must be configured** - copy .env.example to .env with your keys
 
 ### DO NOT MODIFY
+
 - Database connection logic in `db.py`
-- Core retry mechanisms in `retry_utils.py`  
+- Core retry mechanisms in `retry_utils.py`
 - Configuration loading in `config.py`
 - Schema migration files in `schema/` (create new ones instead)
 
 ### ALWAYS USE
+
 - `execute_sql()` for database operations with named placeholders (:param) and dict parameters
 - Retry decorators for external API calls
 - `pathlib.Path` for file operations (not string concatenation)
@@ -502,18 +539,21 @@ execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol",
 - Comprehensive error handling with graceful degradation
 
 ### FILE NAMING CONVENTIONS
+
 - **CSV files**: `data/raw/` for source data, `data/processed/` for cleaned data
 - **Environment**: `.env` (git-ignored), `.env.example` (template)
 
 ### DEVELOPMENT WORKFLOW
+
 1. Always run `python tests/test_integration.py` after changes
-2. Test ticker extraction with edge cases (numbers, special characters)  
+2. Test ticker extraction with edge cases (numbers, special characters)
 3. Follow the retry pattern for external API calls
 4. Handle missing `.env` variables gracefully
 
 ## 📚 Key Functions Reference
 
 ### Price Data (OHLCV)
+
 ```python
 from src.price_service import get_ohlcv, get_latest_close, get_previous_close
 # get_ohlcv(symbol, start, end) → pd.DataFrame (mplfinance compatible)
@@ -522,21 +562,24 @@ from src.price_service import get_ohlcv, get_latest_close, get_previous_close
 ```
 
 ### Brokerage Data
+
 ```python
 from src.snaptrade_collector import SnapTradeCollector
 ```
 
 ### Text Processing
+
 ```python
 from src.message_cleaner import extract_ticker_symbols, calculate_sentiment, clean_text
 ```
 
 ### NLP Pipeline (Ticker Accuracy)
+
 ```python
 from src.nlp.preclean import (
     extract_candidate_tickers,      # Deterministic pre-LLM ticker extraction
     validate_llm_tickers,           # Post-validate LLM output against candidates
-    is_reserved_signal_word,        # Check if word is trading terminology  
+    is_reserved_signal_word,        # Check if word is trading terminology
     apply_alias_mapping,            # Company names → ticker symbols
     is_bot_command,                 # Detect bot commands (!help, !!chart, etc.)
     RESERVED_SIGNAL_WORDS,          # 80+ trading terms that never become tickers
@@ -548,6 +591,7 @@ from src.nlp.schemas import ParsedIdea, MessageParseResult, TradingLabels
 ```
 
 ### Database Operations
+
 ```python
 from src.db import execute_sql, get_connection
 from src.db import get_database_url

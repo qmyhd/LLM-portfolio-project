@@ -90,14 +90,3 @@ def test_nested_backticks():
     assert "code" in result, f"First code content not found: {result}"
     assert "more" in result, f"Second code content not found: {result}"
     assert "```" not in result, f"Backticks still present: {result}"
-
-    print("✅ Multiple code blocks test passed")
-
-
-if __name__ == "__main__":
-    test_code_block_preserves_tickers()
-    test_code_block_with_language_specifier()
-    test_inline_code_preserves_content()
-    test_empty_code_block()
-    test_nested_backticks()
-    print("\n✅ ALL CODE BLOCK TESTS PASSED")
