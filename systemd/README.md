@@ -39,13 +39,27 @@ EOF
 sudo chmod 644 /etc/llm-portfolio/llm.env
 ```
 
-### 2. Create Log Directories
+### 2. Enable Persistent Journald Logs (Recommended)
+
+Services log to journald by default. Enable persistent storage so logs survive reboot:
 
 ```bash
-sudo mkdir -p /var/log/discord-bot
-sudo mkdir -p /var/log/portfolio-api
-sudo mkdir -p /var/log/portfolio-nightly
-sudo chown -R ubuntu:ubuntu /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+# Enable persistent journald storage
+sudo mkdir -p /var/log/journal
+
+# Production journald configuration (drop-in, 99- prefix ensures it loads last)
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/99-llm-portfolio.conf > /dev/null << 'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=1G
+SystemKeepFree=2G
+Compress=yes
+RateLimitBurst=10000
+RateLimitIntervalSec=30s
+EOF
+
+sudo systemctl restart systemd-journald
 ```
 
 ### 3. Set System Timezone (for timer accuracy)
@@ -105,9 +119,16 @@ journalctl -u discord-bot.service -n 100
 # Since last boot
 journalctl -u discord-bot.service -b
 
-# Log files (if using StandardOutput=append)
-tail -f /var/log/discord-bot/combined.log
-tail -f /var/log/portfolio-api/combined.log
+# Errors only
+journalctl -u api.service -p err
+
+# By SyslogIdentifier
+journalctl -t llm-portfolio-api -f
+journalctl -t llm-portfolio-bot -f
+journalctl -t llm-portfolio-nightly -f
+
+# Clean up old logs (optional)
+sudo journalctl --vacuum-time=30d
 ```
 
 ### Restart Services

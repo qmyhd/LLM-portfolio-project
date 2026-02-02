@@ -159,20 +159,20 @@ check "nightly-pipeline.timer exists" \
     "sudo cp $PROJECT_DIR/systemd/nightly-pipeline.timer $SYSTEMD_DIR/ && sudo systemctl daemon-reload"
 
 echo ""
-echo "📂 Checking log directories..."
-echo "-------------------------------"
+echo "� Checking journald logging setup..."
+echo "--------------------------------------"
 
-check "/var/log/discord-bot exists" \
-    "[ -d '/var/log/discord-bot' ]" \
-    "sudo mkdir -p /var/log/discord-bot && sudo chown ubuntu:ubuntu /var/log/discord-bot"
+check "No legacy file logging in unit files" \
+    "! grep -q 'append:/var/log' $SYSTEMD_DIR/api.service $SYSTEMD_DIR/discord-bot.service $SYSTEMD_DIR/nightly-pipeline.service 2>/dev/null" \
+    "Redeploy unit files: sudo cp $PROJECT_DIR/systemd/*.service $SYSTEMD_DIR/ && sudo systemctl daemon-reload"
 
-check "/var/log/portfolio-api exists" \
-    "[ -d '/var/log/portfolio-api' ]" \
-    "sudo mkdir -p /var/log/portfolio-api && sudo chown ubuntu:ubuntu /var/log/portfolio-api"
+check "Persistent journald storage enabled" \
+    "[ -d '/var/log/journal' ]" \
+    "sudo mkdir -p /var/log/journal && sudo systemctl restart systemd-journald"
 
-check "/var/log/portfolio-nightly exists" \
-    "[ -d '/var/log/portfolio-nightly' ]" \
-    "sudo mkdir -p /var/log/portfolio-nightly && sudo chown ubuntu:ubuntu /var/log/portfolio-nightly"
+warn "Journald drop-in config exists" \
+    "[ -f '/etc/systemd/journald.conf.d/99-llm-portfolio.conf' ]" \
+    "Run bootstrap.sh to create production journald config"
 
 echo ""
 echo "🌐 Checking Nginx configuration..."
@@ -185,6 +185,21 @@ warn "Nginx config exists" \
 warn "Nginx config valid" \
     "sudo nginx -t 2>/dev/null" \
     "sudo nginx -t"
+
+echo ""
+echo "🏥 Checking service health..."
+echo "------------------------------"
+
+# Only check API health if services are expected to be running
+if systemctl is-active --quiet api.service 2>/dev/null; then
+    check "API health endpoint responds" \
+        "curl -sf http://127.0.0.1:8000/health > /dev/null 2>&1" \
+        "Check API logs: sudo journalctl -u api.service -n 100 --no-pager"
+else
+    warn "API service is running" \
+        "systemctl is-active --quiet api.service 2>/dev/null" \
+        "Start API: sudo systemctl start api.service"
+fi
 
 echo ""
 echo "=============================================="
@@ -203,11 +218,21 @@ if [ $FAILED -eq 0 ]; then
     echo "  1. Verify secrets: python scripts/check_secrets.py"
     echo "  2. Start services: sudo systemctl start api.service discord-bot.service nightly-pipeline.timer"
     echo "  3. Check health:   curl http://127.0.0.1:8000/health"
+    echo ""
+    echo "View logs with journald:"
+    echo "  sudo journalctl -u api.service -f"
+    echo "  sudo journalctl -u discord-bot.service -f"
+    echo "  sudo journalctl -u nightly-pipeline.service -f"
     exit 0
 else
     echo -e "${RED}❌ $FAILED check(s) failed. See fixes above.${NC}"
     echo ""
     echo "Quick fix all:"
     echo "  ./scripts/bootstrap.sh"
+    echo ""
+    echo "Actionable debug commands:"
+    echo "  sudo systemctl status api.service discord-bot.service --no-pager"
+    echo "  sudo journalctl -u api.service -n 100 --no-pager"
+    echo "  sudo journalctl -u discord-bot.service -n 100 --no-pager"
     exit 1
 fi

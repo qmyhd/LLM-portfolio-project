@@ -23,8 +23,11 @@ ExecStartPre=/usr/bin/test -f /etc/llm-portfolio/llm.env
 ExecStart=/home/ubuntu/llm-portfolio/.venv/bin/python scripts/start_bot_with_secrets.py
 Restart=always
 RestartSec=10
-StandardOutput=append:/var/log/discord-bot/combined.log
-StandardError=append:/var/log/discord-bot/error.log
+
+# Logging via journald (view with: journalctl -u discord-bot.service -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-portfolio-bot
 
 # Resource limits
 MemoryMax=500M
@@ -36,7 +39,6 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/ubuntu/llm-portfolio/data
 ReadWritePaths=/home/ubuntu/llm-portfolio/logs
-ReadWritePaths=/var/log/discord-bot
 
 [Install]
 WantedBy=multi-user.target
