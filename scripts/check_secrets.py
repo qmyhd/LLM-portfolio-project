@@ -104,7 +104,7 @@ def main():
         print("  2. Secret name doesn't exist in AWS Secrets Manager")
         print("  3. AWS region mismatch")
         print("\nTo debug:")
-        print("  aws secretsmanager describe-secret --secret-id " + resolved_name)
+        print("  aws secretsmanager describe-secret --secret-id <your-secret-id>")
         return 1
 
     # Check required keys
