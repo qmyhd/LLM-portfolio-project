@@ -22,7 +22,7 @@ ssh -i /path/to/keypair.pem ubuntu@YOUR_EC2_IP
 ```bash
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y python3.11 python3.11-venv python3.11-dev \
-    libpq-dev build-essential git nginx certbot python3-certbot-nginx
+    libpq-dev postgresql-client build-essential git nginx certbot python3-certbot-nginx
 ```
 
 ### STEP 3: Create Directories
