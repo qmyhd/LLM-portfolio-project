@@ -35,17 +35,15 @@
 
 ---
 
-### 3. **ARCHITECTURE** - [EC2_ARCHITECTURE_DETAILED.md](EC2_ARCHITECTURE_DETAILED.md)
+### 3. **ARCHITECTURE** - [ARCHITECTURE.md](ARCHITECTURE.md)
 **Best for:** Understanding how components interact  
 **Contains:**
 - Complete system architecture diagram (ASCII art)
 - Component communication flows
 - Data flow between services
-- Startup sequence explanation
-- Request flow (Client → FastAPI → Database)
-- Pipeline execution timeline
-- Error handling and fallback paths
-- Troubleshooting by architecture
+- Database layer details
+- Module structure and NLP pipeline
+- Integration points and data conventions
 
 **When to use:** You want to understand the "big picture" or debug issues by understanding how systems talk to each other.
 
@@ -74,7 +72,7 @@
 4. Use the verification checklist at the end
 
 ### Path 2: "I Want To Understand Everything" (45 minutes)
-1. Read: [EC2_ARCHITECTURE_DETAILED.md](EC2_ARCHITECTURE_DETAILED.md) to understand the big picture
+1. Read: [ARCHITECTURE.md](ARCHITECTURE.md) to understand the big picture
 2. Follow: [EC2_SETUP_DETAILED.md](EC2_SETUP_DETAILED.md) step-by-step
 3. After each step, reference the architecture doc to understand how it fits together
 4. When done, review the troubleshooting section
@@ -82,7 +80,7 @@
 ### Path 3: "I'm Experienced, Just Need Details" (20 minutes)
 1. Skim: [EC2_SETUP_DETAILED.md](EC2_SETUP_DETAILED.md) to verify you're not missing anything
 2. Use: [EC2_SETUP_QUICK_REFERENCE.md](EC2_SETUP_QUICK_REFERENCE.md) for commands
-3. Reference: [EC2_ARCHITECTURE_DETAILED.md](EC2_ARCHITECTURE_DETAILED.md) for specific component details
+3. Reference: [ARCHITECTURE.md](ARCHITECTURE.md) for specific component details
 
 ---
 
@@ -94,7 +92,7 @@
 → [EC2_SETUP_DETAILED.md - STEP 1-18](EC2_SETUP_DETAILED.md#step-1-ssh-into-your-ec2-instance)
 
 **Understand how everything works together**
-→ [EC2_ARCHITECTURE_DETAILED.md](EC2_ARCHITECTURE_DETAILED.md)
+→ [ARCHITECTURE.md](ARCHITECTURE.md)
 
 **Get quick commands to run**
 → [EC2_SETUP_QUICK_REFERENCE.md](EC2_SETUP_QUICK_REFERENCE.md)
@@ -109,14 +107,14 @@
 → [EC2_SETUP_DETAILED.md - STEP 12](EC2_SETUP_DETAILED.md#step-12-configure-nginx-reverse-proxy)
 
 **Understand systemd services**
-→ [EC2_ARCHITECTURE_DETAILED.md - Systemd Section](EC2_ARCHITECTURE_DETAILED.md#component-communication-flow)
+→ [EC2_SETUP_DETAILED.md - Systemd Services](EC2_SETUP_DETAILED.md#step-9-create-systemd-service-files)
 
 **View service logs**
 → [EC2_SETUP_DETAILED.md - STEP 16](EC2_SETUP_DETAILED.md#step-16-monitor-services-and-logs)
 
 **Debug a failing service**
 → [EC2_SETUP_DETAILED.md - Troubleshooting Guide](EC2_SETUP_DETAILED.md#troubleshooting-guide)  
-→ [EC2_ARCHITECTURE_DETAILED.md - Error Handling](EC2_ARCHITECTURE_DETAILED.md#error-handling--fallback-paths)
+→ [ARCHITECTURE.md - System Architecture](ARCHITECTURE.md#system-architecture)
 
 **Test the nightly pipeline**
 → [EC2_SETUP_DETAILED.md - STEP 15](EC2_SETUP_DETAILED.md#step-15-test-the-nightly-pipeline-manual-run)
@@ -185,16 +183,13 @@ EC2 Deployment Documentation
 │  ├─ Security hardening
 │  └─ Final checklist
 │
-├─ EC2_ARCHITECTURE_DETAILED.md (Understand the system)
+├─ ARCHITECTURE.md (Understand the system)
 │  ├─ Complete system architecture (ASCII diagram)
 │  ├─ Component communication flows
-│  ├─ Data flow between services
-│  ├─ Startup sequence
-│  ├─ Request flow
-│  ├─ Pipeline execution
-│  ├─ Error handling
-│  ├─ Troubleshooting by architecture
-│  └─ Key points to remember
+│  ├─ Database layer details
+│  ├─ Module structure
+│  ├─ NLP pipeline and integration points
+│  └─ Data conventions
 │
 └─ EC2_DEPLOYMENT.md (Legacy reference)
    ├─ Quick overview
@@ -214,8 +209,8 @@ EC2 Deployment Documentation
 | SSL certificate error | DETAILED | [Troubleshooting: SSL](EC2_SETUP_DETAILED.md#issue-nginx-ssl-certificate-error) |
 | Bot won't connect | DETAILED | [Troubleshooting: Bot](EC2_SETUP_DETAILED.md#issue-discord-bot-wont-connect) |
 | High memory/CPU usage | DETAILED | [Troubleshooting: Resources](EC2_SETUP_DETAILED.md#issue-high-memorycpu-usage) |
-| Nginx returns 502 | ARCH | [Troubleshooting](EC2_ARCHITECTURE_DETAILED.md#troubleshooting-architecture-issues) |
-| Can't understand how it works | ARCH | [Complete Architecture](EC2_ARCHITECTURE_DETAILED.md) |
+| Nginx returns 502 | DETAILED | [Troubleshooting Guide](EC2_SETUP_DETAILED.md#troubleshooting-guide) |
+| Can't understand how it works | ARCH | [Complete Architecture](ARCHITECTURE.md) |
 | Need to find a command | QUICK | [Command Reference](EC2_SETUP_QUICK_REFERENCE.md#essential-commands) |
 
 ---
@@ -292,11 +287,10 @@ If you're stuck:
 
 1. **Check the Troubleshooting Section**
    - [EC2_SETUP_DETAILED.md Troubleshooting](EC2_SETUP_DETAILED.md#troubleshooting-guide)
-   - [EC2_ARCHITECTURE_DETAILED.md Troubleshooting](EC2_ARCHITECTURE_DETAILED.md#troubleshooting-architecture-issues)
 
 2. **Review the Architecture**
    - Understanding how components talk helps debug issues
-   - [EC2_ARCHITECTURE_DETAILED.md](EC2_ARCHITECTURE_DETAILED.md)
+   - [ARCHITECTURE.md](ARCHITECTURE.md)
 
 3. **Check Service Logs**
    ```bash
