@@ -75,7 +75,7 @@ python scripts/check_secrets.py
 sudo cp systemd/*.service /etc/systemd/system/
 sudo cp systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
-sudo systemctl list-unit-files | grep portfolio
+sudo systemctl list-unit-files | grep -E 'api\.service|discord-bot\.service|nightly-pipeline'
 ```
 
 ### STEP 10: Set Timezone
