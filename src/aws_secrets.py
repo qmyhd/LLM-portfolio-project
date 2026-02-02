@@ -47,15 +47,15 @@ logger = logging.getLogger(__name__)
 
 
 def _redact_secret_name(secret_name: Optional[str]) -> str:
-    Return a *highly* redacted representation of a secret name for safe logging.
-    Return a redacted representation of a secret name for safe logging.
-    The returned value never includes any substring of the actual secret
-    identifier. It only exposes coarse metadata (such as length and
-    whether the name appears to be a direct name or a prefix/env form)
-    to aid debugging without leaking sensitive information.
-    identifier is never written to logs, and no substrings of the original
-    value are included in the redacted form.
-    value is included in the output.
+    # Return a *highly* redacted representation of a secret name for safe logging.
+    # Return a redacted representation of a secret name for safe logging.
+    # The returned value never includes any substring of the actual secret
+    # identifier. It only exposes coarse metadata (such as length and
+    # whether the name appears to be a direct name or a prefix/env form)
+    # to aid debugging without leaking sensitive information.
+    # identifier is never written to logs, and no substrings of the original
+    # value are included in the redacted form.
+    # value is included in the output.
     # exposing the actual secret identifier.
     # Do not include any portion of the real secret name in logs.
     name_str = str(secret_name)
@@ -228,24 +228,14 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
         raise
     except client.exceptions.AccessDeniedException:
         logger.error(
-            "Error fetching secret %s: %s",
+            "Access denied when fetching secret: %s",
             _redact_secret_name(secret_name),
-            e,
         )
         raise
     except Exception as e:
         logger.error(
-            "Error fetching secret %s: %s",
+            "Error fetching secret: %s",
             _redact_secret_name(secret_name),
-            e,
-        )
-            "Error fetching secret %s: %s",
-            _redact_secret_name(secret_name),
-            e,
-        )
-            "Error fetching secret %s: %s",
-            _redact_secret_name(secret_name),
-            e,
         )
         raise
 
