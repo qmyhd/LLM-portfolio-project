@@ -373,19 +373,24 @@ class EnhancedSchemaParser:
     def _parse_alter_tables(self, content: str):
         """Parse ALTER TABLE statements to modify existing schema."""
         # FIRST: Handle multi-column ADD COLUMN statements (comma-separated)
-        # Pattern: ALTER TABLE x ADD COLUMN col1 TYPE, ADD COLUMN col2 TYPE;
-        multi_add_pattern = r"ALTER TABLE\s+(?:public\.)?(\w+)\s+((?:ADD\s+COLUMN\s+(?:IF NOT EXISTS\s+)?\w+\s+\w+(?:\[\])?(?:\([^)]+\))?[^,;]*,?\s*)+);"
+        # Two-step approach to avoid ReDoS vulnerability (CodeQL py/redos):
+        # Step 1: Find ALTER TABLE ... ; statements containing ADD COLUMN
+        # Step 2: Parse individual ADD COLUMN clauses with a simpler pattern
+        alter_table_pattern = r"ALTER TABLE\s+(?:public\.)?(\w+)\s+([^;]+);"
 
-        for match in re.finditer(multi_add_pattern, content, re.IGNORECASE | re.DOTALL):
+        for match in re.finditer(alter_table_pattern, content, re.IGNORECASE):
             table_name = match.group(1).lower()
-            columns_block = match.group(2)
+            alter_body = match.group(2)
+
+            # Only process if it contains ADD COLUMN
+            if "ADD" not in alter_body.upper() or "COLUMN" not in alter_body.upper():
+                continue
 
             # Parse each ADD COLUMN clause within the block
-            single_add_pattern = r"ADD\s+COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)\s+(\w+(?:\[\])?(?:\([^)]+\))?)\s*([^,;]*)"
+            # Pattern is now simpler and non-ambiguous - constraints captured up to comma/end
+            single_add_pattern = r"ADD\s+COLUMN\s+(?:IF NOT EXISTS\s+)?(\w+)\s+(\w+(?:\[\])?(?:\([^)]+\))?)\s*([^,]*)"
 
-            for col_match in re.finditer(
-                single_add_pattern, columns_block, re.IGNORECASE
-            ):
+            for col_match in re.finditer(single_add_pattern, alter_body, re.IGNORECASE):
                 column_name = col_match.group(1).lower()
                 data_type = col_match.group(2).upper()
                 constraints_def = col_match.group(3) if col_match.group(3) else ""

@@ -193,3 +193,69 @@ class TestCreateTableExtractionEdgeCases:
         """Test whitespace-only input."""
         result = parser._extract_create_table_iterative("   \n\t\n   ")
         assert len(result) == 0
+
+
+class TestAlterTableReDoSFix:
+    """Test that the ALTER TABLE ReDoS vulnerability is fixed."""
+
+    @pytest.fixture
+    def parser(self):
+        """Create an EnhancedSchemaParser instance for testing."""
+        from pathlib import Path
+        from schema_parser import EnhancedSchemaParser
+
+        return EnhancedSchemaParser(Path("."))
+
+    def test_malicious_alter_table_does_not_hang(self, parser):
+        """Ensure malicious ALTER TABLE input doesn't cause exponential backtracking."""
+        # This input pattern would cause catastrophic backtracking with the old regex
+        # Pattern: many repetitions of 'add column x y' without proper termination
+        malicious_input = "ALTER TABLE test " + "ADD COLUMN col INT " * 50 + ";"
+
+        start = time.time()
+        parser._parse_alter_tables(malicious_input)
+        elapsed = time.time() - start
+
+        # Should complete in under 1 second
+        assert elapsed < 1.0, f"Parsing took {elapsed}s - possible ReDoS vulnerability"
+
+    def test_valid_multi_column_alter_still_parsed(self, parser):
+        """Ensure valid multi-column ALTER TABLE is correctly parsed."""
+        # Initialize table first
+        parser.tables["test_table"] = {
+            "columns": {},
+            "primary_keys": [],
+            "unique_constraints": [],
+            "foreign_keys": [],
+            "indexes": [],
+        }
+
+        sql = """
+        ALTER TABLE test_table
+            ADD COLUMN col1 TEXT NOT NULL,
+            ADD COLUMN col2 INTEGER DEFAULT 0,
+            ADD COLUMN col3 NUMERIC(10,2);
+        """
+
+        parser._parse_alter_tables(sql)
+
+        assert "col1" in parser.tables["test_table"]["columns"]
+        assert "col2" in parser.tables["test_table"]["columns"]
+        assert "col3" in parser.tables["test_table"]["columns"]
+        assert parser.tables["test_table"]["columns"]["col1"]["nullable"] is False
+        assert parser.tables["test_table"]["columns"]["col2"]["default"] == "0"
+
+    def test_alter_table_if_not_exists(self, parser):
+        """Test ALTER TABLE ADD COLUMN IF NOT EXISTS variant."""
+        parser.tables["test_table"] = {
+            "columns": {},
+            "primary_keys": [],
+            "unique_constraints": [],
+            "foreign_keys": [],
+            "indexes": [],
+        }
+
+        sql = "ALTER TABLE test_table ADD COLUMN IF NOT EXISTS new_col TEXT;"
+        parser._parse_alter_tables(sql)
+
+        assert "new_col" in parser.tables["test_table"]["columns"]
