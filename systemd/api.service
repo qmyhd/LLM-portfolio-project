@@ -12,6 +12,10 @@ Environment="PATH=/home/ubuntu/llm-portfolio/.venv/bin:/usr/local/bin:/usr/bin:/
 Environment="PYTHONPATH=/home/ubuntu/llm-portfolio"
 Environment="PYTHONUNBUFFERED=1"
 
+# Matplotlib config directory (needed because ProtectHome=read-only blocks ~/.config)
+Environment="MPLCONFIGDIR=/home/ubuntu/llm-portfolio/logs/matplotlib"
+Environment="TMPDIR=/tmp"
+
 # AWS Secrets Manager configuration (loaded from central env file)
 # REQUIRED: Create /etc/llm-portfolio/llm.env first - see systemd/README.md
 EnvironmentFile=/etc/llm-portfolio/llm.env
@@ -39,6 +43,7 @@ CPUQuota=80%
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=read-only
+PrivateTmp=true
 ReadWritePaths=/home/ubuntu/llm-portfolio/data
 ReadWritePaths=/home/ubuntu/llm-portfolio/logs
 

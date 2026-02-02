@@ -19,11 +19,16 @@ from src.position_analysis import (
     generate_position_report,
 )
 
+import os
+
 # Define constants to avoid repeating path math
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent  # Project root
 DB_DIR = BASE_DIR / "data" / "database"
 DB_PATH = DB_DIR / "price_history.db"
-CHARTS_DIR = BASE_DIR / "charts"
+
+# Chart output directory: use LLM_CHARTS_DIR env var, or default to logs/charts
+# This ensures charts are written to a directory that's in ReadWritePaths for systemd
+CHARTS_DIR = Path(os.environ.get("LLM_CHARTS_DIR", str(BASE_DIR / "logs" / "charts")))
 
 # Create directories if they don't exist
 CHARTS_DIR.mkdir(parents=True, exist_ok=True)

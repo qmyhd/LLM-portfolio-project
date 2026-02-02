@@ -250,6 +250,14 @@ setup_ssl() {
 setup_services() {
     log_info "Setting up systemd services..."
 
+    # Create required application directories (must match ReadWritePaths in systemd units)
+    log_info "Creating application directories..."
+    mkdir -p ${PROJECT_DIR}/data
+    mkdir -p ${PROJECT_DIR}/logs
+    mkdir -p ${PROJECT_DIR}/logs/charts      # Chart output directory (LLM_CHARTS_DIR)
+    mkdir -p ${PROJECT_DIR}/logs/matplotlib  # Matplotlib config (MPLCONFIGDIR)
+    chown -R ubuntu:ubuntu ${PROJECT_DIR}/data ${PROJECT_DIR}/logs
+
     # Create central AWS Secrets Manager configuration file
     log_info "Creating central AWS secrets configuration..."
     sudo mkdir -p /etc/llm-portfolio

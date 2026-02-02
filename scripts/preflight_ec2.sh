@@ -109,7 +109,35 @@ check "Python in venv works" \
     "cd $PROJECT_DIR && rm -rf .venv && python3.11 -m venv .venv"
 
 echo ""
-echo "📦 Checking system dependencies..."
+echo "� Checking writable directories..."
+echo "------------------------------------"
+
+check "data directory exists" \
+    "[ -d '$PROJECT_DIR/data' ]" \
+    "mkdir -p $PROJECT_DIR/data && chown ubuntu:ubuntu $PROJECT_DIR/data"
+
+check "logs directory exists" \
+    "[ -d '$PROJECT_DIR/logs' ]" \
+    "mkdir -p $PROJECT_DIR/logs && chown ubuntu:ubuntu $PROJECT_DIR/logs"
+
+check "logs/charts directory exists (LLM_CHARTS_DIR)" \
+    "[ -d '$PROJECT_DIR/logs/charts' ]" \
+    "mkdir -p $PROJECT_DIR/logs/charts && chown ubuntu:ubuntu $PROJECT_DIR/logs/charts"
+
+check "logs/matplotlib directory exists (MPLCONFIGDIR)" \
+    "[ -d '$PROJECT_DIR/logs/matplotlib' ]" \
+    "mkdir -p $PROJECT_DIR/logs/matplotlib && chown ubuntu:ubuntu $PROJECT_DIR/logs/matplotlib"
+
+check "logs/charts is writable" \
+    "[ -w '$PROJECT_DIR/logs/charts' ]" \
+    "chown ubuntu:ubuntu $PROJECT_DIR/logs/charts && chmod 755 $PROJECT_DIR/logs/charts"
+
+check "logs/matplotlib is writable" \
+    "[ -w '$PROJECT_DIR/logs/matplotlib' ]" \
+    "chown ubuntu:ubuntu $PROJECT_DIR/logs/matplotlib && chmod 755 $PROJECT_DIR/logs/matplotlib"
+
+echo ""
+echo "�📦 Checking system dependencies..."
 echo "-----------------------------------"
 
 check "Python 3.11+ installed" \
