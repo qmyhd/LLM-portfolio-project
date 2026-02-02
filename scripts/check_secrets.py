@@ -84,7 +84,6 @@ def main():
     print("\nConfiguration:")
     print(f"  USE_AWS_SECRETS: {use_aws}")
     print(f"  AWS_REGION: {region}")
-    print(f"  Resolved Secret: {mask_value(resolved_name)}")
     print(f"  Resolution Method: {resolution_method}")
 
     if use_aws != "1":
