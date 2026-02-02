@@ -21,7 +21,7 @@ class TestMessageIdIsString:
             mock_sql.return_value = []
 
             # Should not crash with string message_id
-            result = get_pending_messages(message_id="1380123456789012345")
+            get_pending_messages(message_id="1380123456789012345")
 
             # Verify it was called with string param
             assert mock_sql.called
@@ -38,7 +38,7 @@ class TestMessageIdIsString:
             mock_sql.return_value = []
 
             # Pass integer-like string (legacy code might do this)
-            result = get_pending_messages(message_id="1380123456789012345")
+            get_pending_messages(message_id="1380123456789012345")
 
             assert mock_sql.called
             call_args = mock_sql.call_args
@@ -53,7 +53,7 @@ class TestMessageIdIsString:
         with patch("scripts.nlp.parse_messages.execute_sql") as mock_sql:
             mock_sql.return_value = []
 
-            result = get_pending_messages(message_id="  1380123456789012345  ")
+            get_pending_messages(message_id="  1380123456789012345  ")
 
             assert mock_sql.called
             call_args = mock_sql.call_args
@@ -67,7 +67,7 @@ class TestMessageIdIsString:
         with patch("scripts.nlp.parse_messages.execute_sql") as mock_sql:
             mock_sql.return_value = []
 
-            result = get_pending_messages(message_id="   ")
+            get_pending_messages(message_id="   ")
 
             # Should use the pending query, not the specific message query
             assert mock_sql.called
@@ -145,7 +145,3 @@ class TestLockKeyConversion:
             lock_key = hash(message_id) & 0x7FFFFFFFFFFFFFFF
             assert isinstance(lock_key, int)
             assert lock_key > 0
-
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v"])

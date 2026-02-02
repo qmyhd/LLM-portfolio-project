@@ -15,6 +15,7 @@ numpy>=2.3.2
 matplotlib>=3.9
 mplfinance==0.12.10b0
 pytest>=8.2
+pytest-cov>=4.1
 coverage>=7.5
 requests>=2.32
 plotly==6.2.0 

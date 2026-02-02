@@ -8,17 +8,23 @@ on:
 
 jobs:
   test:
-    name: Run Tests
+    name: Test (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: true
+      matrix:
+        python-version: ["3.11", "3.12"]
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: ${{ matrix.python-version }}
+          cache: "pip"
 
       - name: Install dependencies
         run: |
@@ -26,31 +32,33 @@ jobs:
           pip install -r requirements.txt
           pip install pytest pytest-cov
 
-      - name: Run tests
-        continue-on-error: true  # Allow failures until API keys are configured
+      - name: Run tests with coverage
         env:
-          # Minimal env vars for test imports (tests should mock external services)
           PYTHONPATH: ${{ github.workspace }}
         run: |
           pytest tests/ \
             --tb=short \
             --maxfail=5 \
             -v \
-            --ignore=tests/validate_deployment.py
+            --cov=src \
+            --cov-report=xml \
+            --cov-report=term-missing \
+            --ignore=tests/validate_deployment.py \
+            -m "not openai and not integration"
 
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.11'
+        uses: codecov/codecov-action@v4
         with:
-          name: test-results
-          path: |
-            .pytest_cache/
-            htmlcov/
-          retention-days: 7
+          file: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
 
   validate-imports:
     name: Validate Core Imports
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -58,8 +66,8 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.11'
-          cache: 'pip'
+          python-version: "3.11"
+          cache: "pip"
 
       - name: Install dependencies
         run: |
@@ -73,7 +81,7 @@ jobs:
           python -c "
           import sys
           errors = []
-          
+
           # Test core imports
           modules = [
               'src.config',
@@ -84,7 +92,7 @@ jobs:
               'src.nlp.schemas',
               'src.nlp.preclean',
           ]
-          
+
           for module in modules:
               try:
                   __import__(module)
@@ -92,7 +100,7 @@ jobs:
               except Exception as e:
                   errors.append(f'✗ {module}: {e}')
                   print(f'✗ {module}: {e}')
-          
+
           if errors:
               print(f'\n{len(errors)} import errors found')
               sys.exit(1)

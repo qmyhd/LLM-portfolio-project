@@ -60,6 +60,7 @@ __pypackages__/
 *.joblib
 *.jsonl
 *.ndjson
+!tests/fixtures/*.jsonl
 # Images (keep only docs/)
 *.png
 *.jpg

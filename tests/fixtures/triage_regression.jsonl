@@ -1,0 +1,31 @@
+# Triage Regression Test Fixtures
+# Each line is a JSON object with test case data
+# Lines starting with # are comments
+#
+# Format:
+# {"text": "message text", "expected_noise": true/false, "category": "..."}
+#
+# expected_noise: true if triage should classify as noise, false if actionable
+#
+# Categories:
+# - trade_execution: clear buy/sell actions
+# - analysis: market analysis, price targets
+# - noise: greetings, off-topic, emoji-only
+# - bot_command: Discord bot commands (pre-filtered)
+# - url_only: URL-only messages (pre-filtered)
+
+{"text": "Bought 100 shares of AAPL", "expected_noise": false, "category": "trade_execution"}
+{"text": "Sold NVDA at 500", "expected_noise": false, "category": "trade_execution"}
+{"text": "Looking bullish on TSLA here", "expected_noise": false, "category": "analysis"}
+{"text": "MSFT targeting 400 by Q2", "expected_noise": false, "category": "analysis"}
+{"text": "SPY 450c looking good", "expected_noise": false, "category": "options"}
+{"text": "Good morning!", "expected_noise": true, "category": "noise"}
+{"text": "lol", "expected_noise": true, "category": "noise"}
+{"text": "👍", "expected_noise": true, "category": "noise"}
+{"text": "Thanks!", "expected_noise": true, "category": "noise"}
+{"text": "!help", "expected_noise": true, "category": "bot_command"}
+{"text": "!chart AAPL", "expected_noise": true, "category": "bot_command"}
+{"text": "https://example.com/article", "expected_noise": true, "category": "url_only"}
+{"text": "Trimmed my position in nvidia", "expected_noise": false, "category": "trade_execution"}
+{"text": "Adding to AMZN on this dip", "expected_noise": false, "category": "trade_execution"}
+{"text": "BTC breaking out above 70k", "expected_noise": false, "category": "crypto"}
