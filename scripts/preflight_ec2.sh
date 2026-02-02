@@ -46,18 +46,23 @@ check() {
     local condition="$2"
     local fix_cmd="$3"
     
-    if eval "$condition"; then
+    # Temporarily disable set -e for condition evaluation
+    set +e
+    eval "$condition"
+    local result=$?
+    set -e
+    
+    if [ $result -eq 0 ]; then
         echo -e "${GREEN}✅ PASS${NC}: $name"
-        ((PASSED++))
-        return 0
+        ((PASSED++)) || true
     else
         echo -e "${RED}❌ FAIL${NC}: $name"
         if [ -n "$fix_cmd" ]; then
             echo -e "   ${YELLOW}Fix:${NC} $fix_cmd"
         fi
-        ((FAILED++))
-        return 1
+        ((FAILED++)) || true
     fi
+    return 0
 }
 
 warn() {
@@ -65,16 +70,23 @@ warn() {
     local condition="$2"
     local fix_cmd="$3"
     
-    if eval "$condition"; then
+    # Temporarily disable set -e for condition evaluation
+    set +e
+    eval "$condition"
+    local result=$?
+    set -e
+    
+    if [ $result -eq 0 ]; then
         echo -e "${GREEN}✅ PASS${NC}: $name"
-        ((PASSED++))
+        ((PASSED++)) || true
     else
         echo -e "${YELLOW}⚠️  WARN${NC}: $name"
         if [ -n "$fix_cmd" ]; then
             echo -e "   ${YELLOW}Fix:${NC} $fix_cmd"
         fi
-        ((WARNINGS++))
+        ((WARNINGS++)) || true
     fi
+    return 0
 }
 
 echo "📁 Checking directory structure..."
