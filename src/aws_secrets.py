@@ -47,21 +47,24 @@ logger = logging.getLogger(__name__)
 
 
 def _redact_secret_name(secret_name: Optional[str]) -> str:
-    """
+    Return a *highly* redacted representation of a secret name for safe logging.
     Return a redacted representation of a secret name for safe logging.
-
-    Only minimal, non-sensitive information is exposed. The full secret
+    The returned value never includes any substring of the actual secret
+    identifier. It only exposes coarse metadata (such as length and
+    whether the name appears to be a direct name or a prefix/env form)
+    to aid debugging without leaking sensitive information.
     identifier is never written to logs, and no substrings of the original
     value are included in the redacted form.
     value is included in the output.
-    """
-    if not secret_name:
-
-    secret_str = str(secret_name)
-    length = len(secret_str)
-    # Use a stable, non-reversible fingerprint to aid debugging without
     # exposing the actual secret identifier.
+    # Do not include any portion of the real secret name in logs.
+    name_str = str(secret_name)
+    length = len(name_str)
+    # Heuristic: names containing "/" are typically prefix/env-style.
+    kind = "prefix/env-style" if "/" in name_str else "direct-name"
+    return f"<redacted-{kind}-secret-name len={length}>"
     digest = hashlib.sha256(secret_str.encode("utf-8")).hexdigest()[:8]
+
     return f"secret:<len>={length} hash={digest}"
 
 
