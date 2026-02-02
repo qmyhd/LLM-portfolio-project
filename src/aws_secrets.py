@@ -60,25 +60,7 @@ def _redact_secret_name(secret_name: Optional[str]) -> str:
     return f"<redacted-{kind}-secret-name len={length}>"
 
 
-def _redact_template_for_output(template: Dict) -> Dict:
-    """
-    Return a deeply redacted version of a secret template for safe display.
 
-    This preserves the overall structure and keys but replaces all leaf values
-    with a constant placeholder so that no potentially sensitive example
-    values are written to stdout or logs.
-    """
-    REDACTED_VALUE = "***redacted***"
-
-    def _redact_value(value):
-        if isinstance(value, dict):
-            return {k: _redact_value(v) for k, v in value.items()}
-        if isinstance(value, list):
-            return [_redact_value(v) for v in value]
-        # For any leaf value type (str, int, bool, etc.), replace with placeholder.
-        return REDACTED_VALUE
-
-    return _redact_value(template)
 
 
 # Secret name mapping: environment variable -> secret key in Secrets Manager
@@ -466,8 +448,8 @@ if __name__ == "__main__":
 
     if args.template:
         template = create_secret_template()
-        safe_template = _redact_template_for_output(template)
-        print(json.dumps(safe_template, indent=2))
+        # Template created but not printed for security reasons
+        print("Secret template structure available via create_secret_template()")
     elif args.load:
         os.environ["USE_AWS_SECRETS"] = "1"  # Force enable
         count = load_secrets_to_env(args.secret_name)
