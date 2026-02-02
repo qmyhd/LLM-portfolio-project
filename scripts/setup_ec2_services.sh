@@ -3,8 +3,8 @@
 # EC2 Services Setup Script
 # =============================================================================
 # 
-# This script sets up the Discord bot as a persistent service and configures
-# cron jobs for the daily data pipeline.
+# This script sets up the Discord bot as a persistent service and enables
+# the systemd timer for the nightly data pipeline.
 #
 # Usage:
 #   chmod +x scripts/setup_ec2_services.sh
@@ -151,46 +151,19 @@ if [ "$USE_SYSTEMD" = true ]; then
 fi
 
 # =============================================================================
-# Cron Jobs Setup
+# Nightly Pipeline Timer Setup (systemd)
 # =============================================================================
 echo ""
-echo "🕐 Setting up cron jobs..."
+echo "🕐 Enabling nightly pipeline timer (systemd)..."
 
-# Create cron job entries
-CRON_FILE=$(mktemp)
-
-# Preserve existing cron jobs
-crontab -l 2>/dev/null > "$CRON_FILE" || true
-
-# Check if our jobs already exist
-if grep -q "daily_pipeline.py" "$CRON_FILE" 2>/dev/null; then
-    echo "   Cron jobs already configured, skipping..."
+if systemctl list-unit-files | grep -q "nightly-pipeline.timer"; then
+    sudo systemctl enable nightly-pipeline.timer
+    sudo systemctl start nightly-pipeline.timer
+    echo "   ✅ nightly-pipeline.timer enabled"
 else
-    cat >> "$CRON_FILE" << EOF
-
-# =============================================================================
-# LLM Portfolio Journal - Daily Data Pipeline
-# =============================================================================
-
-# Daily full pipeline at 1:00 AM ET (6:00 AM UTC)
-# Runs: SnapTrade sync + Discord NLP processing + OHLCV backfill
-0 6 * * * cd $PROJECT_DIR && $VENV_DIR/bin/python scripts/daily_pipeline.py >> /var/log/discord-bot/daily_pipeline.log 2>&1
-
-# Evening SnapTrade sync at 8:00 PM ET (1:00 AM UTC next day)
-# Captures end-of-day positions after market close
-0 1 * * * cd $PROJECT_DIR && $VENV_DIR/bin/python scripts/daily_pipeline.py --snaptrade >> /var/log/discord-bot/snaptrade_sync.log 2>&1
-
-# Weekly log cleanup (keep 30 days)
-0 0 * * 0 find /var/log/discord-bot -name "*.log" -mtime +30 -delete
-
-EOF
-    
-    # Install new crontab
-    crontab "$CRON_FILE"
-    echo "   ✅ Cron jobs installed"
+    echo "   ⚠️ nightly-pipeline.timer not found. Did you deploy systemd units?"
+    echo "      Copy systemd/nightly-pipeline.* to /etc/systemd/system/ and reload daemon."
 fi
-
-rm -f "$CRON_FILE"
 
 # =============================================================================
 # Summary
@@ -207,16 +180,15 @@ fi
 if [ "$USE_SYSTEMD" = true ]; then
     echo "   ✅ Discord bot running via systemd"
 fi
-echo "   ✅ Cron jobs for daily pipeline"
+echo "   ✅ nightly pipeline timer enabled"
 echo ""
 echo "📅 Scheduled tasks:"
-echo "   • 1:00 AM ET - Full daily pipeline (SnapTrade + Discord + OHLCV)"
-echo "   • 8:00 PM ET - Evening SnapTrade sync"
+echo "   • 1:00 AM ET - Nightly pipeline (SnapTrade + OHLCV + NLP)"
 echo ""
 echo "📁 Log locations:"
 echo "   • Bot logs: /var/log/discord-bot/"
-echo "   • Pipeline logs: /var/log/discord-bot/daily_pipeline.log"
+echo "   • Pipeline logs: journalctl -u nightly-pipeline.service"
 echo ""
-echo "🔍 Verify cron jobs:"
+echo "🔍 Verify timer:"
 echo "   crontab -l"
 echo ""

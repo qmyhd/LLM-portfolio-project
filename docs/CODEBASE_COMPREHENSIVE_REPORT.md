@@ -738,7 +738,7 @@ python scripts/backfill_ohlcv.py --prune --keep-days 365
 | `check_system_status.py` | Quick health check for DB and APIs |
 | `schema_parser.py` | Generate expected_schemas.py from SQL DDL |
 | `validate_live_schema.sql` | SQL for live schema inspection |
-| `daily_pipeline.py` | Daily data pipeline orchestration |
+| `nightly_pipeline.py` | Canonical nightly pipeline orchestration (systemd timer) |
 | `fetch_discord_history_improved.py` | Discord history with better error handling |
 | `setup_ec2_services.sh` | EC2 systemd service setup |
 
@@ -1066,7 +1066,7 @@ Region: us-east-1
 
 **Services:**
 - Discord bot (systemd service)
-- Daily OHLCV backfill (cron)
+- Nightly pipeline via systemd timer (SnapTrade + OHLCV + NLP)
 - NLP batch processing
 
 **Setup Script:** `scripts/setup_ec2_services.sh`

@@ -326,65 +326,33 @@ env PATH=$PATH:/usr/bin /usr/lib/node_modules/pm2/bin/pm2 startup systemd -u ubu
 echo "   ✅ PM2 configured and bot started"
 
 # =============================================================================
-# STEP 7: Cron Jobs
+# STEP 7: Nightly Pipeline (systemd timer)
 # =============================================================================
 echo ""
-echo "🕐 Step 7: Setting up cron jobs..."
+echo "🕐 Step 7: Enabling nightly pipeline timer..."
 
-# Create cron job wrapper that loads secrets
-cat > "$PROJECT_DIR/scripts/run_pipeline_with_secrets.sh" << 'EOF'
-#!/bin/bash
-# Wrapper script to run daily pipeline with AWS Secrets Manager
-cd /home/ubuntu/llm-portfolio
-source .venv/bin/activate
-export USE_AWS_SECRETS=1
-export AWS_REGION=us-east-1
-export AWS_SECRET_NAME=qqqAppsecrets
+# Enable systemd timer for nightly pipeline
+if systemctl list-unit-files | grep -q "nightly-pipeline.timer"; then
+    systemctl enable nightly-pipeline.timer
+    systemctl start nightly-pipeline.timer
+    echo "   ✅ nightly-pipeline.timer enabled"
+else
+    echo "   ⚠️ nightly-pipeline.timer not found. Ensure systemd units are installed."
+fi
 
-# Run the pipeline
-python scripts/daily_pipeline.py "$@"
-EOF
-
-chmod +x "$PROJECT_DIR/scripts/run_pipeline_with_secrets.sh"
-chown ubuntu:ubuntu "$PROJECT_DIR/scripts/run_pipeline_with_secrets.sh"
-
-# Create cron jobs for ubuntu
+# Health check every 5 minutes (restart bot if not responding)
+# (kept as cron to match existing PM2 setup)
 CRON_FILE=$(mktemp)
-
-# Preserve existing cron jobs if any
 sudo -u ubuntu crontab -l 2>/dev/null > "$CRON_FILE" || true
-
-# Check if our jobs already exist
-if ! grep -q "daily_pipeline.py" "$CRON_FILE" 2>/dev/null; then
+if ! grep -q "pm2 ping discord-bot" "$CRON_FILE" 2>/dev/null; then
     cat >> "$CRON_FILE" << 'EOF'
-
-# =============================================================================
-# LLM Portfolio Journal - Daily Data Pipeline
-# =============================================================================
-
-# Daily full pipeline at 1:00 AM ET (6:00 AM UTC)
-# Runs: SnapTrade sync + Discord NLP processing + OHLCV backfill
-0 6 * * * /home/ubuntu/llm-portfolio/scripts/run_pipeline_with_secrets.sh >> /var/log/discord-bot/daily_pipeline.log 2>&1   
-
-# Evening SnapTrade sync at 8:00 PM ET (1:00 AM UTC next day)
-# Captures end-of-day positions after market close
-0 1 * * * /home/ubuntu/llm-portfolio/scripts/run_pipeline_with_secrets.sh --snaptrade >> /var/log/discord-bot/snaptrade_sync
-
-# Weekly log cleanup (keep 30 days)
-0 0 * * 0 find /var/log/discord-bot -name "*.log" -mtime +30 -delete
 
 # Health check every 5 minutes (restart bot if not responding)
 */5 * * * * pm2 ping discord-bot >/dev/null 2>&1 || pm2 restart discord-bot
 
 EOF
-
-    # Install crontab for ubuntu
     sudo -u ubuntu crontab "$CRON_FILE"
-    echo "   ✅ Cron jobs installed"
-else
-    echo "   Cron jobs already configured"
 fi
-
 rm -f "$CRON_FILE"
 
 # =============================================================================
@@ -414,7 +382,7 @@ echo ""
 echo "📋 Summary:"
 echo "   • Discord bot running via PM2"
 echo "   • AWS Secrets Manager integration configured"
-echo "   • Cron jobs for daily pipeline installed"
+echo "   • nightly-pipeline.timer enabled"
 echo ""
 echo "🔍 Useful commands:"
 echo "   pm2 status           # Check bot status"
@@ -423,7 +391,7 @@ echo "   pm2 restart discord-bot"
 echo ""
 echo "📁 Log locations:"
 echo "   /var/log/discord-bot/combined.log"
-echo "   /var/log/discord-bot/daily_pipeline.log"
+echo "   journalctl -u nightly-pipeline.service"
 echo ""
 echo "🔐 Secrets:"
 echo "   AWS Secrets Manager: ${SECRET_NAME}"

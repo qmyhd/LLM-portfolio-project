@@ -3,14 +3,19 @@
 Nightly Pipeline Orchestrator
 
 Runs after market close (1 AM ET) to:
-1. Backfill OHLCV data from Databento
-2. Run NLP batch processing on pending Discord messages
-3. Refresh stock profile data
+1. SnapTrade sync (accounts, positions, orders, balances)
+2. Backfill OHLCV data from Databento
+3. Run NLP batch processing on pending Discord messages
+4. Refresh stock profile data
 
 Designed to be run by systemd timer (nightly-pipeline.timer).
+
+This is the CANONICAL pipeline.
+Use: sudo systemctl start nightly-pipeline.service
 """
 
 import logging
+import os
 import subprocess
 import sys
 from datetime import datetime
@@ -32,6 +37,45 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger(__name__)
+
+
+def run_snaptrade_sync(timeout: int = 600) -> bool:
+    """Run SnapTrade sync to fetch accounts, positions, orders, balances.
+
+    Args:
+        timeout: Maximum execution time in seconds
+
+    Returns:
+        True if sync succeeded, False otherwise
+    """
+    try:
+        from src.snaptrade_collector import SnapTradeCollector
+
+        logger.info("Initializing SnapTrade collector...")
+        collector = SnapTradeCollector()
+
+        logger.info("Fetching SnapTrade data...")
+        results = collector.collect_all_data(write_parquet=False)
+
+        if results.get("success"):
+            logger.info(f"✅ SnapTrade sync complete:")
+            logger.info(f"   Accounts: {results.get('accounts', 0)}")
+            logger.info(f"   Positions: {results.get('positions', 0)}")
+            logger.info(f"   Orders: {results.get('orders', 0)}")
+            logger.info(f"   Balances: {results.get('balances', 0)}")
+            return True
+        else:
+            logger.error(
+                f"SnapTrade sync returned failure: {results.get('errors', [])}"
+            )
+            return False
+
+    except ImportError as e:
+        logger.warning(f"SnapTrade SDK not available: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"SnapTrade sync failed: {e}")
+        return False
 
 
 def run_script(script_path: str, args: list[str] = None, timeout: int = 600) -> bool:
@@ -92,6 +136,10 @@ def main():
 
     results = {}
 
+    # Step 0: SnapTrade Sync (accounts, positions, orders, balances)
+    logger.info("\n💼 Step 0: SnapTrade Sync")
+    results["snaptrade"] = run_snaptrade_sync(timeout=600)  # 10 min
+
     # Step 1: OHLCV Backfill (Databento → Supabase)
     logger.info("\n📊 Step 1: OHLCV Backfill")
     results["ohlcv"] = run_script(
@@ -137,6 +185,7 @@ def main():
         logger.info(f"  {task}: {status}")
 
     # Exit with error if any critical task failed
+    # Note: SnapTrade failure is not critical (may not be configured)
     critical_failures = [
         results.get("ohlcv") is False,
         results.get("nlp") is False,
@@ -144,6 +193,10 @@ def main():
     if any(critical_failures):
         logger.error("Pipeline completed with failures")
         sys.exit(1)
+
+    # Log warning if SnapTrade failed (non-blocking)
+    if results.get("snaptrade") is False:
+        logger.warning("⚠️ SnapTrade sync failed (non-critical)")
 
     logger.info("Pipeline completed successfully")
     sys.exit(0)

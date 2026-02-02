@@ -287,13 +287,14 @@ sudo systemctl stop discord-bot.service
 
 ---
 
-## Daily Pipeline
+## Nightly Pipeline (Canonical)
 
 The nightly pipeline runs automatically via systemd timer at 1 AM ET:
 
 1. **SnapTrade Sync** - Fetch positions, orders, balances
-2. **Discord NLP Processing** - Parse unprocessed messages with OpenAI
-3. **OHLCV Backfill** - Fetch daily price bars from Databento
+2. **OHLCV Backfill** - Fetch daily price bars from Databento
+3. **NLP Batch Processing** - Parse unprocessed messages with OpenAI
+4. **Stock Profile Refresh** - Optional refresh if script exists
 
 ### Manual Run
 
@@ -301,17 +302,14 @@ The nightly pipeline runs automatically via systemd timer at 1 AM ET:
 cd /home/ubuntu/llm-portfolio
 source .venv/bin/activate
 
-# Run all tasks
-./scripts/run_pipeline_with_secrets.sh
-
-# Run specific tasks
-./scripts/run_pipeline_with_secrets.sh --snaptrade
-./scripts/run_pipeline_with_secrets.sh --discord
-./scripts/run_pipeline_with_secrets.sh --ohlcv
+# Run the canonical pipeline directly
+python scripts/nightly_pipeline.py
 
 # Or trigger via systemd
 sudo systemctl start nightly-pipeline.service
 ```
+
+
 
 ### OHLCV Backfill
 
@@ -480,5 +478,5 @@ sudo systemctl restart api.service discord-bot.service
 | `scripts/check_secrets.py` | AWS Secrets Manager validation |
 | `scripts/preflight_ec2.sh` | EC2 readiness check |
 | `scripts/start_bot_with_secrets.py` | Bot startup with secrets |
-| `scripts/run_pipeline_with_secrets.sh` | Pipeline wrapper |
+| `scripts/nightly_pipeline.py` | Canonical nightly pipeline orchestrator |
 | `src/aws_secrets.py` | AWS Secrets Manager helper |
