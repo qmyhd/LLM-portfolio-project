@@ -159,7 +159,7 @@ check "nightly-pipeline.timer exists" \
     "sudo cp $PROJECT_DIR/systemd/nightly-pipeline.timer $SYSTEMD_DIR/ && sudo systemctl daemon-reload"
 
 echo ""
-echo "� Checking journald logging setup..."
+echo "Checking journald logging setup..."
 echo "--------------------------------------"
 
 check "No legacy file logging in unit files" \
