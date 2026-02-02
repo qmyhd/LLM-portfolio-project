@@ -185,7 +185,6 @@ def main():
         print("\nSome features may be unavailable.")
 
     print("\n✅ All required secrets are configured correctly!")
-    print(f"   Secret: {resolved_name}")
     print(f"   Region: {region}")
     print("   Secrets were loaded successfully from AWS Secrets Manager")
 
