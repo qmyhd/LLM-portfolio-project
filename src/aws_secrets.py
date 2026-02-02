@@ -41,6 +41,7 @@ import os
 from contextlib import contextmanager
 from functools import lru_cache
 from typing import Dict, Optional
+import hashlib
 
 logger = logging.getLogger(__name__)
 
@@ -50,16 +51,18 @@ def _redact_secret_name(secret_name: Optional[str]) -> str:
     Return a redacted representation of a secret name for safe logging.
 
     Only minimal, non-sensitive information is exposed. The full secret
-    identifier is never written to logs and no substring of the original
+    identifier is never written to logs, and no substrings of the original
+    value are included in the redacted form.
     value is included in the output.
     """
     if not secret_name:
-        return "secret:<unknown>"
-    # Use a non-reversible fingerprint so that different secrets can be
-    # distinguished in logs without exposing their actual names.
-    sid = str(secret_name)
-    fingerprint = hex(abs(hash(sid)) % (16**8))[2:].rjust(8, "0")
-    return f"secret:<redacted>-{fingerprint}"
+
+    secret_str = str(secret_name)
+    length = len(secret_str)
+    # Use a stable, non-reversible fingerprint to aid debugging without
+    # exposing the actual secret identifier.
+    digest = hashlib.sha256(secret_str.encode("utf-8")).hexdigest()[:8]
+    return f"secret:<len>={length} hash={digest}"
 
 
 # Secret name mapping: environment variable -> secret key in Secrets Manager
@@ -225,6 +228,10 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
         raise
     except Exception as e:
         logger.error(
+            "Error fetching secret %s: %s",
+            _redact_secret_name(secret_name),
+            e,
+        )
             "Error fetching secret %s: %s",
             _redact_secret_name(secret_name),
             e,
