@@ -322,7 +322,7 @@ If you're stuck:
 
 - **Main AGENTS.md**: [../AGENTS.md](../AGENTS.md)
 - **Architecture Guide**: [./ARCHITECTURE.md](./ARCHITECTURE.md)
-- **codebase Map**: [./CODEBASE_MAP.md](./CODEBASE_MAP.md)
+- **Codebase Map**: [../docs/codebase-map.md](../docs/codebase-map.md)
 
 ---
 
