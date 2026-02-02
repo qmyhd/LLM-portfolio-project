@@ -173,7 +173,7 @@ def main():
         print("\nSome features may be unavailable.")
 
     print("\n✅ All required secrets are configured correctly!")
-    secret_display = "***" if not resolved_name else ("***" + resolved_name[-4:] if len(resolved_name) > 4 else "***")
+    secret_display = "*** (redacted)"
     print(f"   Secret: {secret_display}")
     print(f"   Region: {region}")
     print("   Secrets were loaded successfully from AWS Secrets Manager")
