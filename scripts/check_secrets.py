@@ -173,9 +173,6 @@ def main():
         print("\nSome features may be unavailable.")
 
     print("\n✅ All required secrets are configured correctly!")
-    # Avoid logging the full secret name, which may be derived from sensitive env vars
-    masked_secret = "[redacted]" if not resolved_name else f"[redacted:{len(resolved_name)}]"
-    print(f"   Secret: {masked_secret}")
     print(f"   Region: {region}")
     print(f"   Total keys loaded: {count}")
 
