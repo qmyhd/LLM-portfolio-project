@@ -44,6 +44,24 @@ from typing import Dict, Optional
 
 logger = logging.getLogger(__name__)
 
+
+def _redact_secret_name(secret_name: Optional[str]) -> str:
+    """
+    Return a redacted representation of a secret name for safe logging.
+
+    Only minimal, non-sensitive information is exposed. The full secret
+    identifier is never written to logs.
+    """
+    if not secret_name:
+        return "unknown"
+    # Show only the last segment and last 4 characters to aid debugging
+    # without exposing the full secret identifier.
+    # Example: "llm-portfolio/production" -> "*/production (****ction)"
+    last_segment = str(secret_name).split("/")[-1]
+    tail = str(secret_name)[-4:]
+    return f"*/{last_segment} (****{tail})"
+
+
 # Secret name mapping: environment variable -> secret key in Secrets Manager
 # These are the keys expected in the AWS Secrets Manager secret
 SECRET_KEY_MAPPING = {
@@ -200,10 +218,10 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
     try:
         response = client.get_secret_value(SecretId=secret_name)
     except client.exceptions.ResourceNotFoundException:
-        logger.error(f"Secret not found: {secret_name}")
+        logger.error("Secret not found: %s", _redact_secret_name(secret_name))
         raise
     except client.exceptions.AccessDeniedException:
-        logger.error(f"Access denied to secret: {secret_name}")
+        logger.error("Access denied to secret: %s", _redact_secret_name(secret_name))
         raise
     except Exception as e:
         logger.error(f"Error fetching secret {secret_name}: {e}")
@@ -212,13 +230,20 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
     # Parse secret value (JSON format expected)
     secret_value = response.get("SecretString")
     if not secret_value:
-        logger.warning(f"Secret {secret_name} has no string value")
+        logger.warning(
+            "Secret has no string value: %s",
+            _redact_secret_name(secret_name),
+        )
         return {}
 
     try:
         return json.loads(secret_value)
     except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse secret {secret_name} as JSON: {e}")
+        logger.error(
+            "Failed to parse secret as JSON: %s (%s)",
+            _redact_secret_name(secret_name),
+            e,
+        )
         raise
 
 
@@ -261,7 +286,10 @@ def load_secrets_to_env(
             env = os.environ.get("AWS_SECRETS_ENV", "production")
             secret_name = f"{prefix}/{env}"
 
-    logger.info(f"Loading secrets from AWS Secrets Manager: {secret_name}")
+    logger.info(
+        "Loading secrets from AWS Secrets Manager: %s",
+        _redact_secret_name(secret_name),
+    )
 
     try:
         secrets = fetch_secret(secret_name)
