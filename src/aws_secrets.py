@@ -229,6 +229,10 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
             _redact_secret_name(secret_name),
             e,
         )
+            "Error fetching secret %s: %s",
+            _redact_secret_name(secret_name),
+            e,
+        )
         raise
 
     # Parse secret value (JSON format expected)
