@@ -326,8 +326,7 @@ def _fetch_from_logokit(symbol: str) -> Optional[str]:
                 return logo_url
             else:
                 logger.warning(
-                    f"⚠️ Logokit: Non-image response for {symbol} "
-                    f"(content-type: {content_type})"
+                    f"⚠️ Logokit: Non-image response for {symbol}"
                 )
         else:
             logger.warning(f"⚠️ Logokit: HTTP {response.status_code} for {symbol}")
