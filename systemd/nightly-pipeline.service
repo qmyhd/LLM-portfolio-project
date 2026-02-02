@@ -26,9 +26,10 @@ ExecStart=/home/ubuntu/llm-portfolio/.venv/bin/python scripts/nightly_pipeline.p
 # Timeout for long-running job (30 minutes max)
 TimeoutStartSec=1800
 
-# Logging
-StandardOutput=append:/var/log/portfolio-nightly/combined.log
-StandardError=append:/var/log/portfolio-nightly/error.log
+# Logging via journald (view with: journalctl -u nightly-pipeline.service -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-portfolio-nightly
 
 # Security hardening
 NoNewPrivileges=true
@@ -36,7 +37,6 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/ubuntu/llm-portfolio/data
 ReadWritePaths=/home/ubuntu/llm-portfolio/logs
-ReadWritePaths=/var/log/portfolio-nightly
 
 [Install]
 WantedBy=multi-user.target

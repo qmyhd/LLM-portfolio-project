@@ -263,9 +263,36 @@ AWS_SECRET_NAME=qqqAppsecrets
 EOF
     sudo chmod 644 /etc/llm-portfolio/llm.env
 
-    # Create log directories
-    sudo mkdir -p /var/log/portfolio-api /var/log/discord-bot /var/log/portfolio-nightly
-    sudo chown -R ubuntu:ubuntu /var/log/portfolio-api /var/log/discord-bot /var/log/portfolio-nightly
+    # Enable persistent journald logs (survive reboot on Ubuntu)
+    # This replaces file-based logging in /var/log/portfolio-*
+    log_info "Enabling persistent journald logs..."
+    sudo mkdir -p /var/log/journal
+    
+    # Configure journald for production use (drop-in config, loads last due to 99- prefix)
+    local journald_changed=false
+    if [ ! -f /etc/systemd/journald.conf.d/99-llm-portfolio.conf ]; then
+        sudo mkdir -p /etc/systemd/journald.conf.d
+        sudo tee /etc/systemd/journald.conf.d/99-llm-portfolio.conf > /dev/null << 'EOF'
+# LLM Portfolio - Production journald configuration (drop-in)
+# File: /etc/systemd/journald.conf.d/99-llm-portfolio.conf
+[Journal]
+Storage=persistent
+SystemMaxUse=1G
+SystemKeepFree=2G
+Compress=yes
+RateLimitBurst=10000
+RateLimitIntervalSec=30s
+EOF
+        journald_changed=true
+    fi
+    
+    # Only restart journald if we created/updated the drop-in file
+    if [ "$journald_changed" = true ]; then
+        log_info "Restarting systemd-journald to apply new configuration..."
+        sudo systemctl restart systemd-journald
+    else
+        log_info "journald configuration already present, skipping restart"
+    fi
 
     # Copy canonical systemd service files from repository
     log_info "Copying systemd service files from repository..."

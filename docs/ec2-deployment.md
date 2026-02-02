@@ -198,9 +198,9 @@ print(f'✅ Loaded {count} secrets')
 ### Step 5: Install Systemd Services
 
 ```bash
-# Create log directories
-sudo mkdir -p /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
-sudo chown -R ubuntu:ubuntu /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+# Enable persistent journald logs (survive reboot)
+sudo mkdir -p /var/log/journal
+sudo systemctl restart systemd-journald
 
 # Copy service files
 sudo cp systemd/*.service /etc/systemd/system/
@@ -209,6 +209,10 @@ sudo systemctl daemon-reload
 
 # Enable services
 sudo systemctl enable api.service discord-bot.service nightly-pipeline.timer
+
+# View logs with journald
+sudo journalctl -u api.service -f          # API logs
+sudo journalctl -u discord-bot.service -f  # Bot logs
 ```
 
 ### Step 6: Configure Nginx and SSL

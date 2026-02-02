@@ -186,9 +186,9 @@ echo "✅ EC2 Bootstrap Complete!"
 ### Step 4: Install Systemd Services
 
 ```bash
-# Create log directories
-sudo mkdir -p /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
-sudo chown -R ubuntu:ubuntu /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+# Enable persistent journald logs (survive reboot)
+sudo mkdir -p /var/log/journal
+sudo systemctl restart systemd-journald
 
 # Copy service files
 sudo cp systemd/*.service /etc/systemd/system/
@@ -198,6 +198,10 @@ sudo systemctl daemon-reload
 # Enable and start services
 sudo systemctl enable api.service discord-bot.service nightly-pipeline.timer
 sudo systemctl start api.service discord-bot.service nightly-pipeline.timer
+
+# View logs with journald
+sudo journalctl -u api.service -f          # API logs
+sudo journalctl -u discord-bot.service -f  # Bot logs
 ```
 
 ### Step 5: Configure Nginx and SSL

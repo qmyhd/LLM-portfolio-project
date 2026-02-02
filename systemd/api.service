@@ -26,9 +26,10 @@ ExecStart=/home/ubuntu/llm-portfolio/.venv/bin/python -m uvicorn app.main:app --
 Restart=always
 RestartSec=10
 
-# Logging
-StandardOutput=append:/var/log/portfolio-api/combined.log
-StandardError=append:/var/log/portfolio-api/error.log
+# Logging via journald (view with: journalctl -u api.service -f)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llm-portfolio-api
 
 # Resource limits
 MemoryMax=1G
@@ -40,7 +41,6 @@ ProtectSystem=strict
 ProtectHome=read-only
 ReadWritePaths=/home/ubuntu/llm-portfolio/data
 ReadWritePaths=/home/ubuntu/llm-portfolio/logs
-ReadWritePaths=/var/log/portfolio-api
 
 [Install]
 WantedBy=multi-user.target
