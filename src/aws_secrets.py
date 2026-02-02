@@ -50,16 +50,16 @@ def _redact_secret_name(secret_name: Optional[str]) -> str:
     Return a redacted representation of a secret name for safe logging.
 
     Only minimal, non-sensitive information is exposed. The full secret
-    identifier is never written to logs.
+    identifier is never written to logs and no substring of the original
+    value is included in the output.
     """
     if not secret_name:
-        return "unknown"
-    # Show only the last segment and last 4 characters to aid debugging
-    # without exposing the full secret identifier.
-    # Example: "llm-portfolio/production" -> "*/production (****ction)"
-    last_segment = str(secret_name).split("/")[-1]
-    tail = str(secret_name)[-4:]
-    return f"*/{last_segment} (****{tail})"
+        return "secret:<unknown>"
+    # Use a non-reversible fingerprint so that different secrets can be
+    # distinguished in logs without exposing their actual names.
+    sid = str(secret_name)
+    fingerprint = hex(abs(hash(sid)) % (16**8))[2:].rjust(8, "0")
+    return f"secret:<redacted>-{fingerprint}"
 
 
 # Secret name mapping: environment variable -> secret key in Secrets Manager
@@ -224,7 +224,11 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
         logger.error("Access denied to secret: %s", _redact_secret_name(secret_name))
         raise
     except Exception as e:
-        logger.error(f"Error fetching secret {secret_name}: {e}")
+        logger.error(
+            "Error fetching secret %s: %s",
+            _redact_secret_name(secret_name),
+            e,
+        )
         raise
 
     # Parse secret value (JSON format expected)
