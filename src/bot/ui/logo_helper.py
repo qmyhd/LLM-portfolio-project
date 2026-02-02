@@ -267,8 +267,7 @@ def _fetch_from_logo_dev(symbol: str) -> Optional[str]:
                 return logo_url
             else:
                 logger.warning(
-                    f"⚠️ Logo.dev: Non-image response for {symbol} "
-                    f"(content-type: {content_type})"
+                    f"⚠️ Logo.dev: Non-image response for {symbol}."
                 )
         else:
             logger.warning(f"⚠️ Logo.dev: HTTP {response.status_code} for {symbol}")
