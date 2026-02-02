@@ -67,7 +67,7 @@ def load_secrets() -> int:
         from src.aws_secrets import load_secrets_to_env
 
         count = load_secrets_to_env()
-        logger.info(f"✅ Loaded {count} secrets from AWS Secrets Manager")
+        logger.info("✅ Loaded secrets from AWS Secrets Manager")
         return count
     except ImportError as e:
         logger.error(f"❌ Could not import aws_secrets module: {e}")
