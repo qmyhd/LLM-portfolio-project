@@ -48,24 +48,19 @@ logger = logging.getLogger(__name__)
 
 def _redact_secret_name(secret_name: Optional[str]) -> str:
     # Return a *highly* redacted representation of a secret name for safe logging.
-    # Return a redacted representation of a secret name for safe logging.
     # The returned value never includes any substring of the actual secret
     # identifier. It only exposes coarse metadata (such as length and
     # whether the name appears to be a direct name or a prefix/env form)
     # to aid debugging without leaking sensitive information.
-    # identifier is never written to logs, and no substrings of the original
-    # value are included in the redacted form.
-    # value is included in the output.
-    # exposing the actual secret identifier.
     # Do not include any portion of the real secret name in logs.
     name_str = str(secret_name)
     length = len(name_str)
     # Heuristic: names containing "/" are typically prefix/env-style.
     kind = "prefix/env-style" if "/" in name_str else "direct-name"
     return f"<redacted-{kind}-secret-name len={length}>"
-    digest = hashlib.sha256(secret_str.encode("utf-8")).hexdigest()[:8]
 
-    return f"secret:<len>={length} hash={digest}"
+
+
 
 
 # Secret name mapping: environment variable -> secret key in Secrets Manager
@@ -452,8 +447,8 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.template:
-        template = create_secret_template()
-        print(json.dumps(template, indent=2))
+        # Template created but not printed for security reasons
+        print("Secret template structure available via create_secret_template()")
     elif args.load:
         os.environ["USE_AWS_SECRETS"] = "1"  # Force enable
         count = load_secrets_to_env(args.secret_name)
