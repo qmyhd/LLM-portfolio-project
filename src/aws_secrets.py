@@ -48,24 +48,37 @@ logger = logging.getLogger(__name__)
 
 def _redact_secret_name(secret_name: Optional[str]) -> str:
     # Return a *highly* redacted representation of a secret name for safe logging.
-    # Return a redacted representation of a secret name for safe logging.
     # The returned value never includes any substring of the actual secret
     # identifier. It only exposes coarse metadata (such as length and
     # whether the name appears to be a direct name or a prefix/env form)
     # to aid debugging without leaking sensitive information.
-    # identifier is never written to logs, and no substrings of the original
-    # value are included in the redacted form.
-    # value is included in the output.
-    # exposing the actual secret identifier.
     # Do not include any portion of the real secret name in logs.
     name_str = str(secret_name)
     length = len(name_str)
     # Heuristic: names containing "/" are typically prefix/env-style.
     kind = "prefix/env-style" if "/" in name_str else "direct-name"
     return f"<redacted-{kind}-secret-name len={length}>"
-    digest = hashlib.sha256(secret_str.encode("utf-8")).hexdigest()[:8]
 
-    return f"secret:<len>={length} hash={digest}"
+
+def _redact_template_for_output(template: Dict) -> Dict:
+    """
+    Return a deeply redacted version of a secret template for safe display.
+
+    This preserves the overall structure and keys but replaces all leaf values
+    with a constant placeholder so that no potentially sensitive example
+    values are written to stdout or logs.
+    """
+    REDACTED_VALUE = "***redacted***"
+
+    def _redact_value(value):
+        if isinstance(value, dict):
+            return {k: _redact_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [_redact_value(v) for v in value]
+        # For any leaf value type (str, int, bool, etc.), replace with placeholder.
+        return REDACTED_VALUE
+
+    return _redact_value(template)
 
 
 # Secret name mapping: environment variable -> secret key in Secrets Manager
@@ -453,7 +466,8 @@ if __name__ == "__main__":
 
     if args.template:
         template = create_secret_template()
-        print(json.dumps(template, indent=2))
+        safe_template = _redact_template_for_output(template)
+        print(json.dumps(safe_template, indent=2))
     elif args.load:
         os.environ["USE_AWS_SECRETS"] = "1"  # Force enable
         count = load_secrets_to_env(args.secret_name)
