@@ -200,6 +200,9 @@ async def mark_order_notified(order_id: str):
             "order_id": order_id,
             "notified": True,
         }
-    except Exception as e:
-        logger.error(f"Error marking order notified: {e}")
-        return {"status": "error", "message": str(e)}
+    except Exception:
+        logger.exception("Error marking order notified")
+        return {
+            "status": "error",
+            "message": "Failed to mark order as notified.",
+        }
