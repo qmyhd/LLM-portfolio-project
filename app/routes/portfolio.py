@@ -235,15 +235,20 @@ async def sync_portfolio():
         collector = SnapTradeCollector()
         results = collector.collect_all_data(write_parquet=False)
 
+        error_list = results.get("errors", []) or []
+        success = bool(results.get("success"))
+
         return {
-            "status": "success" if results.get("success") else "partial",
-            "message": "Portfolio sync completed",
+            "status": "success" if success else "partial",
+            "message": "Portfolio sync completed"
+            if success
+            else "Portfolio sync completed with some errors",
             "accounts": results.get("accounts", 0),
             "balances": results.get("balances", 0),
             "positions": results.get("positions", 0),
             "orders": results.get("orders", 0),
-            "errors": results.get("errors", []),
+            "errorCount": len(error_list),
         }
     except Exception as e:
         logger.error(f"Error syncing portfolio: {e}")
-        raise HTTPException(status_code=500, detail=f"Sync failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Sync failed")
