@@ -447,7 +447,6 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.template:
-        template = create_secret_template()
         # Template created but not printed for security reasons
         print("Secret template structure available via create_secret_template()")
     elif args.load:
