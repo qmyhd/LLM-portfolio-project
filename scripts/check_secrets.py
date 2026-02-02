@@ -27,6 +27,19 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 
+def mask_value(value: str) -> str:
+    """
+    Return a masked representation of a potentially sensitive value
+    suitable for logging. Shows only a short prefix to help identify
+    which value is being used without revealing it in full.
+    """
+    if not value:
+        return ""
+    if len(value) <= 4:
+        return "***"
+    return value[:4] + "..." + "***"
+
+
 def main():
     """Validate AWS Secrets Manager configuration and required keys."""
     print("=" * 60)
@@ -71,7 +84,6 @@ def main():
     print("\nConfiguration:")
     print(f"  USE_AWS_SECRETS: {use_aws}")
     print(f"  AWS_REGION: {region}")
-    print(f"  Resolved Secret: {resolved_name}")
     print(f"  Resolution Method: {resolution_method}")
 
     if use_aws != "1":
