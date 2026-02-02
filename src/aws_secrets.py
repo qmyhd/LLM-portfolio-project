@@ -452,6 +452,6 @@ if __name__ == "__main__":
     elif args.load:
         os.environ["USE_AWS_SECRETS"] = "1"  # Force enable
         count = load_secrets_to_env(args.secret_name)
-        print(f"Loaded {count} secrets")
+        print("Secrets loaded into environment")
     else:
         parser.print_help()
