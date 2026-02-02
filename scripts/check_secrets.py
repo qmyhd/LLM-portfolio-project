@@ -93,7 +93,7 @@ def main():
         from src.aws_secrets import load_secrets_to_env, SECRET_KEY_MAPPING
 
         count = load_secrets_to_env(secret_name=resolved_name)
-        print(f"\n✅ Loaded {count} secrets successfully")
+        print("\n✅ Secrets loaded successfully")
 
     except Exception as e:
         print(f"\n❌ Failed to load secrets: {e}")
@@ -175,7 +175,7 @@ def main():
     print("\n✅ All required secrets are configured correctly!")
     print(f"   Secret: {resolved_name}")
     print(f"   Region: {region}")
-    print(f"   Total keys loaded: {count}")
+    print("   Secrets were loaded successfully from AWS Secrets Manager")
 
     return 0
 
