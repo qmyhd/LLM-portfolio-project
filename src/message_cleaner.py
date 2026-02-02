@@ -653,8 +653,9 @@ def clean_text(text: str) -> str:
         return ""
 
     # Remove URLs
+    # Note: dash is escaped (\-) to prevent [$-_] being interpreted as a character range
     text = re.sub(
-        r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
+        r"http[s]?://(?:[a-zA-Z]|[0-9]|[$\-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
         "",
         text,
     )
