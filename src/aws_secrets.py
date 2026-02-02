@@ -234,9 +234,8 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
         raise
     except Exception as e:
         logger.error(
-            "Error fetching secret %s: %s",
+            "Error fetching secret: %s",
             _redact_secret_name(secret_name),
-            e,
         )
         raise
 
