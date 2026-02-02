@@ -455,7 +455,7 @@ def get_logo_image(
 
         content_type = response.headers.get("content-type", "")
         if "image" not in content_type:
-            logger.debug(f"Invalid content-type for {symbol}: {content_type}")
+            logger.debug(f"Invalid content-type for {symbol}; expected image/*")
             return None
 
         # Try to resize using PIL if available
