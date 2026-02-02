@@ -122,8 +122,8 @@ sudo systemctl status api.service discord-bot.service
 
 ### STEP 15: Test Nightly Pipeline
 ```bash
-source .venv/bin/activate
-python scripts/nightly_pipeline.py
+# Trigger a manual run via systemd so logs appear in journald
+sudo systemctl start nightly-pipeline.service
 sudo journalctl -u nightly-pipeline.service -f
 ```
 
