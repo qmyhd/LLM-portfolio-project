@@ -269,6 +269,7 @@ EOF
     sudo mkdir -p /var/log/journal
     
     # Configure journald for production use (drop-in config, loads last due to 99- prefix)
+    local journald_changed=false
     if [ ! -f /etc/systemd/journald.conf.d/99-llm-portfolio.conf ]; then
         sudo mkdir -p /etc/systemd/journald.conf.d
         sudo tee /etc/systemd/journald.conf.d/99-llm-portfolio.conf > /dev/null << 'EOF'
@@ -282,8 +283,16 @@ Compress=yes
 RateLimitBurst=10000
 RateLimitIntervalSec=30s
 EOF
+        journald_changed=true
     fi
-    sudo systemctl restart systemd-journald
+    
+    # Only restart journald if we created/updated the drop-in file
+    if [ "$journald_changed" = true ]; then
+        log_info "Restarting systemd-journald to apply new configuration..."
+        sudo systemctl restart systemd-journald
+    else
+        log_info "journald configuration already present, skipping restart"
+    fi
 
     # Copy canonical systemd service files from repository
     log_info "Copying systemd service files from repository..."
