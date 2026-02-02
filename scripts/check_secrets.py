@@ -82,7 +82,6 @@ def main():
         resolution_method = f"{{AWS_SECRETS_PREFIX}}/{{AWS_SECRETS_ENV}} (fallback)"
 
     print("\nConfiguration:")
-    print("  USE_AWS_SECRETS: [value read from environment - not logged]")
     print(f"  AWS_REGION: {region}")
     print(f"  Resolution Method: {resolution_method}")
 
