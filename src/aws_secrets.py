@@ -224,7 +224,11 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
         logger.error("Secret not found: %s", _redact_secret_name(secret_name))
         raise
     except client.exceptions.AccessDeniedException:
-        logger.error("Access denied to secret: %s", _redact_secret_name(secret_name))
+        logger.error(
+            "Error fetching secret %s: %s",
+            _redact_secret_name(secret_name),
+            e,
+        )
         raise
     except Exception as e:
         logger.error(
