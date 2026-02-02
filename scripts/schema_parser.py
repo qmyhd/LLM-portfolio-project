@@ -804,6 +804,9 @@ class SQLSchemaParser:
 
     def _extract_from_do_blocks(self, sql: str) -> str:
         """Extract CREATE TABLE statements from PostgreSQL DO blocks."""
+        # Defense-in-depth: limit DO block content to prevent DoS
+        MAX_BLOCK_SIZE = 100_000  # 100KB should be plenty for any schema
+
         # Pattern to match DO $$ BEGIN ... END $$; blocks (no escaping needed for literal $)
         do_block_pattern = r"DO\s+\$\$\s+BEGIN(.*?)END\s+\$\$;"
 
@@ -814,27 +817,80 @@ class SQLSchemaParser:
 
         for match in matches:
             block_content = match.group(1)
-            # Extract CREATE TABLE from the block content - need to handle nested parentheses
-            create_table_pattern = (
-                r"CREATE\s+TABLE[^;]*\([^)]*(?:\([^)]*\)[^)]*)*\)[^;]*;"
-            )
-            table_matches = list(
-                re.finditer(
-                    create_table_pattern, block_content, re.IGNORECASE | re.DOTALL
+
+            # Defense-in-depth: skip oversized blocks
+            if len(block_content) > MAX_BLOCK_SIZE:
+                logger.warning(
+                    f"Skipping oversized DO block ({len(block_content)} bytes)"
                 )
-            )
+                continue
+
+            # Use safe iterative extraction instead of vulnerable regex
+            # (fixes CodeQL ReDoS alert - nested quantifiers caused exponential backtracking)
+            table_statements = self._extract_create_table_iterative(block_content)
 
             logger.info(
-                f"Found {len(table_matches)} CREATE TABLE statements in DO block"
+                f"Found {len(table_statements)} CREATE TABLE statements in DO block"
             )
 
-            for table_match in table_matches:
-                create_statement = table_match.group(0)
+            for create_statement in table_statements:
                 logger.info(f"Extracted CREATE TABLE: {create_statement[:100]}...")
                 # Add the extracted CREATE TABLE to processed SQL
                 extracted_sql += "\n" + create_statement
 
         return extracted_sql
+
+    def _extract_create_table_iterative(self, sql: str) -> List[str]:
+        """
+        Extract CREATE TABLE statements using safe iterative parsing.
+
+        Handles nested parentheses (type params, constraints) without regex
+        backtracking vulnerabilities (ReDoS).
+        """
+        statements = []
+        sql_upper = sql.upper()
+        i = 0
+
+        while i < len(sql):
+            # Find "CREATE TABLE" (case-insensitive via pre-computed upper)
+            start = sql_upper.find("CREATE TABLE", i)
+            if start == -1:
+                break
+
+            # Find the opening parenthesis for column definitions
+            paren_start = sql.find("(", start)
+            if paren_start == -1:
+                break
+
+            # Track parenthesis depth to find matching close paren
+            depth = 1
+            j = paren_start + 1
+            while j < len(sql) and depth > 0:
+                if sql[j] == "(":
+                    depth += 1
+                elif sql[j] == ")":
+                    depth -= 1
+                j += 1
+
+            if depth != 0:
+                # Unbalanced parentheses, skip this malformed statement
+                logger.warning(
+                    f"Unbalanced parentheses in CREATE TABLE at position {start}"
+                )
+                i = paren_start + 1
+                continue
+
+            # Find semicolon after closing paren
+            semi = sql.find(";", j)
+            if semi != -1:
+                statements.append(sql[start : semi + 1])
+                i = semi + 1
+            else:
+                # No semicolon found, take rest of statement
+                statements.append(sql[start:j])
+                i = j
+
+        return statements
 
     def _parse_columns(self, columns_text: str) -> Dict[str, str]:
         """Parse column definitions from CREATE TABLE column list."""
