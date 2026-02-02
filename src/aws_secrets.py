@@ -318,7 +318,7 @@ def load_secrets_to_env(
                 if overwrite or env_var not in os.environ:
                     os.environ[env_var] = str(value)
                     count += 1
-                    logger.debug(f"Set {env_var} from secret")
+                    logger.debug("Set environment variable from AWS secret")
 
     logger.info(f"Loaded {count} environment variables from AWS Secrets Manager")
 
