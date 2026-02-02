@@ -78,7 +78,7 @@ def bootstrap_env() -> int:
         from src.aws_secrets import load_secrets_to_env
 
         count = load_secrets_to_env()
-        logger.info(f"Bootstrapped {count} secrets from AWS Secrets Manager")
+        logger.info("Bootstrapped secrets from AWS Secrets Manager")
         _bootstrapped = True
         return count
     except Exception as e:
