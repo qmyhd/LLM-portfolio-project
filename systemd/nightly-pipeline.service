@@ -16,6 +16,9 @@ Environment="PYTHONUNBUFFERED=1"
 Environment="MPLCONFIGDIR=/home/ubuntu/llm-portfolio/logs/matplotlib"
 Environment="TMPDIR=/tmp"
 
+# Batch output directory for NLP pipeline
+Environment="BATCH_OUTPUT_DIR=/home/ubuntu/llm-portfolio/logs/batch_output"
+
 # AWS Secrets Manager configuration (loaded from central env file)
 # REQUIRED: Create /etc/llm-portfolio/llm.env first - see systemd/README.md
 EnvironmentFile=/etc/llm-portfolio/llm.env

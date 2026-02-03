@@ -254,8 +254,9 @@ setup_services() {
     log_info "Creating application directories..."
     mkdir -p ${PROJECT_DIR}/data
     mkdir -p ${PROJECT_DIR}/logs
-    mkdir -p ${PROJECT_DIR}/logs/charts      # Chart output directory (LLM_CHARTS_DIR)
-    mkdir -p ${PROJECT_DIR}/logs/matplotlib  # Matplotlib config (MPLCONFIGDIR)
+    mkdir -p ${PROJECT_DIR}/logs/charts       # Chart output directory (LLM_CHARTS_DIR)
+    mkdir -p ${PROJECT_DIR}/logs/matplotlib   # Matplotlib config (MPLCONFIGDIR)
+    mkdir -p ${PROJECT_DIR}/logs/batch_output # NLP batch processing output (BATCH_OUTPUT_DIR)
     chown -R ubuntu:ubuntu ${PROJECT_DIR}/data ${PROJECT_DIR}/logs
 
     # Create central AWS Secrets Manager configuration file

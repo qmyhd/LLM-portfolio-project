@@ -91,6 +91,91 @@ class SnapTradeCollector:
 
         return user_id, user_secret
 
+    def log_credentials_debug_info(self) -> Dict[str, Any]:
+        """
+        Log debug-safe information about credentials without exposing secrets.
+
+        Returns:
+            Dict with credential status info (safe to log)
+        """
+        client_id = getattr(self.config, "SNAPTRADE_CLIENT_ID", "") or getattr(
+            self.config, "snaptrade_client_id", ""
+        )
+        consumer_key = getattr(self.config, "SNAPTRADE_CONSUMER_KEY", "") or getattr(
+            self.config, "snaptrade_consumer_key", ""
+        )
+        user_id = (
+            getattr(self.config, "SNAPTRADE_USER_ID", "")
+            or getattr(self.config, "snaptrade_user_id", "")
+            or getattr(self.config, "userid", "")
+        )
+        user_secret = (
+            getattr(self.config, "SNAPTRADE_USER_SECRET", "")
+            or getattr(self.config, "snaptrade_user_secret", "")
+            or getattr(self.config, "usersecret", "")
+        )
+
+        debug_info = {
+            "app_keys_present": bool(client_id and consumer_key),
+            "user_keys_present": bool(user_id and user_secret),
+            "user_id_length": len(user_id) if user_id else 0,
+            "client_id_length": len(client_id) if client_id else 0,
+        }
+
+        logger.info(f"🔐 SnapTrade credentials status: {debug_info}")
+        return debug_info
+
+    def verify_user_auth(self) -> Tuple[bool, str]:
+        """
+        Smoke test: verify user authentication by calling a simple endpoint.
+
+        Calls list_user_accounts to verify user_id/user_secret are valid.
+
+        Returns:
+            Tuple of (success: bool, message: str)
+        """
+        # Log debug info first (safe - no secrets exposed)
+        self.log_credentials_debug_info()
+
+        try:
+            user_id, user_secret = self._get_user_credentials()
+        except ValueError as e:
+            return False, f"Missing user credentials: {e}"
+
+        try:
+            # Call a simple user endpoint to verify auth
+            response = self.client.account_information.get_all_user_holdings(
+                user_id=user_id,
+                user_secret=user_secret,
+            )
+
+            # If we get here without exception, auth is valid
+            data, _ = self.safely_extract_response_data(response, "verify_user_auth")
+
+            if data is not None:
+                logger.info(f"✅ SnapTrade user auth verified successfully")
+                return True, "User authentication verified"
+            else:
+                return False, "Empty response from holdings endpoint"
+
+        except Exception as e:
+            error_str = str(e).lower()
+
+            # Check for specific auth errors
+            if "401" in error_str or "1076" in error_str or "unauthorized" in error_str:
+                msg = (
+                    "SnapTrade user auth failed (401/1076). "
+                    "Check SNAPTRADE_USER_ID and SNAPTRADE_USER_SECRET are current. "
+                    "User may need to re-authenticate via SnapTrade connect."
+                )
+                logger.error(f"🔒 {msg}")
+                return False, msg
+
+            # Other errors
+            msg = f"SnapTrade auth check failed: {e}"
+            logger.error(msg)
+            return False, msg
+
     def safely_extract_response_data(
         self, response, operation_name="API call", max_sample_items=3
     ) -> Tuple[Any, bool]:

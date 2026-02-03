@@ -6,19 +6,24 @@ Endpoints:
 
 Security:
 - HMAC-SHA256 signature verification using SNAPTRADE_CLIENT_SECRET
+- Signature is base64 encoded (matches SnapTrade's format)
 - Replay protection via eventTimestamp (5-minute window)
+- webhookId deduplication to prevent duplicate processing
 - Signature header: X-SnapTrade-Signature or Signature
 """
 
 import asyncio
+import base64
+import json
 import logging
 import hmac
 import hashlib
 import os
 from datetime import datetime, timezone, timedelta
-from typing import Optional, Any
+from typing import Optional, Any, Set
+from collections import OrderedDict
 
-from fastapi import APIRouter, HTTPException, Request, Header
+from fastapi import APIRouter, HTTPException, Request, Header, BackgroundTasks
 from pydantic import BaseModel
 
 from src.db import execute_sql
@@ -30,6 +35,11 @@ router = APIRouter()
 # Maximum age of webhook events (prevent replay attacks)
 MAX_EVENT_AGE_SECONDS = 300  # 5 minutes
 
+# In-memory cache for webhookId deduplication (with TTL-based cleanup)
+# In production, consider using Redis or database for multi-instance support
+_seen_webhook_ids: dict[str, datetime] = {}
+_WEBHOOK_ID_TTL_SECONDS = 3600  # Keep IDs for 1 hour
+
 
 class SnapTradeWebhookPayload(BaseModel):
     """SnapTrade webhook payload."""
@@ -39,6 +49,7 @@ class SnapTradeWebhookPayload(BaseModel):
     userSecret: Optional[str] = None
     accountId: Optional[str] = None
     eventTimestamp: Optional[str] = None  # ISO timestamp for replay protection
+    webhookId: Optional[str] = None  # Unique ID for deduplication
     data: Optional[dict[str, Any]] = None
 
 
@@ -51,15 +62,39 @@ class WebhookResponse(BaseModel):
     message: Optional[str] = None
 
 
-def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> bool:
+def canonicalize_json(payload: dict) -> str:
+    """
+    Convert payload to canonical JSON string for signature verification.
+
+    SnapTrade uses: json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+    Args:
+        payload: Webhook payload dict
+
+    Returns:
+        Canonical JSON string
+    """
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True)
+
+
+def verify_webhook_signature(
+    payload_bytes: bytes,
+    payload_dict: dict,
+    signature: str,
+    secret: str,
+) -> bool:
     """
     Verify SnapTrade webhook signature using SNAPTRADE_CLIENT_SECRET.
 
-    SnapTrade signs webhooks with HMAC-SHA256 using the client secret.
+    SnapTrade signs webhooks with HMAC-SHA256 using the client secret,
+    and base64 encodes the result.
+
+    Tries both raw bytes and canonical JSON for compatibility.
 
     Args:
-        payload: Raw request body
-        signature: Signature header value (X-SnapTrade-Signature or Signature)
+        payload_bytes: Raw request body bytes
+        payload_dict: Parsed payload dict (for canonical JSON fallback)
+        signature: Signature header value (base64 encoded)
         secret: SNAPTRADE_CLIENT_SECRET
 
     Returns:
@@ -68,9 +103,79 @@ def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> boo
     if not signature or not secret:
         return False
 
-    expected = hmac.new(secret.encode(), payload, hashlib.sha256).hexdigest()
+    # Clean signature (may have whitespace or "sha256=" prefix)
+    clean_sig = signature.strip()
+    if clean_sig.lower().startswith("sha256="):
+        clean_sig = clean_sig[7:]
 
-    return hmac.compare_digest(signature.lower(), expected.lower())
+    # Try multiple signature verification methods:
+    # 1. Base64 encoded HMAC of raw bytes
+    # 2. Base64 encoded HMAC of canonical JSON
+    # 3. Hex encoded HMAC (legacy fallback)
+
+    secret_bytes = secret.encode()
+
+    # Method 1: Base64 of raw bytes
+    expected_b64_raw = base64.b64encode(
+        hmac.new(secret_bytes, payload_bytes, hashlib.sha256).digest()
+    ).decode()
+
+    if hmac.compare_digest(clean_sig, expected_b64_raw):
+        return True
+
+    # Method 2: Base64 of canonical JSON
+    canonical = canonicalize_json(payload_dict).encode()
+    expected_b64_canonical = base64.b64encode(
+        hmac.new(secret_bytes, canonical, hashlib.sha256).digest()
+    ).decode()
+
+    if hmac.compare_digest(clean_sig, expected_b64_canonical):
+        return True
+
+    # Method 3: Hex fallback (legacy)
+    expected_hex = hmac.new(secret_bytes, payload_bytes, hashlib.sha256).hexdigest()
+    if hmac.compare_digest(clean_sig.lower(), expected_hex.lower()):
+        return True
+
+    logger.warning(
+        f"Signature mismatch. Received: {clean_sig[:20]}..., "
+        f"Expected (b64 raw): {expected_b64_raw[:20]}..., "
+        f"Expected (b64 canonical): {expected_b64_canonical[:20]}..."
+    )
+    return False
+
+
+def is_duplicate_webhook(webhook_id: Optional[str]) -> bool:
+    """
+    Check if webhookId has been seen before (deduplication).
+
+    Args:
+        webhook_id: Unique webhook ID from payload
+
+    Returns:
+        True if this is a duplicate (already processed)
+    """
+    if not webhook_id:
+        return False  # No ID means we can't dedupe, process it
+
+    # Clean old entries (TTL-based cleanup)
+    now = datetime.now(timezone.utc)
+    expired = [
+        wid
+        for wid, seen_at in _seen_webhook_ids.items()
+        if (now - seen_at).total_seconds() > _WEBHOOK_ID_TTL_SECONDS
+    ]
+    for wid in expired:
+        del _seen_webhook_ids[wid]
+
+    # Check if seen
+    if webhook_id in _seen_webhook_ids:
+        logger.info(f"Duplicate webhook detected: {webhook_id}")
+        return True
+
+    # Mark as seen
+    _seen_webhook_ids[webhook_id] = now
+    return False
 
 
 def verify_event_timestamp(event_timestamp: Optional[str]) -> bool:
@@ -115,6 +220,7 @@ def verify_event_timestamp(event_timestamp: Optional[str]) -> bool:
 @router.post("/snaptrade", response_model=WebhookResponse)
 async def handle_snaptrade_webhook(
     request: Request,
+    background_tasks: BackgroundTasks,
     x_snaptrade_signature: Optional[str] = Header(None, alias="X-SnapTrade-Signature"),
     signature: Optional[str] = Header(None, alias="Signature"),
 ):
@@ -129,21 +235,26 @@ async def handle_snaptrade_webhook(
     - ORDER_CANCELLED: Order cancelled
 
     Security:
-    - HMAC-SHA256 signature verification using SNAPTRADE_CLIENT_SECRET
+    - HMAC-SHA256 signature verification using SNAPTRADE_CLIENT_SECRET (base64)
     - Accepts signature in either X-SnapTrade-Signature or Signature header
     - Replay protection via eventTimestamp (5-minute window)
+    - webhookId deduplication to prevent duplicate processing
 
     Args:
         request: Raw request with webhook payload
+        background_tasks: FastAPI background tasks for async processing
         x_snaptrade_signature: Webhook signature (X-SnapTrade-Signature header)
         signature: Webhook signature (Signature header, fallback)
 
     Returns:
-        Processing status
+        Processing status (returns 200 quickly, processes asynchronously)
     """
     try:
         # Get raw body for signature verification
         raw_body = await request.body()
+
+        # Parse payload early for canonical JSON verification
+        payload = await request.json()
 
         # Use whichever signature header is present
         sig = x_snaptrade_signature or signature
@@ -154,25 +265,35 @@ async def handle_snaptrade_webhook(
             if not sig:
                 raise HTTPException(status_code=401, detail="Missing webhook signature")
 
-            if not verify_webhook_signature(raw_body, sig, client_secret):
+            if not verify_webhook_signature(raw_body, payload, sig, client_secret):
                 raise HTTPException(status_code=401, detail="Invalid webhook signature")
         else:
             logger.warning(
                 "SNAPTRADE_CLIENT_SECRET not set - skipping signature verification"
             )
 
-        # Parse payload
-        payload = await request.json()
+        # Extract payload fields (already parsed above for signature verification)
         event = payload.get("event", "UNKNOWN")
         user_id = payload.get("userId", "")
         account_id = payload.get("accountId")
         event_timestamp = payload.get("eventTimestamp")
+        webhook_id = payload.get("webhookId")
         data = payload.get("data", {})
 
         # Verify event timestamp for replay protection
         if not verify_event_timestamp(event_timestamp):
             raise HTTPException(
                 status_code=400, detail="Event timestamp expired or invalid"
+            )
+
+        # Check for duplicate webhook (deduplication)
+        if is_duplicate_webhook(webhook_id):
+            logger.info(f"Ignoring duplicate webhook: {webhook_id} for event {event}")
+            return WebhookResponse(
+                status="duplicate",
+                event=event,
+                processed=False,
+                message=f"Duplicate webhook {webhook_id} - already processed",
             )
 
         logger.info(f"Received SnapTrade webhook: {event} for user {user_id}")
