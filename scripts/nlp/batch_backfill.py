@@ -43,6 +43,7 @@ Batch API Notes:
 import argparse
 import json
 import logging
+import os
 import subprocess
 import sys
 import time
@@ -62,6 +63,12 @@ logging.basicConfig(
     level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
+
+# Default batch output directory (can be overridden by BATCH_OUTPUT_DIR env var)
+# On EC2: BATCH_OUTPUT_DIR=/home/ubuntu/llm-portfolio/logs/batch_output
+DEFAULT_BATCH_OUTPUT_DIR = os.environ.get(
+    "BATCH_OUTPUT_DIR", str(Path(__file__).parent.parent.parent / "batch_output")
+)
 
 
 def verify_schema(verbose: bool = False) -> bool:
@@ -433,8 +440,8 @@ def main():
     parser.add_argument(
         "--output-dir",
         type=str,
-        default="./batch_output",
-        help="Directory for batch files (default: ./batch_output)",
+        default=DEFAULT_BATCH_OUTPUT_DIR,
+        help=f"Directory for batch files (default: $BATCH_OUTPUT_DIR or {DEFAULT_BATCH_OUTPUT_DIR})",
     )
     parser.add_argument(
         "--dry-run",

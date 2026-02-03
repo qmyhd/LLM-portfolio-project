@@ -128,13 +128,21 @@ check "logs/matplotlib directory exists (MPLCONFIGDIR)" \
     "[ -d '$PROJECT_DIR/logs/matplotlib' ]" \
     "mkdir -p $PROJECT_DIR/logs/matplotlib && chown ubuntu:ubuntu $PROJECT_DIR/logs/matplotlib"
 
+check "logs/batch_output directory exists (BATCH_OUTPUT_DIR)" \
+    "[ -d '$PROJECT_DIR/logs/batch_output' ]" \
+    "mkdir -p $PROJECT_DIR/logs/batch_output && chown ubuntu:ubuntu $PROJECT_DIR/logs/batch_output"
+
 check "logs/charts is writable" \
     "[ -w '$PROJECT_DIR/logs/charts' ]" \
-    "chown ubuntu:ubuntu $PROJECT_DIR/logs/charts && chmod 755 $PROJECT_DIR/logs/charts"
+    "chown ubuntu:ubuntu $PROJECT_DIR/logs/charts"
 
 check "logs/matplotlib is writable" \
     "[ -w '$PROJECT_DIR/logs/matplotlib' ]" \
-    "chown ubuntu:ubuntu $PROJECT_DIR/logs/matplotlib && chmod 755 $PROJECT_DIR/logs/matplotlib"
+    "chown ubuntu:ubuntu $PROJECT_DIR/logs/matplotlib"
+
+check "logs/batch_output is writable" \
+    "[ -w '$PROJECT_DIR/logs/batch_output' ]" \
+    "chown ubuntu:ubuntu $PROJECT_DIR/logs/batch_output"
 
 echo ""
 echo "�📦 Checking system dependencies..."

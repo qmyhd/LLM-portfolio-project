@@ -10,6 +10,9 @@ Runs after market close (1 AM ET) to:
 
 Designed to be run by systemd timer (nightly-pipeline.timer).
 
+Environment Variables:
+    REQUIRE_SNAPTRADE: If "1", abort pipeline on SnapTrade failure. Default "0" (continue).
+
 This is the CANONICAL pipeline.
 Use: sudo systemctl start nightly-pipeline.service
 """
@@ -38,9 +41,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Environment variable: if "1", SnapTrade failure aborts pipeline
+REQUIRE_SNAPTRADE = os.environ.get("REQUIRE_SNAPTRADE", "0") == "1"
+
 
 def run_snaptrade_sync(timeout: int = 600) -> bool:
     """Run SnapTrade sync to fetch accounts, positions, orders, balances.
+
+    Includes a user auth smoke test before attempting data collection.
 
     Args:
         timeout: Maximum execution time in seconds
@@ -53,6 +61,14 @@ def run_snaptrade_sync(timeout: int = 600) -> bool:
 
         logger.info("Initializing SnapTrade collector...")
         collector = SnapTradeCollector()
+
+        # Run user auth smoke test first
+        logger.info("Running SnapTrade user auth smoke test...")
+        auth_ok, auth_msg = collector.verify_user_auth()
+
+        if not auth_ok:
+            logger.error(f"SnapTrade user auth failed: {auth_msg}")
+            return False
 
         logger.info("Fetching SnapTrade data...")
         results = collector.collect_all_data(write_parquet=False)
@@ -161,7 +177,7 @@ def main():
     if (PROJECT_ROOT / "scripts/daily_stock_refresh.py").exists():
         results["stock_refresh"] = run_script(
             "scripts/daily_stock_refresh.py",
-            timeout=300,  # 5 min
+            timeout=600,  # 10 min (increased from 5 min)
         )
     else:
         logger.info("Skipping stock refresh (script not found)")
@@ -185,18 +201,26 @@ def main():
         logger.info(f"  {task}: {status}")
 
     # Exit with error if any critical task failed
-    # Note: SnapTrade failure is not critical (may not be configured)
+    # OHLCV and NLP are always critical
     critical_failures = [
         results.get("ohlcv") is False,
         results.get("nlp") is False,
     ]
-    if any(critical_failures):
-        logger.error("Pipeline completed with failures")
-        sys.exit(1)
 
-    # Log warning if SnapTrade failed (non-blocking)
-    if results.get("snaptrade") is False:
-        logger.warning("⚠️ SnapTrade sync failed (non-critical)")
+    # SnapTrade is critical only if REQUIRE_SNAPTRADE=1
+    if REQUIRE_SNAPTRADE and results.get("snaptrade") is False:
+        logger.error("SnapTrade sync failed and REQUIRE_SNAPTRADE=1 - aborting")
+        critical_failures.append(True)
+    elif results.get("snaptrade") is False:
+        logger.warning("⚠️ SnapTrade sync failed (REQUIRE_SNAPTRADE=0, continuing)")
+
+    # Stock refresh failure is non-critical (logs warning only)
+    if results.get("stock_refresh") is False:
+        logger.warning("⚠️ Stock refresh failed (non-critical)")
+
+    if any(critical_failures):
+        logger.error("Pipeline completed with critical failures")
+        sys.exit(1)
 
     logger.info("Pipeline completed successfully")
     sys.exit(0)

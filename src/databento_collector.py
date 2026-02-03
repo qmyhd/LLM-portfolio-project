@@ -156,6 +156,38 @@ class DatabentoCollector:
 
         return segments
 
+    def _parse_available_end_from_error(self, error_msg: str) -> date | None:
+        """
+        Parse the available end date from Databento 422 error message.
+
+        Error format contains something like:
+        "data_end_after_available_end: ... available end is 2026-02-01T..."
+
+        Args:
+            error_msg: Error message from Databento
+
+        Returns:
+            Parsed date or None if parsing fails
+        """
+        import re
+
+        # Try to extract ISO timestamp from error message
+        # Look for patterns like "2026-02-01T" or "available end is 2026-02-01"
+        patterns = [
+            r"available[_ ]end[_ ]is[_ ](\d{4}-\d{2}-\d{2})",
+            r"(\d{4}-\d{2}-\d{2})T\d{2}:\d{2}:\d{2}",
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, error_msg)
+            if match:
+                try:
+                    return datetime.strptime(match.group(1), "%Y-%m-%d").date()
+                except ValueError:
+                    continue
+
+        return None
+
     @hardened_retry(max_retries=3, delay=2)
     def _fetch_segment(
         self,
@@ -163,15 +195,20 @@ class DatabentoCollector:
         symbols: list[str],
         start: date,
         end: date,
+        _retry_with_clamped_end: bool = False,
     ) -> pd.DataFrame:
         """
         Fetch OHLCV data for a single dataset segment.
+
+        Handles Databento 422 "data_end_after_available_end" errors by clamping
+        the end date to the available data range and retrying once.
 
         Args:
             dataset: Databento dataset name
             symbols: List of ticker symbols
             start: Start date (inclusive)
             end: End date (inclusive)
+            _retry_with_clamped_end: Internal flag to prevent infinite retry
 
         Returns:
             DataFrame with OHLCV data
@@ -200,8 +237,97 @@ class DatabentoCollector:
             return self._process_ohlcv_df(df)
 
         except Exception as e:
+            error_msg = str(e).lower()
+
+            # Handle Databento 422: data_end_after_available_end
+            # This happens when requesting data beyond what's available
+            if (
+                "data_end_after_available_end" in error_msg
+                and not _retry_with_clamped_end
+            ):
+                logger.warning(
+                    f"End date {end} is after available data, attempting to clamp..."
+                )
+
+                # Try to parse the available end date from the error message
+                available_end = self._parse_available_end_from_error(str(e))
+
+                if available_end:
+                    # Clamp end date to available_end - 1 day (for safety)
+                    clamped_end = available_end - timedelta(days=1)
+                    logger.info(f"Clamping end date from {end} to {clamped_end}")
+
+                    if clamped_end >= start:
+                        # Retry with clamped end date (no retry decorator on this call)
+                        return self._fetch_segment_inner(
+                            dataset, symbols, start, clamped_end
+                        )
+                    else:
+                        logger.warning(
+                            f"Clamped end {clamped_end} is before start {start}, skipping segment"
+                        )
+                        return pd.DataFrame()
+                else:
+                    # Fall back to yesterday UTC as the end date
+                    yesterday = date.today() - timedelta(days=1)
+                    if yesterday >= start and yesterday < end:
+                        logger.info(
+                            f"Could not parse available end, falling back to yesterday: {yesterday}"
+                        )
+                        return self._fetch_segment_inner(
+                            dataset, symbols, start, yesterday
+                        )
+                    else:
+                        logger.error(f"Cannot clamp date range, original error: {e}")
+                        return pd.DataFrame()
+
             logger.error(f"Error fetching {dataset}: {e}")
             raise
+
+    def _fetch_segment_inner(
+        self,
+        dataset: str,
+        symbols: list[str],
+        start: date,
+        end: date,
+    ) -> pd.DataFrame:
+        """
+        Inner fetch method without retry decorator, used for clamped retries.
+
+        Args:
+            dataset: Databento dataset name
+            symbols: List of ticker symbols
+            start: Start date (inclusive)
+            end: End date (inclusive)
+
+        Returns:
+            DataFrame with OHLCV data
+        """
+        logger.info(
+            f"Retrying {dataset}: {len(symbols)} symbols from {start} to {end} (clamped)"
+        )
+
+        try:
+            data = self.db_client.timeseries.get_range(
+                dataset=dataset,
+                schema="ohlcv-1d",
+                symbols=symbols,
+                start=start.isoformat(),
+                end=(end + timedelta(days=1)).isoformat(),
+                stype_in="raw_symbol",
+            )
+
+            df = data.to_df()
+
+            if df.empty:
+                logger.warning(f"No data returned for {dataset} segment (clamped)")
+                return pd.DataFrame()
+
+            return self._process_ohlcv_df(df)
+
+        except Exception as e:
+            logger.error(f"Error fetching {dataset} (clamped retry): {e}")
+            return pd.DataFrame()
 
     def _process_ohlcv_df(self, df: pd.DataFrame) -> pd.DataFrame:
         """
