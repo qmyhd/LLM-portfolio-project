@@ -12,6 +12,8 @@ Designed to be run by systemd timer (nightly-pipeline.timer).
 
 Environment Variables:
     REQUIRE_SNAPTRADE: If "1", abort pipeline on SnapTrade failure. Default "0" (continue).
+    REQUIRE_DATABENTO: If "1", abort pipeline on Databento OHLCV failure. Default "1" (critical).
+    STOCK_REFRESH_TIMEOUT: Timeout in seconds for stock refresh. Default "600".
 
 This is the CANONICAL pipeline.
 Use: sudo systemctl start nightly-pipeline.service
@@ -41,8 +43,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Environment variable: if "1", SnapTrade failure aborts pipeline
+# Environment variables for optional/required steps
 REQUIRE_SNAPTRADE = os.environ.get("REQUIRE_SNAPTRADE", "0") == "1"
+REQUIRE_DATABENTO = (
+    os.environ.get("REQUIRE_DATABENTO", "1") == "1"
+)  # Critical by default
+STOCK_REFRESH_TIMEOUT = int(
+    os.environ.get("STOCK_REFRESH_TIMEOUT", "600")
+)  # 10 min default
 
 
 def run_snaptrade_sync(timeout: int = 600) -> bool:
@@ -158,11 +166,15 @@ def main():
 
     # Step 1: OHLCV Backfill (Databento → Supabase)
     logger.info("\n📊 Step 1: OHLCV Backfill")
-    results["ohlcv"] = run_script(
-        "scripts/backfill_ohlcv.py",
-        args=["--daily"],
-        timeout=900,  # 15 min
-    )
+    try:
+        results["ohlcv"] = run_script(
+            "scripts/backfill_ohlcv.py",
+            args=["--daily"],
+            timeout=900,  # 15 min
+        )
+    except Exception as e:
+        logger.error(f"OHLCV backfill exception: {e}")
+        results["ohlcv"] = False
 
     # Step 2: NLP Batch Processing
     logger.info("\n🧠 Step 2: NLP Batch Processing")
@@ -175,10 +187,14 @@ def main():
     # Step 3: Stock Profile Refresh (if script exists)
     logger.info("\n📈 Step 3: Stock Profile Refresh")
     if (PROJECT_ROOT / "scripts/daily_stock_refresh.py").exists():
-        results["stock_refresh"] = run_script(
-            "scripts/daily_stock_refresh.py",
-            timeout=600,  # 10 min (increased from 5 min)
-        )
+        try:
+            results["stock_refresh"] = run_script(
+                "scripts/daily_stock_refresh.py",
+                timeout=STOCK_REFRESH_TIMEOUT,  # 10 min default (configurable)
+            )
+        except Exception as e:
+            logger.warning(f"Stock refresh exception (non-critical): {e}")
+            results["stock_refresh"] = False
     else:
         logger.info("Skipping stock refresh (script not found)")
         results["stock_refresh"] = None
@@ -201,11 +217,17 @@ def main():
         logger.info(f"  {task}: {status}")
 
     # Exit with error if any critical task failed
-    # OHLCV and NLP are always critical
+    # NLP is always critical
     critical_failures = [
-        results.get("ohlcv") is False,
         results.get("nlp") is False,
     ]
+
+    # Databento OHLCV is critical only if REQUIRE_DATABENTO=1 (default)
+    if REQUIRE_DATABENTO and results.get("ohlcv") is False:
+        logger.error("Databento OHLCV failed and REQUIRE_DATABENTO=1 - aborting")
+        critical_failures.append(True)
+    elif results.get("ohlcv") is False:
+        logger.warning("⚠️ Databento OHLCV failed (REQUIRE_DATABENTO=0, continuing)")
 
     # SnapTrade is critical only if REQUIRE_SNAPTRADE=1
     if REQUIRE_SNAPTRADE and results.get("snaptrade") is False:

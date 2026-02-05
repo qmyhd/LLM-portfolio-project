@@ -207,6 +207,23 @@ check "nightly-pipeline.timer exists" \
     "sudo cp $PROJECT_DIR/systemd/nightly-pipeline.timer $SYSTEMD_DIR/ && sudo systemctl daemon-reload"
 
 echo ""
+echo "🔧 Checking systemd environment variables..."
+echo "---------------------------------------------"
+
+# Check discord-bot.service has required env vars for matplotlib/charts
+check "discord-bot.service has MPLCONFIGDIR" \
+    "systemctl cat discord-bot.service 2>/dev/null | grep -q 'MPLCONFIGDIR'" \
+    "Redeploy discord-bot.service: sudo cp $PROJECT_DIR/systemd/discord-bot.service $SYSTEMD_DIR/ && sudo systemctl daemon-reload"
+
+check "discord-bot.service has LLM_CHARTS_DIR" \
+    "systemctl cat discord-bot.service 2>/dev/null | grep -q 'LLM_CHARTS_DIR'" \
+    "Redeploy discord-bot.service: sudo cp $PROJECT_DIR/systemd/discord-bot.service $SYSTEMD_DIR/ && sudo systemctl daemon-reload"
+
+check "nightly-pipeline.service has BATCH_OUTPUT_DIR" \
+    "systemctl cat nightly-pipeline.service 2>/dev/null | grep -q 'BATCH_OUTPUT_DIR'" \
+    "Redeploy nightly-pipeline.service: sudo cp $PROJECT_DIR/systemd/nightly-pipeline.service $SYSTEMD_DIR/ && sudo systemctl daemon-reload"
+
+echo ""
 echo "Checking journald logging setup..."
 echo "--------------------------------------"
 

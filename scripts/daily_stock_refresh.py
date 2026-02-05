@@ -16,12 +16,15 @@ Usage:
 
 Environment:
     Requires DATABASE_URL (Supabase) configured.
+    STOCK_REFRESH_TIMEOUT: Internal timeout in seconds (default: 600).
 """
 
 from __future__ import annotations
 
 import argparse
 import logging
+import os
+import signal
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +34,9 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from scripts.backfill_stock_profiles import refresh_stock_profiles
+
+# Configurable timeout via environment variable (default 600s = 10 min)
+STOCK_REFRESH_TIMEOUT = int(os.environ.get("STOCK_REFRESH_TIMEOUT", "600"))
 
 logging.basicConfig(
     level=logging.INFO,
@@ -49,9 +55,22 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+class TimeoutError(Exception):
+    """Custom timeout exception."""
+
+    pass
+
+
+def timeout_handler(signum, frame):
+    """Signal handler for timeout."""
+    raise TimeoutError(f"Stock refresh timed out after {STOCK_REFRESH_TIMEOUT}s")
+
+
 def run_daily_refresh(dry_run: bool = False) -> bool:
     """
     Execute the daily stock profile refresh.
+
+    Includes internal timeout handling to prevent hanging.
 
     Returns:
         True if successful (no failures), False otherwise
@@ -59,7 +78,13 @@ def run_daily_refresh(dry_run: bool = False) -> bool:
     start_time = datetime.now()
     logger.info("=" * 60)
     logger.info(f"Daily Stock Profile Refresh - {start_time.isoformat()}")
+    logger.info(f"Timeout: {STOCK_REFRESH_TIMEOUT}s")
     logger.info("=" * 60)
+
+    # Set up timeout signal (Unix only)
+    if hasattr(signal, "SIGALRM"):
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(STOCK_REFRESH_TIMEOUT)
 
     try:
         results = refresh_stock_profiles(
@@ -86,9 +111,19 @@ def run_daily_refresh(dry_run: bool = False) -> bool:
         # Return success if no failures
         return results["current_failed"] == 0 and results["history_failed"] == 0
 
+    except TimeoutError as e:
+        logger.warning(f"⏰ {e}")
+        logger.warning("Stock refresh timed out but continuing (non-critical)")
+        return False
+
     except Exception as e:
         logger.exception(f"Fatal error during refresh: {e}")
         return False
+
+    finally:
+        # Cancel the alarm if it was set
+        if hasattr(signal, "SIGALRM"):
+            signal.alarm(0)
 
 
 def main():
