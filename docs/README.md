@@ -1,6 +1,6 @@
 # LLM Portfolio Journal - Documentation Hub
 
-**Last Updated:** January 20, 2026
+**Last Updated:** February 5, 2026
 
 ## Active Documentation
 
@@ -8,13 +8,14 @@
 |----------|---------|
 | [../AGENTS.md](../AGENTS.md) | AI agent development guide with setup, patterns, and troubleshooting |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture covering components, data flow, schema management |
-| [API_REFERENCE.md](API_REFERENCE.md) | Module and function reference with usage examples |
-| [STARTUP_GUIDE.md](STARTUP_GUIDE.md) | Quick-start guide for running the bot and collecting data |
+| [api-reference.md](api-reference.md) | Module and function reference with usage examples |
+| [startup-guide.md](startup-guide.md) | Quick-start guide for running the bot and collecting data |
 | [CODEBASE_MAP.md](CODEBASE_MAP.md) | Active scripts and modules with their purposes |
-| [SCHEMA_REPORT.md](SCHEMA_REPORT.md) | Database schema analysis and documentation |
-| [LEGACY_MIGRATIONS.md](LEGACY_MIGRATIONS.md) | Historical migrations and configuration evolution |
-| [CHUNK_INDEXING_FIX.md](CHUNK_INDEXING_FIX.md) | Fix for chunk indexing unique constraint violations |
-| [CI_SCHEMA_VALIDATION.md](CI_SCHEMA_VALIDATION.md) | CI schema validation reference documentation |
+| [schema-report.md](schema-report.md) | Database schema analysis and documentation |
+| [legacy-migrations.md](legacy-migrations.md) | Historical migrations and configuration evolution |
+| [chunk-indexing-fix.md](chunk-indexing-fix.md) | Fix for chunk indexing unique constraint violations |
+| [ci-schema-validation.md](ci-schema-validation.md) | CI schema validation reference documentation |
+| [LLM_MODELS.md](LLM_MODELS.md) | LLM model routing strategy and cost optimization |
 
 ## Directory Structure
 
@@ -22,11 +23,14 @@
 docs/
 ├── README.md              # This file
 ├── ARCHITECTURE.md        # Technical architecture
-├── API_REFERENCE.md       # API documentation
-├── STARTUP_GUIDE.md       # Quick-start bot guide
+├── api-reference.md       # API documentation
+├── startup-guide.md       # Quick-start bot guide
 ├── CODEBASE_MAP.md        # Scripts and modules reference
-├── SCHEMA_REPORT.md       # Database schema documentation
-└── LEGACY_MIGRATIONS.md   # Historical reference
+├── schema-report.md       # Database schema documentation
+├── legacy-migrations.md   # Historical reference
+├── LLM_MODELS.md          # LLM model routing strategy
+├── EC2_DEPLOYMENT.md      # EC2 production deployment
+└── EC2_README.md          # EC2 documentation hub
 ```
 
 ## Essential Commands

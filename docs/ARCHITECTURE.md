@@ -196,6 +196,24 @@ Message → preclean.py (extract_candidate_tickers) → LLM → validate_llm_tic
 - Levels: `support`, `resistance`, `pivot`
 - Actions: `buy`, `sell`, `hold`, `trim`
 
+### Model Strategy
+
+The NLP pipeline uses a tiered model approach for cost/quality optimization:
+
+| Tier | Model | Use Case |
+|------|-------|----------|
+| Triage | gpt-5-nano | Quick message classification |
+| Main | gpt-5-mini | Standard parsing (80%+ of messages) |
+| Escalation | gpt-5.1 | Complex/ambiguous content |
+| Long Context | gpt-5.1 | Messages >500 tokens |
+| Journal | gemini-1.5-flash | Daily summaries (free tier) |
+
+**Fallbacks:**
+- gpt-5-mini → gpt-4o-mini
+- gpt-5.1 → gpt-4o
+
+> **📖 See [LLM_MODELS.md](LLM_MODELS.md) for detailed model routing configuration.**
+
 ### Batch Pipeline
 
 Cost-effective parsing using OpenAI Batch API (50% discount):
