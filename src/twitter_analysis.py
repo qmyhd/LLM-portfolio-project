@@ -241,25 +241,6 @@ def fetch_tweet_data(
         return None
 
 
-def log_tweet_to_file(tweet_data: dict, discord_message_id: int, csv_path: Path):
-    """Log tweet data to both CSV (for backward compatibility) and database."""
-    if not tweet_data:
-        return
-
-    # Log to CSV file (existing functionality)
-    file_exists = csv_path.exists()
-    row = dict(tweet_data)
-    row["discord_message_id"] = discord_message_id
-    with open(csv_path, "a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=row.keys())
-        if not file_exists:
-            writer.writeheader()
-        writer.writerow(row)
-
-    # Also log to database
-    log_tweet_to_database(tweet_data, discord_message_id)
-
-
 def extract_stock_symbols_from_tweet(tweet_text):
     """Extract stock symbols from tweet content."""
     if not tweet_text:

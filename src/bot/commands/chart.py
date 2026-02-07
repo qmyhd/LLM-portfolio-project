@@ -11,8 +11,6 @@ from discord.ext import commands
 from src.bot.ui.embed_factory import EmbedFactory, EmbedCategory, build_embed
 from src.price_service import get_ohlcv
 
-# Use absolute imports instead of sys.path manipulation
-from src.db import get_connection
 from src.position_analysis import (
     analyze_position_history,
     create_enhanced_chart_annotations,
@@ -23,8 +21,6 @@ import os
 
 # Define constants to avoid repeating path math
 BASE_DIR = Path(__file__).resolve().parent.parent.parent.parent  # Project root
-DB_DIR = BASE_DIR / "data" / "database"
-DB_PATH = DB_DIR / "price_history.db"
 
 # Chart output directory: use LLM_CHARTS_DIR env var, or default to logs/charts
 # This ensures charts are written to a directory that's in ReadWritePaths for systemd
@@ -245,92 +241,8 @@ def calculate_chart_date_range(period: str, end_date: Optional[datetime] = None)
     return start_date, end_date
 
 
-def query_trade_data(
-    symbol: str, start_date: datetime, end_date: datetime, min_trade: float = 0.0
-):
-    """Query trade data within the chart timeframe
-
-    Args:
-        symbol: Stock ticker symbol
-        start_date: Start date for trade query
-        end_date: End date for trade query
-        min_trade: Minimum trade size threshold
-
-    Returns:
-        DataFrame containing trade data or empty DataFrame
-    """
-    try:
-        conn = get_connection()
-
-        # SQL query to select trade data using unified execute_sql
-        query = """
-        SELECT
-            symbol,
-            action,
-            time_executed as execution_date,
-            execution_price,
-            total_quantity,
-            (execution_price * total_quantity) as trade_value
-        FROM orders
-        WHERE symbol = :symbol
-        AND time_executed BETWEEN :start_date AND :end_date
-        AND status = 'executed'
-        AND (execution_price * total_quantity) >= :min_trade
-        ORDER BY time_executed ASC
-        """
-
-        # Convert dates to strings for SQL query
-        start_str = start_date.strftime("%Y-%m-%d")
-        end_str = end_date.strftime("%Y-%m-%d")
-
-        # Use unified execute_sql instead of direct pd.read_sql_query
-        from src.db import execute_sql
-
-        result = execute_sql(
-            query,
-            {
-                "symbol": symbol,
-                "start_date": start_str,
-                "end_date": end_str,
-                "min_trade": min_trade,
-            },
-            fetch_results=True,
-        )
-
-        # Convert to DataFrame
-        if result:
-            columns = [
-                "symbol",
-                "action",
-                "execution_date",
-                "execution_price",
-                "total_quantity",
-                "trade_value",
-            ]
-            df = pd.DataFrame(result, columns=columns)
-
-            # Convert execution_date to datetime if not empty
-            if not df.empty and "execution_date" in df.columns:
-                df["execution_date"] = pd.to_datetime(df["execution_date"])
-        else:
-            # Return empty DataFrame with proper column structure
-            columns = [
-                "symbol",
-                "action",
-                "execution_date",
-                "execution_price",
-                "total_quantity",
-                "trade_value",
-            ]
-            df = pd.DataFrame(columns=columns)
-            # Set execution_date column as datetime type for consistency
-            df["execution_date"] = pd.to_datetime(df["execution_date"])
-
-        return df
-
-    except Exception as e:
-        print(f"Error querying trade data: {e}")
-        return pd.DataFrame()
+# Import from shared module — extracted to resolve layering violation
+from src.trade_queries import query_trade_data  # noqa: E402
 
 
 def process_trade_markers(trade_data: pd.DataFrame, price_data: pd.DataFrame):

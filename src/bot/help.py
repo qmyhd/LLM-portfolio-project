@@ -55,8 +55,8 @@ class PortfolioHelpCommand(commands.HelpCommand):
         "🔧 Admin": {
             "description": "Administrative commands",
             "commands": {
-                "auto_on": "Start automatic 24h data sync",
-                "auto_off": "Stop automatic data sync",
+                "fetch": "Manual on-demand brokerage data sync",
+                "status": "Show data freshness and database stats",
             },
         },
     }

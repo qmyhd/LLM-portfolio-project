@@ -1,15 +1,7 @@
-from pathlib import Path
-
 from discord.ext import commands
 
 from src.config import settings
-from src.logging_utils import log_message_to_file
-
-BASE_DIR = Path(__file__).resolve().parents[2]
-RAW_DIR = BASE_DIR / "data" / "raw"
-RAW_DIR.mkdir(parents=True, exist_ok=True)
-DISCORD_CSV = RAW_DIR / "discord_msgs.csv"
-TWEET_CSV = RAW_DIR / "x_posts_log.csv"
+from src.logging_utils import log_message_to_database
 
 # Channel name to type mapping
 CHANNEL_NAME_TO_TYPE = {
@@ -65,11 +57,9 @@ def register_events(bot: commands.Bot, twitter_client=None):
         if str(message.channel.id) in config.log_channel_ids_list:
             # Log ALL messages with flags - let downstream pipeline filter
             # Bot/command messages are stored but flagged for exclusion from NLP
-            log_message_to_file(
+            log_message_to_database(
                 message,
-                DISCORD_CSV,
-                TWEET_CSV,
-                twitter_client,
+                twitter_client=twitter_client,
                 is_bot=is_bot,
                 is_command=is_command,
                 channel_type=channel_type,

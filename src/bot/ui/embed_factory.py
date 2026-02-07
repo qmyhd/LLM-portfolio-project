@@ -38,6 +38,7 @@ class EmbedCategory(Enum):
     # Charts & Analysis - Purple
     CHART = ("chart", 0x9B59B6, "📈")
     ANALYSIS = ("analysis", 0x8E44AD, "🔬")
+    MARKET = ("market", 0x2980B9, "📊")  # Market / EOD data
 
     # Admin / System - Orange/Red
     ADMIN = ("admin", 0xE67E22, "⚙️")  # Orange

@@ -10,7 +10,7 @@ Uses the centralized UI system for consistent embed styling.
 import logging
 from datetime import datetime, timezone
 
-from discord.ext import commands, tasks
+from discord.ext import commands
 import discord
 
 from src.bot.ui.embed_factory import (
@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 # Track last refresh time to enable incremental fetching
 _last_refresh_time = None
-_auto_refresh_running = False
+# NOTE: _auto_refresh_running removed — nightly-pipeline.timer is the canonical scheduler
 
 
 def register(bot: commands.Bot, twitter_client=None):
@@ -1036,82 +1036,6 @@ def register(bot: commands.Bot, twitter_client=None):
                 embed=EmbedFactory.error("Status Error", error_details=str(e)[:200])
             )
 
-    # Background task for automatic refresh (every 24 hours)
-    @tasks.loop(hours=24)
-    async def auto_refresh_snaptrade():
-        """Automatically refresh SnapTrade data every 24 hours."""
-        global _last_refresh_time
-
-        logger.info("🔄 Starting automatic SnapTrade data refresh...")
-
-        try:
-            from src.snaptrade_collector import SnapTradeCollector
-
-            collector = SnapTradeCollector()
-            results = collector.collect_all_data(write_parquet=False)
-
-            _last_refresh_time = datetime.now(timezone.utc)
-
-            if results.get("success"):
-                logger.info(f"✅ Auto-refresh complete: {results}")
-            else:
-                logger.warning(f"⚠️ Auto-refresh had errors: {results.get('errors')}")
-
-        except Exception as e:
-            logger.error(f"❌ Auto-refresh failed: {e}")
-
-    @auto_refresh_snaptrade.before_loop
-    async def before_auto_refresh():
-        """Wait for bot to be ready before starting auto-refresh."""
-        await bot.wait_until_ready()
-        logger.info("🕐 Auto-refresh task scheduled (every 24 hours)")
-
-    @bot.command(name="auto_on", aliases=["start_auto_refresh"])
-    async def start_auto_refresh(ctx):
-        """Start automatic 24-hour data sync (admin)."""
-        global _auto_refresh_running
-
-        if auto_refresh_snaptrade.is_running():
-            await ctx.send(
-                embed=EmbedFactory.warning(
-                    title="Auto-Refresh Already Running",
-                    description="The background sync task is already active.",
-                )
-            )
-            return
-
-        auto_refresh_snaptrade.start()
-        _auto_refresh_running = True
-
-        embed = build_embed(
-            category=EmbedCategory.SUCCESS,
-            title="Auto-Refresh Started",
-            description="SnapTrade data will sync automatically every **24 hours**.",
-            footer_hint="Use !auto_off to stop",
-        )
-        await ctx.send(embed=embed)
-
-    @bot.command(name="auto_off", aliases=["stop_auto_refresh"])
-    async def stop_auto_refresh(ctx):
-        """Stop automatic data sync (admin)."""
-        global _auto_refresh_running
-
-        if not auto_refresh_snaptrade.is_running():
-            await ctx.send(
-                embed=EmbedFactory.warning(
-                    title="Auto-Refresh Not Running",
-                    description="No background sync task is currently active.",
-                )
-            )
-            return
-
-        auto_refresh_snaptrade.cancel()
-        _auto_refresh_running = False
-
-        embed = build_embed(
-            category=EmbedCategory.ADMIN,
-            title="Auto-Refresh Stopped",
-            description="Automatic background sync has been disabled.",
-            footer_hint="Use !auto_on to restart",
-        )
-        await ctx.send(embed=embed)
+    # NOTE: Automatic background refresh (auto_on/auto_off) has been removed.
+    # The canonical scheduler is the systemd nightly-pipeline.timer (1 AM daily).
+    # Use !fetch for manual on-demand sync.
