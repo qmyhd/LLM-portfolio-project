@@ -17,7 +17,7 @@
 
 ---
 
-### 2. **MAIN GUIDE** - [EC2_SETUP_DETAILED.md](EC2_SETUP_DETAILED.md)
+### 2. **MAIN GUIDE** - [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md)
 **Best for:** Step-by-step setup with detailed explanations  
 **Contains:**
 - **18 comprehensive steps** with full explanations
@@ -49,15 +49,12 @@
 
 ---
 
-### 4. **EXISTING** - [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md)
-**Best for:** Quick reference, typical deployment  
+### 4. **COMMAND REFERENCE** - [EC2_SETUP_QUICK_REFERENCE.md](EC2_SETUP_QUICK_REFERENCE.md)
+**Best for:** Copy-paste commands without detailed explanations  
 **Contains:**
-- Overview of deployment
-- Prerequisites
-- Quick start options
-- Service management commands
-- Health checks
-- Cost optimization
+- 18-step command summary
+- Essential commands reference
+- Quick troubleshooting lookup
 
 **When to use:** You prefer the concise version without detailed explanations.
 
@@ -73,12 +70,12 @@
 
 ### Path 2: "I Want To Understand Everything" (45 minutes)
 1. Read: [ARCHITECTURE.md](ARCHITECTURE.md) to understand the big picture
-2. Follow: [EC2_SETUP_DETAILED.md](EC2_SETUP_DETAILED.md) step-by-step
+2. Follow: [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md) step-by-step
 3. After each step, reference the architecture doc to understand how it fits together
 4. When done, review the troubleshooting section
 
 ### Path 3: "I'm Experienced, Just Need Details" (20 minutes)
-1. Skim: [EC2_SETUP_DETAILED.md](EC2_SETUP_DETAILED.md) to verify you're not missing anything
+1. Skim: [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md) to verify you're not missing anything
 2. Use: [EC2_SETUP_QUICK_REFERENCE.md](EC2_SETUP_QUICK_REFERENCE.md) for commands
 3. Reference: [ARCHITECTURE.md](ARCHITECTURE.md) for specific component details
 
@@ -89,7 +86,7 @@
 ### I want to...
 
 **Deploy to EC2 from scratch**
-→ [EC2_SETUP_DETAILED.md - STEP 1-18](EC2_SETUP_DETAILED.md#step-1-ssh-into-your-ec2-instance)
+→ [EC2_DEPLOYMENT.md - Manual Setup](EC2_DEPLOYMENT.md#manual-setup)
 
 **Understand how everything works together**
 → [ARCHITECTURE.md](ARCHITECTURE.md)
@@ -98,35 +95,35 @@
 → [EC2_SETUP_QUICK_REFERENCE.md](EC2_SETUP_QUICK_REFERENCE.md)
 
 **Setup AWS Secrets Manager**
-→ [EC2_SETUP_DETAILED.md - Prerequisite](EC2_SETUP_DETAILED.md#2-aws-secrets-manager-setup)
+→ [EC2_DEPLOYMENT.md - Secrets Manager Setup](EC2_DEPLOYMENT.md#secrets-manager-setup)
 
 **Setup SSL/HTTPS certificate**
-→ [EC2_SETUP_DETAILED.md - STEP 13](EC2_SETUP_DETAILED.md#step-13-setup-ssl-certificate-with-certbot)
+→ [EC2_DEPLOYMENT.md - Step 6: Configure Nginx and SSL](EC2_DEPLOYMENT.md#step-6-configure-nginx-and-ssl)
 
 **Configure Nginx**
-→ [EC2_SETUP_DETAILED.md - STEP 12](EC2_SETUP_DETAILED.md#step-12-configure-nginx-reverse-proxy)
+→ [EC2_DEPLOYMENT.md - Step 6: Configure Nginx and SSL](EC2_DEPLOYMENT.md#step-6-configure-nginx-and-ssl)
 
 **Understand systemd services**
-→ [EC2_SETUP_DETAILED.md - Systemd Services](EC2_SETUP_DETAILED.md#step-9-create-systemd-service-files)
+→ [EC2_DEPLOYMENT.md - Step 5: Install Systemd Services](EC2_DEPLOYMENT.md#step-5-install-systemd-services)
 
 **View service logs**
-→ [EC2_SETUP_DETAILED.md - STEP 16](EC2_SETUP_DETAILED.md#step-16-monitor-services-and-logs)
+→ [EC2_DEPLOYMENT.md - Service Management](EC2_DEPLOYMENT.md#service-management)
 
 **Debug a failing service**
-→ [EC2_SETUP_DETAILED.md - Troubleshooting Guide](EC2_SETUP_DETAILED.md#troubleshooting-guide)  
+→ [EC2_DEPLOYMENT.md - Troubleshooting](EC2_DEPLOYMENT.md#troubleshooting)  
 → [ARCHITECTURE.md - System Architecture](ARCHITECTURE.md#system-architecture)
 
 **Test the nightly pipeline**
-→ [EC2_SETUP_DETAILED.md - STEP 15](EC2_SETUP_DETAILED.md#step-15-test-the-nightly-pipeline-manual-run)
+→ [EC2_DEPLOYMENT.md - Manual Run](EC2_DEPLOYMENT.md#manual-run)
 
 **Setup backups**
-→ [EC2_SETUP_DETAILED.md - STEP 17](EC2_SETUP_DETAILED.md#step-17-backup-and-recovery)
+→ [EC2_DEPLOYMENT.md - Backup & Recovery](EC2_DEPLOYMENT.md#backup--recovery)
 
 **Schedule maintenance tasks**
-→ [EC2_SETUP_DETAILED.md - STEP 18](EC2_SETUP_DETAILED.md#step-18-scheduled-maintenance)
+→ [EC2_DEPLOYMENT.md - Nightly Pipeline](EC2_DEPLOYMENT.md#nightly-pipeline-canonical)
 
 **Verify everything is working**
-→ [EC2_SETUP_DETAILED.md - STEP 14](EC2_SETUP_DETAILED.md#step-14-verify-all-services-are-running)
+→ [EC2_DEPLOYMENT.md - Health Checks](EC2_DEPLOYMENT.md#health-checks)
 
 ---
 
@@ -138,7 +135,7 @@ Before starting setup, verify you have:
 - [ ] EC2 instance running (Ubuntu 22.04 or 24.04 LTS, t3.micro or larger)
 - [ ] IAM role attached to EC2 with `secretsmanager:GetSecretValue` permission
 - [ ] AWS Secrets Manager secret created: `qqqAppsecrets`
-- [ ] Secret contains all required credentials (see [EC2_SETUP_DETAILED.md](EC2_SETUP_DETAILED.md#2-aws-secrets-manager-setup))
+- [ ] Secret contains all required credentials (see [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md#secrets-manager-setup))
 - [ ] Security Group allows: inbound SSH (22), HTTP (80), HTTPS (443)
 
 ### Domain & SSL
@@ -170,18 +167,19 @@ EC2 Deployment Documentation
 │  ├─ Troubleshooting lookup
 │  └─ Verification checklist
 │
-├─ EC2_SETUP_DETAILED.md (Start here if new to EC2/Linux)
-│  ├─ Step 1: SSH into EC2
-│  ├─ Step 2: Install dependencies
-│  ├─ Step 3-6: Python environment setup
-│  ├─ Step 7-8: AWS Secrets Manager
-│  ├─ Step 9-11: systemd services
-│  ├─ Step 12-13: Nginx & SSL
-│  ├─ Step 14-18: Verification, testing, monitoring
-│  ├─ Troubleshooting guide
-│  ├─ Command reference
-│  ├─ Security hardening
-│  └─ Final checklist
+├─ EC2_DEPLOYMENT.md (Start here if new to EC2/Linux)
+│  ├─ Step 1: Install System Dependencies
+│  ├─ Step 2: Clone Repository
+│  ├─ Step 3-4: AWS Secrets Manager
+│  ├─ Step 5: Install Systemd Services
+│  ├─ Step 6: Configure Nginx & SSL
+│  ├─ Step 7: Start Services
+│  ├─ Service Management
+│  ├─ Nightly Pipeline
+│  ├─ Health Checks
+│  ├─ Troubleshooting
+│  ├─ SnapTrade Auth Failures
+│  └─ OHLCV Backfill
 │
 ├─ ARCHITECTURE.md (Understand the system)
 │  ├─ Complete system architecture (ASCII diagram)
@@ -191,9 +189,8 @@ EC2 Deployment Documentation
 │  ├─ NLP pipeline and integration points
 │  └─ Data conventions
 │
-└─ EC2_DEPLOYMENT.md (Legacy reference)
-   ├─ Quick overview
-   ├─ Quick start options
+└─ EC2_SETUP_QUICK_REFERENCE.md (Command cheat sheet)
+   ├─ Quick commands
    ├─ Service management
    └─ Health checks
 ```
@@ -204,12 +201,12 @@ EC2 Deployment Documentation
 
 | Symptom | Document | Section |
 |---------|----------|---------|
-| Service won't start | DETAILED | [Troubleshooting Guide](EC2_SETUP_DETAILED.md#troubleshooting-guide) |
-| Database connection timeout | DETAILED | [Troubleshooting: DB Connection](EC2_SETUP_DETAILED.md#issue-database-connection-timeout) |
-| SSL certificate error | DETAILED | [Troubleshooting: SSL](EC2_SETUP_DETAILED.md#issue-nginx-ssl-certificate-error) |
-| Bot won't connect | DETAILED | [Troubleshooting: Bot](EC2_SETUP_DETAILED.md#issue-discord-bot-wont-connect) |
-| High memory/CPU usage | DETAILED | [Troubleshooting: Resources](EC2_SETUP_DETAILED.md#issue-high-memorycpu-usage) |
-| Nginx returns 502 | DETAILED | [Troubleshooting Guide](EC2_SETUP_DETAILED.md#troubleshooting-guide) |
+| Service won't start | DEPLOYMENT | [Troubleshooting](EC2_DEPLOYMENT.md#troubleshooting) |
+| Database connection timeout | DEPLOYMENT | [Database Connection Issues](EC2_DEPLOYMENT.md#database-connection-issues) |
+| SSL certificate error | DEPLOYMENT | [Nginx/SSL Issues](EC2_DEPLOYMENT.md#nginxssl-issues) |
+| Bot won't connect | DEPLOYMENT | [Bot Won't Start](EC2_DEPLOYMENT.md#bot-wont-start) |
+| High memory/CPU usage | DEPLOYMENT | [Troubleshooting](EC2_DEPLOYMENT.md#troubleshooting) |
+| Nginx returns 502 | DEPLOYMENT | [Nginx/SSL Issues](EC2_DEPLOYMENT.md#nginxssl-issues) |
 | Can't understand how it works | ARCH | [Complete Architecture](ARCHITECTURE.md) |
 | Need to find a command | QUICK | [Command Reference](EC2_SETUP_QUICK_REFERENCE.md#essential-commands) |
 
@@ -221,8 +218,8 @@ EC2 Deployment Documentation
 |------|------|----------|
 | Read architecture overview | 10 min | ARCHITECTURE |
 | Read quick reference | 5 min | QUICK_REFERENCE |
-| Read detailed guide | 30 min | DETAILED |
-| Actual EC2 setup | 30-45 min | DETAILED + QUICK_REFERENCE |
+| Read deployment guide | 30 min | DEPLOYMENT |
+| Actual EC2 setup | 30-45 min | DEPLOYMENT + QUICK_REFERENCE |
 | **Total (first time, reading + setup)** | **1.5 hours** | All three |
 | Repeat setup (experienced) | 20 min | QUICK_REFERENCE |
 
@@ -286,7 +283,7 @@ EC2 Deployment Documentation
 If you're stuck:
 
 1. **Check the Troubleshooting Section**
-   - [EC2_SETUP_DETAILED.md Troubleshooting](EC2_SETUP_DETAILED.md#troubleshooting-guide)
+   - [EC2_DEPLOYMENT.md Troubleshooting](EC2_DEPLOYMENT.md#troubleshooting)
 
 2. **Review the Architecture**
    - Understanding how components talk helps debug issues
@@ -335,6 +332,6 @@ If you're stuck:
 ---
 
 For immediate assistance or to report issues:
-1. Check [EC2_SETUP_DETAILED.md - Troubleshooting](EC2_SETUP_DETAILED.md#troubleshooting-guide)
+1. Check [EC2_DEPLOYMENT.md - Troubleshooting](EC2_DEPLOYMENT.md#troubleshooting)
 2. Review service logs: `journalctl -u [service-name] -n 100`
 3. Verify all prerequisites were completed

@@ -123,9 +123,9 @@ async def validate_ticker(request: ValidationRequest):
         # Check if symbol exists in symbols table
         result = execute_sql(
             """
-            SELECT symbol, name
+            SELECT ticker, description
             FROM symbols
-            WHERE UPPER(symbol) = :symbol
+            WHERE UPPER(ticker) = :symbol
             LIMIT 1
             """,
             params={"symbol": ticker},
@@ -136,7 +136,7 @@ async def validate_ticker(request: ValidationRequest):
             return ValidationResponse(
                 ticker=ticker,
                 valid=True,
-                message=f"Valid symbol: {result[0].get('name', ticker)}",
+                message=f"Valid symbol: {result[0].get('description', ticker)}",
             )
 
         # Also check symbol_aliases table

@@ -1,6 +1,6 @@
 # EC2 Deployment Guide
 
-> **Last Updated:** February 1, 2026
+> **Last Updated:** February 6, 2026
 > **Target:** Ubuntu 22.04 LTS (or 24.04 LTS)
 
 This guide covers deploying the LLM Portfolio Journal to EC2 with:
@@ -9,6 +9,100 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
 - Reliable daily data pipeline via systemd timers
 - Nginx reverse proxy with SSL (Certbot)
 - OHLCV backfill from Databento
+
+---
+
+## Updating an Existing EC2 (Quick Redeploy)
+
+If you already have an EC2 running and want to deploy the latest code changes:
+
+```bash
+ssh ubuntu@your-ec2-ip
+cd /home/ubuntu/llm-portfolio
+
+# 1. Pull latest code
+git pull origin main
+
+# 2. Update Python dependencies
+source .venv/bin/activate
+pip install -r requirements.txt
+pip install -e .
+
+# 3. Update systemd service files (if changed)
+sudo cp systemd/*.service /etc/systemd/system/
+sudo cp systemd/*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# 4. Update Nginx config (if changed)
+sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+sudo nginx -t && sudo systemctl reload nginx
+
+# 5. Run database migrations (if new schema/*.sql files)
+python scripts/deploy_database.py
+python scripts/verify_database.py
+
+# 6. Ensure API_SECRET_KEY is in AWS Secrets Manager (required for auth)
+# Add to qqqAppsecrets if not already present:
+#   "API_SECRET_KEY": "your-secure-random-key"
+# The Vercel frontend sends this as: Authorization: Bearer <API_SECRET_KEY>
+
+# 7. Restart all services
+sudo systemctl restart api.service discord-bot.service
+sudo systemctl restart nightly-pipeline.timer
+
+# 8. Verify everything is running
+sudo systemctl status api.service discord-bot.service nightly-pipeline.timer
+curl -s http://127.0.0.1:8000/health | python3 -m json.tool
+sudo journalctl -u api.service -n 20 --no-pager
+```
+
+### Post-Deploy Smoke Tests
+
+```bash
+# Health check
+curl -s http://127.0.0.1:8000/health
+
+# Portfolio (requires auth in production)
+curl -s -H "Authorization: Bearer YOUR_API_SECRET_KEY" http://127.0.0.1:8000/portfolio | python3 -m json.tool | head -30
+
+# Orders
+curl -s -H "Authorization: Bearer YOUR_API_SECRET_KEY" "http://127.0.0.1:8000/orders?limit=5" | python3 -m json.tool | head -30
+
+# Stock profile (use a symbol you have in positions)
+curl -s -H "Authorization: Bearer YOUR_API_SECRET_KEY" http://127.0.0.1:8000/stocks/ABNB | python3 -m json.tool
+
+# OHLCV (only works if ohlcv_daily has data for the symbol)
+curl -s -H "Authorization: Bearer YOUR_API_SECRET_KEY" "http://127.0.0.1:8000/stocks/ABNB/ohlcv?period=1M" | python3 -m json.tool
+
+# Ideas
+curl -s -H "Authorization: Bearer YOUR_API_SECRET_KEY" "http://127.0.0.1:8000/stocks/ABNB/ideas?limit=5" | python3 -m json.tool
+```
+
+### OHLCV Data Backfill
+
+If charts show no data, you need to backfill. The nightly timer only fetches the last 5 days:
+
+```bash
+source .venv/bin/activate
+
+# Backfill last 5 days (default)
+python scripts/backfill_ohlcv.py --daily
+
+# Backfill new symbols (90 days for any positions missing OHLCV data)
+python scripts/backfill_ohlcv.py --new-symbols
+
+# Backfill a full year for chart coverage
+python scripts/backfill_ohlcv.py --start 2025-02-01 --end 2026-02-06
+
+# Verify data loaded
+python -c "
+from src.db import execute_sql
+rows = execute_sql('SELECT symbol, COUNT(*) FROM ohlcv_daily GROUP BY 1 ORDER BY 2 DESC LIMIT 5', fetch_results=True)
+for r in rows: print(dict(r._mapping))
+"
+```
+
+---
 
 ## Current Production Configuration
 
@@ -84,7 +178,9 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
   "SNAPTRADE_CLIENT_SECRET": "your_client_secret",
   "SNAPTRADE_USER_ID": "your_user_id",
   "SNAPTRADE_USER_SECRET": "your_user_secret",
-  "DATABENTO_API_KEY": "db-your_databento_key"
+  "DATABENTO_API_KEY": "db-your_databento_key",
+  "API_SECRET_KEY": "your-secure-random-key",
+  "ENVIRONMENT": "production"
 }
 ```
 
@@ -293,6 +389,7 @@ The nightly pipeline runs automatically via systemd timer at 1 AM ET:
 
 1. **SnapTrade Sync** - Fetch positions, orders, balances (optional - see below)
 2. **OHLCV Backfill** - Fetch daily price bars from Databento
+   - 2a. **New Symbol Auto-Detect** - Backfill 90 days for any new position symbols missing from `ohlcv_daily`
 3. **NLP Batch Processing** - Parse unprocessed messages with OpenAI
 4. **Stock Profile Refresh** - Optional refresh if script exists (600s timeout, non-fatal)
 
@@ -351,6 +448,9 @@ python scripts/backfill_ohlcv.py --daily
 
 # Custom date range
 python scripts/backfill_ohlcv.py --start 2024-01-01 --end 2024-12-31
+
+# Backfill new symbols only (90 days, auto-detects from positions table)
+python scripts/backfill_ohlcv.py --new-symbols
 ```
 
 ---

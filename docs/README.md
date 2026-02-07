@@ -1,6 +1,6 @@
 # LLM Portfolio Journal - Documentation Hub
 
-**Last Updated:** February 5, 2026
+**Last Updated:** February 6, 2026
 
 ## Active Documentation
 
@@ -8,29 +8,31 @@
 |----------|---------|
 | [../AGENTS.md](../AGENTS.md) | AI agent development guide with setup, patterns, and troubleshooting |
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System architecture covering components, data flow, schema management |
-| [api-reference.md](api-reference.md) | Module and function reference with usage examples |
-| [startup-guide.md](startup-guide.md) | Quick-start guide for running the bot and collecting data |
+| [api-reference.md](api-reference.md) | REST API endpoint reference with request/response examples |
 | [CODEBASE_MAP.md](CODEBASE_MAP.md) | Active scripts and modules with their purposes |
 | [schema-report.md](schema-report.md) | Database schema analysis and documentation |
 | [legacy-migrations.md](legacy-migrations.md) | Historical migrations and configuration evolution |
-| [chunk-indexing-fix.md](chunk-indexing-fix.md) | Fix for chunk indexing unique constraint violations |
-| [ci-schema-validation.md](ci-schema-validation.md) | CI schema validation reference documentation |
 | [LLM_MODELS.md](LLM_MODELS.md) | LLM model routing strategy and cost optimization |
+| [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md) | EC2 production deployment guide |
+| [EC2_README.md](EC2_README.md) | EC2 documentation hub |
+| [EC2_SETUP_QUICK_REFERENCE.md](EC2_SETUP_QUICK_REFERENCE.md) | Copy-paste EC2 setup commands |
+| [EC2_JOURNALD_MIGRATION.md](EC2_JOURNALD_MIGRATION.md) | Migrating EC2 logging to journald |
 
 ## Directory Structure
 
 ```
 docs/
-├── README.md              # This file
-├── ARCHITECTURE.md        # Technical architecture
-├── api-reference.md       # API documentation
-├── startup-guide.md       # Quick-start bot guide
-├── CODEBASE_MAP.md        # Scripts and modules reference
-├── schema-report.md       # Database schema documentation
-├── legacy-migrations.md   # Historical reference
-├── LLM_MODELS.md          # LLM model routing strategy
-├── EC2_DEPLOYMENT.md      # EC2 production deployment
-└── EC2_README.md          # EC2 documentation hub
+├── README.md                     # This file
+├── ARCHITECTURE.md               # Technical architecture
+├── api-reference.md              # REST API documentation
+├── CODEBASE_MAP.md               # Scripts and modules reference
+├── schema-report.md              # Database schema documentation
+├── legacy-migrations.md          # Historical reference
+├── LLM_MODELS.md                 # LLM model routing strategy
+├── EC2_DEPLOYMENT.md             # EC2 production deployment
+├── EC2_README.md                 # EC2 documentation hub
+├── EC2_SETUP_QUICK_REFERENCE.md  # EC2 quick commands
+└── EC2_JOURNALD_MIGRATION.md     # Journald migration guide
 ```
 
 ## Essential Commands
@@ -54,7 +56,7 @@ python scripts/backfill_ohlcv.py --daily
 **Reading Order:**
 1. [AGENTS.md](../AGENTS.md) - Start here for setup and critical patterns
 2. [ARCHITECTURE.md](ARCHITECTURE.md) - Deep technical implementation
-3. [API_REFERENCE.md](API_REFERENCE.md) - Module reference
+3. [api-reference.md](api-reference.md) - Module reference
 
 **Critical Setup Requirements:**
 - Supabase service role key (`sb_secret_`) in DATABASE_URL
@@ -62,11 +64,11 @@ python scripts/backfill_ohlcv.py --daily
 - Run `verify_database.py` before schema changes
 
 **Current System Status:**
-- 20 operational tables
+- 17 operational tables
 - PostgreSQL-only (Supabase)
-- 100% RLS policy compliance
+- RLS policies on ohlcv_daily (authenticated read, service role full)
 - Production ready
 
 ---
 
-**Documentation Status:** Consolidated and validated (January 2026)
+**Documentation Status:** Consolidated and validated (February 2026)
