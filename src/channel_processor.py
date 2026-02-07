@@ -162,14 +162,15 @@ def parse_messages_with_llm(
 
     # Fetch messages to parse
     if message_ids:
-        # Parse specific messages
-        placeholders = ", ".join([f"'{mid}'" for mid in message_ids])
+        # Parse specific messages — use parameterized query to prevent SQL injection
+        placeholders = ", ".join([f":mid_{i}" for i in range(len(message_ids))])
+        params = {f"mid_{i}": mid for i, mid in enumerate(message_ids)}
         query = f"""
             SELECT message_id, content, author, channel, created_at
             FROM discord_messages
             WHERE message_id IN ({placeholders})
         """
-        messages = execute_sql(query, fetch_results=True)
+        messages = execute_sql(query, params=params, fetch_results=True)
     else:
         # Parse pending messages
         query = """

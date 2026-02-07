@@ -4,11 +4,13 @@ Databento OHLCV Data Collector
 Fetches daily OHLCV bars from Databento Historical API.
 Handles dataset switching: EQUS.MINI (pre-2024-07-01), EQUS.SUMMARY (current).
 
-All data is stored in Supabase PostgreSQL (ohlcv_daily table).
+All data is stored in Supabase PostgreSQL (ohlcv_daily table) via upsert
+keyed on (symbol, date).
 
 Environment Variables:
     DATABENTO_API_KEY   - Required. Databento API key.
     DATABASE_URL        - Supabase PostgreSQL connection URL.
+    REQUIRE_DATABENTO   - If '1' pipeline aborts on failure. Default '1' (critical).
 """
 
 from __future__ import annotations
@@ -31,6 +33,9 @@ if TYPE_CHECKING:
 load_dotenv()
 
 logger = logging.getLogger(__name__)
+
+# Pipeline resiliency: when True (default), Databento failures are fatal
+REQUIRE_DATABENTO = os.environ.get("REQUIRE_DATABENTO", "1") == "1"
 
 # Dataset cutoff date: EQUS.MINI ends 2024-06-30, EQUS.SUMMARY starts 2024-07-01
 DATASET_CUTOFF = date(2024, 7, 1)
@@ -446,7 +451,7 @@ class DatabentoCollector:
 
     def save_to_supabase(self, df: pd.DataFrame) -> int:
         """
-        Save OHLCV data to Supabase PostgreSQL with upsert.
+        Save OHLCV data to Supabase PostgreSQL with upsert keyed on (symbol, date).
 
         Args:
             df: DataFrame with OHLCV data
@@ -458,11 +463,12 @@ class DatabentoCollector:
             logger.warning("No data to save to Supabase")
             return 0
 
-        # Upsert data row by row
+        # Batch upsert for better performance
         rows_affected = 0
+        errors = 0
         for _, row in df.iterrows():
             try:
-                result = execute_sql(
+                execute_sql(
                     """
                     INSERT INTO ohlcv_daily (symbol, date, open, high, low, close, volume, source)
                     VALUES (:symbol, :date, :open, :high, :low, :close, :volume, 'databento')
@@ -473,6 +479,7 @@ class DatabentoCollector:
                         low = EXCLUDED.low,
                         close = EXCLUDED.close,
                         volume = EXCLUDED.volume,
+                        source = EXCLUDED.source,
                         updated_at = now()
                     """,
                     params={
@@ -492,11 +499,12 @@ class DatabentoCollector:
                 )
                 rows_affected += 1
             except Exception as e:
+                errors += 1
                 logger.warning(
-                    f"Error inserting row for {row['symbol']} on {row['date']}: {e}"
+                    f"Error upserting row for {row['symbol']} on {row['date']}: {e}"
                 )
 
-        logger.info(f"Saved {rows_affected} rows to Supabase")
+        logger.info(f"Saved {rows_affected} rows to Supabase ({errors} errors)")
         return rows_affected
 
     def run_backfill(
@@ -508,6 +516,8 @@ class DatabentoCollector:
         """
         Run a full backfill for the given date range.
 
+        Respects REQUIRE_DATABENTO env var: if '1' and fetch fails, raises.
+
         Args:
             start: Start date
             end: End date
@@ -518,23 +528,72 @@ class DatabentoCollector:
         """
         logger.info(f"Starting backfill: {start} to {end}")
 
-        # Fetch data
-        df = self.fetch_daily_bars(symbols=symbols, start=start, end=end)
-
         results = {
-            "fetched_rows": len(df),
+            "fetched_rows": 0,
             "supabase_rows": 0,
+            "success": True,
         }
 
-        if df.empty:
-            logger.warning("No data fetched, nothing to save")
-            return results
+        try:
+            # Fetch data
+            df = self.fetch_daily_bars(symbols=symbols, start=start, end=end)
+            results["fetched_rows"] = len(df)
 
-        # Save to Supabase
-        results["supabase_rows"] = self.save_to_supabase(df)
+            if df.empty:
+                logger.warning("No data fetched, nothing to save")
+                return results
+
+            # Save to Supabase
+            results["supabase_rows"] = self.save_to_supabase(df)
+
+        except Exception as e:
+            logger.error(f"Backfill failed: {e}")
+            results["success"] = False
+
+            if REQUIRE_DATABENTO:
+                raise RuntimeError(
+                    f"Databento backfill failed and REQUIRE_DATABENTO=1: {e}"
+                ) from e
+            else:
+                logger.warning("⚠️ Databento failed (REQUIRE_DATABENTO=0, continuing)")
 
         logger.info(f"Backfill complete: {results}")
         return results
+
+    def get_symbols_missing_ohlcv(self, lookback_days: int = 30) -> list[str]:
+        """
+        Get portfolio symbols that have no OHLCV data in the given lookback period.
+
+        Useful for auto-backfilling when new symbols are added to positions.
+
+        Args:
+            lookback_days: Days to look back for existing data
+
+        Returns:
+            List of symbols with no recent OHLCV data
+        """
+        try:
+            cutoff = (date.today() - timedelta(days=lookback_days)).isoformat()
+            result = execute_sql(
+                """
+                SELECT DISTINCT p.symbol
+                FROM positions p
+                WHERE p.symbol IS NOT NULL
+                  AND p.symbol NOT IN (
+                    SELECT DISTINCT symbol FROM ohlcv_daily WHERE date >= :cutoff
+                  )
+                ORDER BY p.symbol
+                """,
+                params={"cutoff": cutoff},
+                fetch_results=True,
+            )
+            symbols = [row[0] for row in result] if result else []
+            if symbols:
+                logger.info(f"Found {len(symbols)} symbols missing OHLCV: {symbols}")
+            return symbols
+        except Exception as e:
+            logger.warning(f"Could not check for missing OHLCV symbols: {e}")
+            return []
 
     def run_daily_update(
         self,

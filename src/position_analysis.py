@@ -29,8 +29,8 @@ def analyze_position_history(
         Dictionary containing comprehensive position analysis
     """
 
-    # Get trade data using chart.py function
-    from src.bot.commands.chart import query_trade_data
+    # Get trade data using shared query module (not bot layer)
+    from src.trade_queries import query_trade_data
 
     trade_data = query_trade_data(symbol, start_date, end_date)
     if trade_data.empty:

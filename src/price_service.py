@@ -184,6 +184,75 @@ def get_latest_closes_batch(symbols: list[str]) -> dict[str, float]:
         return {}
 
 
+def get_previous_closes_batch(
+    symbols: list[str], before_date: Optional[date] = None
+) -> dict[str, float]:
+    """
+    Get the previous closing prices for multiple symbols in a single query.
+
+    Returns the most recent close BEFORE the given date for each symbol.
+    Useful for calculating daily change across a portfolio.
+
+    Args:
+        symbols: List of stock ticker symbols
+        before_date: Get close before this date (defaults to today)
+
+    Returns:
+        Dictionary mapping symbol to previous closing price.
+        Symbols without data are omitted from the result.
+
+    Example:
+        >>> prices = get_previous_closes_batch(["AAPL", "MSFT"], date(2026, 1, 20))
+        >>> print(prices)
+        {"AAPL": 184.00, "MSFT": 418.50}
+    """
+    if not symbols:
+        return {}
+
+    symbols = [s.upper().strip() for s in symbols]
+    if before_date is None:
+        before_date = date.today()
+
+    try:
+        rows = execute_sql(
+            """
+            WITH prev_dates AS (
+                SELECT symbol, MAX(date) as max_date
+                FROM ohlcv_daily
+                WHERE symbol = ANY(:symbols)
+                  AND date < :before_date
+                GROUP BY symbol
+            )
+            SELECT o.symbol, o.close
+            FROM ohlcv_daily o
+            JOIN prev_dates pd ON o.symbol = pd.symbol AND o.date = pd.max_date
+            """,
+            params={"symbols": symbols, "before_date": before_date},
+            fetch_results=True,
+        )
+
+        if not rows:
+            logger.debug(f"No previous close data for any of {len(symbols)} symbols")
+            return {}
+
+        result = {}
+        for row in rows:
+            row_data = dict(row._mapping) if hasattr(row, "_mapping") else row
+            symbol = row_data["symbol"] if isinstance(row_data, dict) else row[0]
+            close = row_data["close"] if isinstance(row_data, dict) else row[1]
+            if close is not None:
+                result[symbol] = float(close)
+
+        logger.debug(
+            f"Fetched previous closes for {len(result)}/{len(symbols)} symbols"
+        )
+        return result
+
+    except Exception as e:
+        logger.error(f"Error fetching batch previous closes: {e}")
+        return {}
+
+
 @hardened_retry(max_retries=3, delay=1)
 def get_latest_close(symbol: str) -> Optional[float]:
     """

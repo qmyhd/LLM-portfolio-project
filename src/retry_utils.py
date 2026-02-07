@@ -33,12 +33,14 @@ from typing import Callable, Any
 # Import exceptions that should NOT be retried
 try:
     import sqlalchemy.exc
+
     SQLALCHEMY_AVAILABLE = True
 except ImportError:
     SQLALCHEMY_AVAILABLE = False
 
 try:
     import pandas.errors
+
     PANDAS_AVAILABLE = True
 except ImportError:
     PANDAS_AVAILABLE = False
@@ -49,31 +51,37 @@ logger = logging.getLogger(__name__)
 # Define non-retryable exceptions
 NON_RETRYABLE = [
     ValueError,  # Data format errors
-    TypeError,   # Type mismatch
-    KeyError,    # Missing data keys
+    TypeError,  # Type mismatch
+    KeyError,  # Missing data keys
     AttributeError,  # Object attribute errors
 ]
 
 # Add SQLAlchemy exceptions if available
 if SQLALCHEMY_AVAILABLE:
-    NON_RETRYABLE.extend([
-        sqlalchemy.exc.ArgumentError,  # SQL parameter mismatch
-        sqlalchemy.exc.StatementError,  # SQL statement errors
-        sqlalchemy.exc.InvalidRequestError,  # Invalid SQL requests
-    ])
+    NON_RETRYABLE.extend(
+        [
+            sqlalchemy.exc.ArgumentError,  # SQL parameter mismatch
+            sqlalchemy.exc.StatementError,  # SQL statement errors
+            sqlalchemy.exc.InvalidRequestError,  # Invalid SQL requests
+        ]
+    )
 
 # Add Pandas exceptions if available
 if PANDAS_AVAILABLE:
-    NON_RETRYABLE.extend([
-        pandas.errors.ParserError,  # CSV parsing failure
-        pandas.errors.EmptyDataError,  # Empty CSV files
-    ])
+    NON_RETRYABLE.extend(
+        [
+            pandas.errors.ParserError,  # CSV parsing failure
+            pandas.errors.EmptyDataError,  # Empty CSV files
+        ]
+    )
 
 # Convert to tuple for isinstance check
 NON_RETRYABLE_EXCEPTIONS = tuple(NON_RETRYABLE)
 
 
-def hardened_retry(max_retries: int = 3, delay: float = 1.0, backoff_factor: float = 2.0):
+def hardened_retry(
+    max_retries: int = 3, delay: float = 1.0, backoff_factor: float = 2.0
+):
     """
     Hardened retry decorator that prevents infinite loops on non-retryable errors.
 
@@ -88,6 +96,7 @@ def hardened_retry(max_retries: int = 3, delay: float = 1.0, backoff_factor: flo
     Raises:
         Immediately raises non-retryable exceptions without retrying
     """
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args: Any, **kwargs: Any) -> Any:
@@ -129,9 +138,12 @@ def hardened_retry(max_retries: int = 3, delay: float = 1.0, backoff_factor: flo
             if last_exception:
                 raise last_exception
             else:
-                raise RuntimeError(f"Function {func.__name__} failed without raising an exception")
+                raise RuntimeError(
+                    f"Function {func.__name__} failed without raising an exception"
+                )
 
         return wrapper
+
     return decorator
 
 
@@ -150,11 +162,13 @@ def database_retry(max_retries: int = 3, delay: float = 1.0):
     db_non_retryable = list(NON_RETRYABLE_EXCEPTIONS)
 
     if SQLALCHEMY_AVAILABLE:
-        db_non_retryable.extend([
-            sqlalchemy.exc.IntegrityError,  # Constraint violations
-            sqlalchemy.exc.DataError,  # Data value errors
-            sqlalchemy.exc.ProgrammingError,  # SQL syntax errors
-        ])
+        db_non_retryable.extend(
+            [
+                sqlalchemy.exc.IntegrityError,  # Constraint violations
+                sqlalchemy.exc.DataError,  # Data value errors
+                sqlalchemy.exc.ProgrammingError,  # SQL syntax errors
+            ]
+        )
 
     db_non_retryable_tuple = tuple(db_non_retryable)
 
@@ -200,9 +214,12 @@ def database_retry(max_retries: int = 3, delay: float = 1.0):
             if last_exception:
                 raise last_exception
             else:
-                raise RuntimeError(f"Database operation {func.__name__} failed without raising an exception")
+                raise RuntimeError(
+                    f"Database operation {func.__name__} failed without raising an exception"
+                )
 
         return wrapper
+
     return decorator
 
 
@@ -221,10 +238,12 @@ def csv_processing_retry(max_retries: int = 2, delay: float = 0.5):
 
     if PANDAS_AVAILABLE:
         # Most pandas errors are not worth retrying
-        csv_non_retryable.extend([
-            pandas.errors.DtypeWarning,
-            pandas.errors.PerformanceWarning,
-        ])
+        csv_non_retryable.extend(
+            [
+                pandas.errors.DtypeWarning,
+                pandas.errors.PerformanceWarning,
+            ]
+        )
 
     csv_non_retryable_tuple = tuple(csv_non_retryable)
 
@@ -270,57 +289,10 @@ def csv_processing_retry(max_retries: int = 2, delay: float = 0.5):
             if last_exception:
                 raise last_exception
             else:
-                raise RuntimeError(f"CSV operation {func.__name__} failed without raising an exception")
+                raise RuntimeError(
+                    f"CSV operation {func.__name__} failed without raising an exception"
+                )
 
         return wrapper
+
     return decorator
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Configure logging for testing
-    logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
-
-    # Test non-retryable exception
-    @hardened_retry(max_retries=3, delay=0.1)
-    def test_non_retryable():
-        raise ValueError("This should not be retried")
-
-    # Test retryable exception
-    @hardened_retry(max_retries=3, delay=0.1)
-    def test_retryable():
-        import random
-        if random.random() < 0.7:  # 70% chance of failure
-            raise ConnectionError("Temporary connection issue")
-        return "Success!"
-
-    # Test database retry
-    @database_retry(max_retries=2, delay=0.1)
-    def test_database():
-        if SQLALCHEMY_AVAILABLE:
-            raise sqlalchemy.exc.ArgumentError("Bad SQL parameter", None, None)
-        else:
-            raise ValueError("Bad database value")
-
-    print("Testing hardened retry decorators...")
-
-    # Test 1: Non-retryable exception should be raised immediately
-    try:
-        test_non_retryable()
-    except ValueError as e:
-        print(f"✅ Non-retryable exception raised immediately: {e}")
-
-    # Test 2: Retryable exception should be retried
-    try:
-        result = test_retryable()
-        print(f"✅ Retryable operation succeeded: {result}")
-    except ConnectionError as e:
-        print(f"✅ Retryable operation failed after retries: {e}")
-
-    # Test 3: Database non-retryable
-    try:
-        test_database()
-    except Exception as e:
-        print(f"✅ Database non-retryable exception: {type(e).__name__}: {e}")
-
-    print("Hardened retry decorator tests completed!")

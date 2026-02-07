@@ -2,11 +2,21 @@
 SnapTrade Data Collector Module
 
 Dedicated module for SnapTrade ETL operations with enhanced field extraction,
-dual database writes, and optional Parquet snapshots.
+optional Parquet snapshots, and Supabase PostgreSQL writes.
+
+SDK: Uses snaptrade-python-sdk (snaptrade_client.SnapTrade).
+Auth: SNAPTRADE_CONSUMER_KEY + SNAPTRADE_CLIENT_ID for app auth.
+      SNAPTRADE_USER_ID + SNAPTRADE_USER_SECRET for user-scoped calls.
+Note: SNAPTRADE_CLIENT_SECRET is NOT used for API calls;
+      it is only for webhook signature verification.
+
+Environment Variables:
+    REQUIRE_SNAPTRADE: If '1' pipeline aborts on failure. Default '0'.
 """
 
 import json
 import logging
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -29,21 +39,19 @@ except Exception as e:
 
 from src.config import settings
 
+# Pipeline resiliency: when False (default), SnapTrade failures are non-fatal
+REQUIRE_SNAPTRADE = os.environ.get("REQUIRE_SNAPTRADE", "0") == "1"
+
 logger = logging.getLogger(__name__)
 
 # Define directories
 BASE_DIR = Path(__file__).resolve().parent.parent
 RAW_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
-DB_DIR = BASE_DIR / "data" / "database"
 
 # Create directories if they don't exist
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
-DB_DIR.mkdir(parents=True, exist_ok=True)
-
-# File paths
-PRICE_DB = DB_DIR / "price_history.db"
 
 
 class SnapTradeCollector:
@@ -94,6 +102,7 @@ class SnapTradeCollector:
     def log_credentials_debug_info(self) -> Dict[str, Any]:
         """
         Log debug-safe information about credentials without exposing secrets.
+        Prints whether each SnapTrade env var is defined (never prints values).
 
         Returns:
             Dict with credential status info (safe to log)
@@ -114,8 +123,18 @@ class SnapTradeCollector:
             or getattr(self.config, "snaptrade_user_secret", "")
             or getattr(self.config, "usersecret", "")
         )
+        # CLIENT_SECRET is ONLY for webhook verification, never for API calls
+        client_secret = getattr(self.config, "SNAPTRADE_CLIENT_SECRET", "") or getattr(
+            self.config, "snaptrade_client_secret", ""
+        )
 
         debug_info = {
+            "SNAPTRADE_CLIENT_ID": bool(client_id),
+            "SNAPTRADE_CONSUMER_KEY": bool(consumer_key),
+            "SNAPTRADE_USER_ID": bool(user_id),
+            "SNAPTRADE_USER_SECRET": bool(user_secret),
+            "SNAPTRADE_CLIENT_SECRET (webhook only)": bool(client_secret),
+            "REQUIRE_SNAPTRADE": REQUIRE_SNAPTRADE,
             "app_keys_present": bool(client_id and consumer_key),
             "user_keys_present": bool(user_id and user_secret),
             "user_id_length": len(user_id) if user_id else 0,
@@ -127,9 +146,10 @@ class SnapTradeCollector:
 
     def verify_user_auth(self) -> Tuple[bool, str]:
         """
-        Smoke test: verify user authentication by calling a simple endpoint.
+        Smoke test: verify user authentication by calling list_user_accounts.
 
-        Calls list_user_accounts to verify user_id/user_secret are valid.
+        This is the lightest user-scoped call. If it returns 401, the user
+        needs to re-link their brokerage or rotate SNAPTRADE_USER_SECRET.
 
         Returns:
             Tuple of (success: bool, message: str)
@@ -143,8 +163,8 @@ class SnapTradeCollector:
             return False, f"Missing user credentials: {e}"
 
         try:
-            # Call a simple user endpoint to verify auth
-            response = self.client.account_information.get_all_user_holdings(
+            # Use list_user_accounts (lightest user-scoped call)
+            response = self.client.account_information.list_user_accounts(
                 user_id=user_id,
                 user_secret=user_secret,
             )
@@ -153,10 +173,13 @@ class SnapTradeCollector:
             data, _ = self.safely_extract_response_data(response, "verify_user_auth")
 
             if data is not None:
-                logger.info(f"✅ SnapTrade user auth verified successfully")
-                return True, "User authentication verified"
+                account_count = len(data) if isinstance(data, list) else 1
+                logger.info(
+                    f"✅ SnapTrade user auth verified ({account_count} accounts)"
+                )
+                return True, f"User authentication verified ({account_count} accounts)"
             else:
-                return False, "Empty response from holdings endpoint"
+                return False, "Empty response from list_user_accounts"
 
         except Exception as e:
             error_str = str(e).lower()
@@ -164,9 +187,9 @@ class SnapTradeCollector:
             # Check for specific auth errors
             if "401" in error_str or "1076" in error_str or "unauthorized" in error_str:
                 msg = (
-                    "SnapTrade user auth failed (401/1076). "
-                    "Check SNAPTRADE_USER_ID and SNAPTRADE_USER_SECRET are current. "
-                    "User may need to re-authenticate via SnapTrade connect."
+                    "SnapTrade user auth failed – re-link user or rotate user secret. "
+                    "(HTTP 401 / error 1076). "
+                    "Check SNAPTRADE_USER_ID and SNAPTRADE_USER_SECRET are current."
                 )
                 logger.error(f"🔒 {msg}")
                 return False, msg
@@ -1017,6 +1040,12 @@ class SnapTradeCollector:
             logger.error(f"Error in collect_all_data: {e}")
             results["success"] = False
             results["errors"].append(str(e))
+
+        # Enforce REQUIRE_SNAPTRADE policy
+        if not results["success"] and REQUIRE_SNAPTRADE:
+            raise RuntimeError(
+                f"SnapTrade collection failed and REQUIRE_SNAPTRADE=1: {results['errors']}"
+            )
 
         logger.info(f"✅ Collection complete: {results}")
         return results
