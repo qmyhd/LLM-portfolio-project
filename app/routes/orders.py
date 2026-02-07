@@ -42,23 +42,24 @@ def safe_float_optional(value: Any) -> Optional[float]:
 
 
 class Order(BaseModel):
-    """Individual order record."""
+    """Individual order record (matches api.ts Order)."""
 
-    id: str
+    brokerageOrderId: str
     symbol: str
-    side: str  # "buy" or "sell"
-    type: str  # "market", "limit", etc.
-    quantity: float
-    filledQuantity: float
-    price: Optional[float]
-    filledPrice: Optional[float]
-    status: str  # "filled", "pending", "cancelled", etc.
-    createdAt: str
-    filledAt: Optional[str]
+    action: str  # "BUY" or "SELL"
+    orderType: str  # "market", "limit", "stop_limit"
+    status: str  # "executed", "pending", "cancelled", "rejected"
+    totalQuantity: float
+    executionPrice: Optional[float] = None
+    limitPrice: Optional[float] = None
+    stopPrice: Optional[float] = None
+    timeExecuted: Optional[str] = None  # ISO timestamp
+    timePlaced: Optional[str] = None  # ISO timestamp
+    notifiedAt: Optional[str] = None  # ISO timestamp
 
 
 class OrdersResponse(BaseModel):
-    """Orders list response."""
+    """Orders list response (matches api.ts OrdersResponse)."""
 
     orders: list[Order]
     total: int
@@ -112,11 +113,13 @@ async def get_orders(
                 o.order_type as type,
                 o.total_quantity as quantity,
                 COALESCE(o.filled_quantity, 0) as filled_quantity,
-                o.limit_price as price,
-                o.execution_price as filled_price,
+                o.limit_price as limit_price,
+                o.stop_price as stop_price,
+                o.execution_price as execution_price,
                 o.status,
-                o.time_placed as created_at,
-                o.time_executed as filled_at
+                o.time_placed as time_placed,
+                o.time_executed as time_executed,
+                o.notified as notified
             FROM orders o
             WHERE {where_clause}
             ORDER BY o.time_placed DESC NULLS LAST
@@ -134,20 +137,29 @@ async def get_orders(
             row_dict: dict[str, Any] = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)  # type: ignore[arg-type]
             orders.append(
                 Order(
-                    id=str(row_dict["id"]),
+                    brokerageOrderId=str(row_dict["id"]),
                     symbol=row_dict["symbol"] or "UNKNOWN",
-                    side=row_dict["side"] or "buy",
-                    type=row_dict["type"] or "market",
-                    quantity=safe_float(row_dict["quantity"]),
-                    filledQuantity=safe_float(row_dict["filled_quantity"]),
-                    price=safe_float_optional(row_dict["price"]),
-                    filledPrice=safe_float_optional(row_dict["filled_price"]),
+                    action=(row_dict["side"] or "BUY").upper(),
+                    orderType=row_dict["type"] or "market",
                     status=row_dict["status"] or "unknown",
-                    createdAt=(
-                        str(row_dict["created_at"]) if row_dict["created_at"] else ""
+                    totalQuantity=safe_float(row_dict["quantity"]),
+                    executionPrice=safe_float_optional(row_dict["execution_price"]),
+                    limitPrice=safe_float_optional(row_dict["limit_price"]),
+                    stopPrice=safe_float_optional(row_dict["stop_price"]),
+                    timeExecuted=(
+                        str(row_dict["time_executed"])
+                        if row_dict["time_executed"]
+                        else None
                     ),
-                    filledAt=(
-                        str(row_dict["filled_at"]) if row_dict["filled_at"] else None
+                    timePlaced=(
+                        str(row_dict["time_placed"])
+                        if row_dict["time_placed"]
+                        else None
+                    ),
+                    notifiedAt=(
+                        str(row_dict["time_executed"])
+                        if row_dict.get("notified")
+                        else None
                     ),
                 )
             )

@@ -14,47 +14,48 @@ from pydantic import BaseModel
 
 from src.db import execute_sql
 from src.snaptrade_collector import SnapTradeCollector
-from src.price_service import get_latest_closes_batch
+from src.price_service import get_latest_closes_batch, get_previous_closes_batch
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-# Response models
+# Response models (match frontend types/api.ts)
 class Position(BaseModel):
-    """Individual portfolio position."""
+    """Individual portfolio position (matches api.ts Position)."""
 
     symbol: str
+    accountId: str
     quantity: float
-    avgCost: float
+    averageBuyPrice: float
     currentPrice: float
-    marketValue: float
-    dayChange: float
-    dayChangePercent: float
-    totalGainLoss: float
-    totalGainLossPercent: float
-    portfolioWeight: float
+    equity: float
+    openPnl: float
+    openPnlPercent: float
+    dayChange: Optional[float]
+    dayChangePercent: Optional[float]
+    rawSymbol: Optional[str]
 
 
 class PortfolioSummary(BaseModel):
-    """Portfolio summary metrics."""
+    """Portfolio summary metrics (matches api.ts PortfolioSummary)."""
 
     totalValue: float
+    totalCost: float
+    unrealizedPL: float
+    unrealizedPLPercent: float
     dayChange: float
     dayChangePercent: float
-    totalGainLoss: float
-    totalGainLossPercent: float
-    cash: float
-    buyingPower: float
-    positionCount: int
+    cashBalance: float
+    positionsCount: int
+    lastSync: str  # ISO timestamp
 
 
 class PortfolioResponse(BaseModel):
-    """Full portfolio response."""
+    """Full portfolio response (matches api.ts PortfolioResponse)."""
 
     summary: PortfolioSummary
     positions: list[Position]
-    lastUpdated: str
 
 
 @router.get("", response_model=PortfolioResponse)
@@ -102,7 +103,13 @@ async def get_portfolio():
             symbols_to_fetch.append(row_dict["symbol"])
 
         # Batch fetch all prices in ONE database query
-        prices_map = get_latest_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
+        prices_map = (
+            get_latest_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
+        )
+        # Batch fetch previous closes for day-change calculation
+        prev_closes_map = (
+            get_previous_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
+        )
 
         positions = []
         total_value = 0.0
@@ -125,22 +132,28 @@ async def get_portfolio():
                 (total_gain_loss / cost_basis * 100) if cost_basis > 0 else 0
             )
 
-            # Day change (simplified - would need previous close)
-            day_change = 0.0  # TODO: Calculate from previous close
-            day_change_pct = 0.0
+            # Day change from previous close
+            prev_close = prev_closes_map.get(symbol)
+            if prev_close and prev_close > 0:
+                day_change = (current_price - prev_close) * quantity
+                day_change_pct = ((current_price - prev_close) / prev_close) * 100
+            else:
+                day_change = 0.0
+                day_change_pct = 0.0
 
             positions.append(
                 Position(
                     symbol=symbol,
+                    accountId=str(row_dict.get("account_id") or ""),
                     quantity=quantity,
-                    avgCost=round(avg_cost, 2),
+                    averageBuyPrice=round(avg_cost, 2),
                     currentPrice=round(current_price, 2),
-                    marketValue=round(market_value, 2),
+                    equity=round(market_value, 2),
+                    openPnl=round(total_gain_loss, 2),
+                    openPnlPercent=round(total_gain_loss_pct, 2),
                     dayChange=round(day_change, 2),
                     dayChangePercent=round(day_change_pct, 2),
-                    totalGainLoss=round(total_gain_loss, 2),
-                    totalGainLossPercent=round(total_gain_loss_pct, 2),
-                    portfolioWeight=0.0,  # Calculated below
+                    rawSymbol=row_dict.get("raw_symbol"),
                 )
             )
 
@@ -155,24 +168,11 @@ async def get_portfolio():
                 dict(bal_row._mapping) if hasattr(bal_row, "_mapping") else dict(bal_row)  # type: ignore[arg-type]
             )
             cash = float(bal_dict["total_cash"] or 0)
-            buying_power = float(bal_dict["total_buying_power"] or 0)
         else:
             cash = 0
-            buying_power = 0
 
         # Add cash to total value
         total_portfolio_value = total_value + cash
-
-        # Calculate portfolio weights
-        for pos in positions:
-            pos.portfolioWeight = round(
-                (
-                    (pos.marketValue / total_portfolio_value * 100)
-                    if total_portfolio_value > 0
-                    else 0
-                ),
-                2,
-            )
 
         # Calculate summary metrics
         total_gain_loss = total_value - total_cost
@@ -183,17 +183,6 @@ async def get_portfolio():
             (total_day_change / (total_portfolio_value - total_day_change) * 100)
             if (total_portfolio_value - total_day_change) > 0
             else 0
-        )
-
-        summary = PortfolioSummary(
-            totalValue=round(total_portfolio_value, 2),
-            dayChange=round(total_day_change, 2),
-            dayChangePercent=round(day_change_pct, 2),
-            totalGainLoss=round(total_gain_loss, 2),
-            totalGainLossPercent=round(total_gain_loss_pct, 2),
-            cash=round(cash, 2),
-            buyingPower=round(buying_power, 2),
-            positionCount=len(positions),
         )
 
         # Get last update time
@@ -210,10 +199,21 @@ async def get_portfolio():
             if last_dict.get("last_update"):
                 last_update_str = str(last_dict["last_update"])
 
+        summary = PortfolioSummary(
+            totalValue=round(total_portfolio_value, 2),
+            totalCost=round(total_cost, 2),
+            unrealizedPL=round(total_gain_loss, 2),
+            unrealizedPLPercent=round(total_gain_loss_pct, 2),
+            dayChange=round(total_day_change, 2),
+            dayChangePercent=round(day_change_pct, 2),
+            cashBalance=round(cash, 2),
+            positionsCount=len(positions),
+            lastSync=last_update_str,
+        )
+
         return PortfolioResponse(
             summary=summary,
             positions=positions,
-            lastUpdated=last_update_str,
         )
 
     except Exception as e:
@@ -240,9 +240,11 @@ async def sync_portfolio():
 
         return {
             "status": "success" if success else "partial",
-            "message": "Portfolio sync completed"
-            if success
-            else "Portfolio sync completed with some errors",
+            "message": (
+                "Portfolio sync completed"
+                if success
+                else "Portfolio sync completed with some errors"
+            ),
             "accounts": results.get("accounts", 0),
             "balances": results.get("balances", 0),
             "positions": results.get("positions", 0),

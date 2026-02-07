@@ -26,7 +26,7 @@ A data-driven portfolio analytics system integrating brokerage data, market info
 
 ### Prerequisites
 
-- Python 3.9+ with virtual environment
+- Python 3.11+ with virtual environment
 - PostgreSQL/Supabase database (required)
 - Discord bot token (optional)
 - API keys for SnapTrade, OpenAI (optional)
