@@ -68,6 +68,11 @@ def main():
         action="store_true",
         help="Daily update (last 5 days)",
     )
+    mode_group.add_argument(
+        "--new-symbols",
+        action="store_true",
+        help="Auto-detect and backfill symbols in positions with no recent OHLCV data",
+    )
 
     # Date range
     parser.add_argument(
@@ -135,12 +140,24 @@ def main():
     if args.symbols:
         symbols = [s.strip().upper() for s in args.symbols.split(",")]
         logger.info(f"Using specified symbols: {symbols}")
+    elif hasattr(args, "new_symbols") and args.new_symbols:
+        # Auto-detect symbols missing OHLCV data
+        symbols = collector.get_symbols_missing_ohlcv(lookback_days=30)
+        if not symbols:
+            logger.info("No new symbols missing OHLCV data - nothing to do")
+            sys.exit(0)
+        logger.info(f"Auto-detected {len(symbols)} symbols missing OHLCV: {symbols}")
     else:
         symbols = collector.get_all_tracked_symbols()
         logger.info(f"Using portfolio symbols: {len(symbols)} symbols")
 
     # Determine date range
-    if args.full:
+    if hasattr(args, "new_symbols") and args.new_symbols:
+        # For new symbols: backfill 1 year of data
+        start_date = date.today() - timedelta(days=365)
+        end_date = date.today() - timedelta(days=1)
+        logger.info(f"New symbol backfill: {start_date} to {end_date}")
+    elif args.full:
         # Full backfill from EQUS.MINI start date
         start_date = date(2023, 3, 28)
         end_date = date.today() - timedelta(days=1)
@@ -157,7 +174,7 @@ def main():
         )
         logger.info(f"Custom range: {start_date} to {end_date}")
     else:
-        parser.error("Specify --full, --daily, or --start date")
+        parser.error("Specify --full, --daily, --new-symbols, or --start date")
 
     # Validate dates
     if start_date > end_date:

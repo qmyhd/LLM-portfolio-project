@@ -176,6 +176,18 @@ def main():
         logger.error(f"OHLCV backfill exception: {e}")
         results["ohlcv"] = False
 
+    # Step 1b: Backfill new symbols (auto-detect symbols with no OHLCV data)
+    logger.info("\n📊 Step 1b: New Symbol OHLCV Backfill")
+    try:
+        results["new_symbols"] = run_script(
+            "scripts/backfill_ohlcv.py",
+            args=["--new-symbols"],
+            timeout=600,  # 10 min
+        )
+    except Exception as e:
+        logger.warning(f"New symbol backfill exception (non-critical): {e}")
+        results["new_symbols"] = False
+
     # Step 2: NLP Batch Processing
     logger.info("\n🧠 Step 2: NLP Batch Processing")
     results["nlp"] = run_script(
@@ -239,6 +251,10 @@ def main():
     # Stock refresh failure is non-critical (logs warning only)
     if results.get("stock_refresh") is False:
         logger.warning("⚠️ Stock refresh failed (non-critical)")
+
+    # New symbol backfill failure is non-critical
+    if results.get("new_symbols") is False:
+        logger.warning("⚠️ New symbol OHLCV backfill failed (non-critical)")
 
     if any(critical_failures):
         logger.error("Pipeline completed with critical failures")

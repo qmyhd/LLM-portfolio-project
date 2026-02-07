@@ -1,52 +1,53 @@
 # LLM Portfolio Journal - Schema Report
 
-> **Generated on:** January 2, 2026  
+> **Generated on:** January 2, 2026 (header updated July 2026)  
 > **Database System:** PostgreSQL (Supabase)  
-> **Status:** Verified - 19 Active Tables, RLS 100% Compliant
+> **Status:** Verified - 17 Active Tables, RLS 100% Compliant  
+> **Latest Migration:** 058_security_and_indexes.sql
 
 ## 1. Schema Overview
 
-The database consists of **19 active tables** organized into functional groups. All tables are in the `public` schema and have Row Level Security (RLS) enabled.
+The database consists of **17 active tables** organized into functional groups. All tables are in the `public` schema and have Row Level Security (RLS) enabled.
 
-**Note:** 5 legacy tables were dropped in migration 049_drop_legacy_tables.sql:
-- `discord_message_chunks` - Replaced by `discord_parsed_ideas`
-- `discord_idea_units` - Replaced by `discord_parsed_ideas`
-- `stock_mentions` - Replaced by structured parsing
-- `discord_processing_log` - Replaced by `processing_status`
-- `chart_metadata` - Never actively used
+**Note:** Legacy tables dropped in migrations 049-054:
+- `discord_message_chunks`, `discord_idea_units`, `stock_mentions`, `discord_processing_log`, `chart_metadata` (migration 049/054)
+- `daily_prices`, `realtime_prices`, `stock_metrics` (migration 051 - replaced by `ohlcv_daily`)
+- `trade_history`, `event_contract_trades`, `event_contract_positions` (migration 052)
+
+**Tables added post-baseline:**
+- `ohlcv_daily` - Databento OHLCV daily bars (PK: symbol, date)
+- `stock_profile_current` - Derived metrics per ticker (migration 055)
+- `stock_profile_history` - Time-series profile metrics (migration 055)
 
 ### Database Statistics
 | Metric | Count |
 |--------|-------|
-| Tables | 19 |
-| Primary Keys | 24 |
+| Tables | 17 |
+| Primary Keys | 17 |
 | Foreign Keys | 1 |
 | Unique Constraints | 4 |
-| Total Indexes | 119 |
-| RLS Policies | 47 |
+| RLS Policies | ~50 |
 
-### Current Row Counts (Updated January 2026)
-| Table | Rows | Primary Key |
-|-------|------|-------------|
-| accounts | 2 | `id` |
-| account_balances | 5 | `account_id, currency_code, snapshot_date` |
-| positions | 178 | `symbol, account_id` |
-| orders | 710 | `brokerage_order_id` |
-| symbols | 180 | `id` |
-| trade_history | 0 | `id` |
-| discord_messages | 475 | `message_id` |
-| discord_market_clean | 24 | `message_id` |
-| discord_trading_clean | 132 | `message_id` |
-| discord_parsed_ideas | 20 | `id` |
-| twitter_data | 7 | `tweet_id` |
-| event_contract_trades | 207 | `trade_id` |
-| event_contract_positions | 33 | `position_id` |
-| institutional_holdings | 0 | `id` |
-| schema_migrations | 31 | `version` |
-| processing_status | 457 | `message_id, channel` |
-| daily_prices | 1 | `symbol, date` |
-| realtime_prices | 7 | `symbol, timestamp` |
-| stock_metrics | 2 | `symbol, date` |
+### Active Tables (17)
+| Table | Primary Key |
+|-------|-------------|
+| accounts | `id` |
+| account_balances | `currency_code, snapshot_date, account_id` |
+| positions | `symbol, account_id` |
+| orders | `brokerage_order_id` |
+| symbols | `id` |
+| ohlcv_daily | `symbol, date` |
+| discord_messages | `message_id` |
+| discord_market_clean | `message_id` |
+| discord_trading_clean | `message_id` |
+| discord_parsed_ideas | `id` |
+| twitter_data | `tweet_id` |
+| institutional_holdings | `id` |
+| symbol_aliases | `id` |
+| stock_profile_current | `ticker` |
+| stock_profile_history | `ticker, as_of_date` |
+| schema_migrations | `version` |
+| processing_status | `message_id, channel` |
 
 ---
 
