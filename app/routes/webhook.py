@@ -6,10 +6,9 @@ Endpoints:
 
 Security:
 - HMAC-SHA256 signature verification using SNAPTRADE_CLIENT_SECRET
-- Signature is base64 encoded (matches SnapTrade's format)
+- Signature is base64-encoded and sent in the ``Signature`` header
 - Replay protection via eventTimestamp (5-minute window)
 - webhookId deduplication to prevent duplicate processing
-- Signature header: X-SnapTrade-Signature or Signature
 """
 
 import asyncio
@@ -77,7 +76,6 @@ def canonicalize_json(payload: dict) -> str:
 
 
 def verify_webhook_signature(
-    payload_bytes: bytes,
     payload_dict: dict,
     signature: str,
     secret: str,
@@ -85,61 +83,33 @@ def verify_webhook_signature(
     """
     Verify SnapTrade webhook signature using SNAPTRADE_CLIENT_SECRET.
 
-    SnapTrade signs webhooks with HMAC-SHA256 using the client secret,
-    and base64 encodes the result.
-
-    Tries both raw bytes and canonical JSON for compatibility.
+    SnapTrade signs the canonical JSON of the payload with HMAC-SHA256
+    using the client secret, then base64-encodes the digest.  The result
+    is sent in the ``Signature`` header.
 
     Args:
-        payload_bytes: Raw request body bytes
-        payload_dict: Parsed payload dict (for canonical JSON fallback)
-        signature: Signature header value (base64 encoded)
-        secret: SNAPTRADE_CLIENT_SECRET
+        payload_dict: Parsed webhook payload dict.
+        signature: ``Signature`` header value (base64-encoded HMAC).
+        secret: SNAPTRADE_CLIENT_SECRET.
 
     Returns:
-        True if signature is valid
+        True if the signature is valid.
     """
     if not signature or not secret:
         return False
 
-    # Clean signature (may have whitespace or "sha256=" prefix)
-    clean_sig = signature.strip()
-    if clean_sig.lower().startswith("sha256="):
-        clean_sig = clean_sig[7:]
-
-    # Try multiple signature verification methods:
-    # 1. Base64 encoded HMAC of raw bytes
-    # 2. Base64 encoded HMAC of canonical JSON
-    # 3. Hex encoded HMAC (legacy fallback)
-
-    secret_bytes = secret.encode()
-
-    # Method 1: Base64 of raw bytes
-    expected_b64_raw = base64.b64encode(
-        hmac.new(secret_bytes, payload_bytes, hashlib.sha256).digest()
+    sig_content = canonicalize_json(payload_dict).encode()
+    expected = base64.b64encode(
+        hmac.new(secret.encode(), sig_content, hashlib.sha256).digest()
     ).decode()
 
-    if hmac.compare_digest(clean_sig, expected_b64_raw):
-        return True
-
-    # Method 2: Base64 of canonical JSON
-    canonical = canonicalize_json(payload_dict).encode()
-    expected_b64_canonical = base64.b64encode(
-        hmac.new(secret_bytes, canonical, hashlib.sha256).digest()
-    ).decode()
-
-    if hmac.compare_digest(clean_sig, expected_b64_canonical):
-        return True
-
-    # Method 3: Hex fallback (legacy)
-    expected_hex = hmac.new(secret_bytes, payload_bytes, hashlib.sha256).hexdigest()
-    if hmac.compare_digest(clean_sig.lower(), expected_hex.lower()):
+    if hmac.compare_digest(signature.strip(), expected):
         return True
 
     logger.warning(
-        f"Signature mismatch. Received: {clean_sig[:20]}..., "
-        f"Expected (b64 raw): {expected_b64_raw[:20]}..., "
-        f"Expected (b64 canonical): {expected_b64_canonical[:20]}..."
+        "Webhook signature mismatch. "
+        f"Received: {signature.strip()[:20]}..., "
+        f"Expected: {expected[:20]}..."
     )
     return False
 
@@ -220,7 +190,6 @@ def verify_event_timestamp(event_timestamp: Optional[str]) -> bool:
 async def handle_snaptrade_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
-    x_snaptrade_signature: Optional[str] = Header(None, alias="X-SnapTrade-Signature"),
     signature: Optional[str] = Header(None, alias="Signature"),
 ):
     """
@@ -235,41 +204,33 @@ async def handle_snaptrade_webhook(
 
     Security:
     - HMAC-SHA256 signature verification using SNAPTRADE_CLIENT_SECRET (base64)
-    - Accepts signature in either X-SnapTrade-Signature or Signature header
+    - Signature must be in the ``Signature`` header
     - Replay protection via eventTimestamp (5-minute window)
     - webhookId deduplication to prevent duplicate processing
 
     Args:
         request: Raw request with webhook payload
         background_tasks: FastAPI background tasks for async processing
-        x_snaptrade_signature: Webhook signature (X-SnapTrade-Signature header)
-        signature: Webhook signature (Signature header, fallback)
+        signature: Webhook HMAC signature (``Signature`` header)
 
     Returns:
         Processing status (returns 200 quickly, processes asynchronously)
     """
     try:
-        # Get raw body for signature verification
-        raw_body = await request.body()
-
-        # Parse payload early for canonical JSON verification
+        # Parse payload for canonical JSON signature verification
         payload = await request.json()
 
-        # Use whichever signature header is present
-        sig = x_snaptrade_signature or signature
-
-        # Verify signature using SNAPTRADE_CLIENT_SECRET (NOT consumer key)
+        # --- Signature verification (required) ---------------------------------
         client_secret = os.getenv("SNAPTRADE_CLIENT_SECRET")
-        if client_secret:
-            if not sig:
-                raise HTTPException(status_code=401, detail="Missing webhook signature")
+        if not client_secret:
+            logger.error("SNAPTRADE_CLIENT_SECRET not set - rejecting webhook")
+            raise HTTPException(status_code=500, detail="Server misconfiguration")
 
-            if not verify_webhook_signature(raw_body, payload, sig, client_secret):
-                raise HTTPException(status_code=401, detail="Invalid webhook signature")
-        else:
-            logger.warning(
-                "SNAPTRADE_CLIENT_SECRET not set - skipping signature verification"
-            )
+        if not signature:
+            raise HTTPException(status_code=401, detail="Missing Signature header")
+
+        if not verify_webhook_signature(payload, signature, client_secret):
+            raise HTTPException(status_code=401, detail="Invalid webhook signature")
 
         # Extract payload fields (already parsed above for signature verification)
         event = payload.get("event", "UNKNOWN")

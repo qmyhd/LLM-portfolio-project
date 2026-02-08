@@ -1,6 +1,6 @@
 # EC2 Deployment Guide
 
-> **Last Updated:** February 6, 2026
+> **Last Updated:** February 8, 2026
 > **Target:** Ubuntu 22.04 LTS (or 24.04 LTS)
 
 This guide covers deploying the LLM Portfolio Journal to EC2 with:
@@ -9,6 +9,8 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
 - Reliable daily data pipeline via systemd timers
 - Nginx reverse proxy with SSL (Certbot)
 - OHLCV backfill from Databento
+
+> **Frontend Note:** The Next.js frontend is deployed automatically via **Vercel** on every push to `LLM-portfolio-frontend/main`. No EC2 steps are needed for frontend changes. Vercel reads environment variables (`NEXT_PUBLIC_API_URL`, `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `NEXTAUTH_SECRET`, `ALLOWED_EMAILS`, `API_SECRET_KEY`) from its project settings.
 
 ---
 
@@ -92,7 +94,7 @@ python scripts/backfill_ohlcv.py --daily
 python scripts/backfill_ohlcv.py --new-symbols
 
 # Backfill a full year for chart coverage
-python scripts/backfill_ohlcv.py --start 2025-02-01 --end 2026-02-06
+python scripts/backfill_ohlcv.py --start 2025-02-01 --end 2026-02-08
 
 # Verify data loaded
 python -c "
@@ -100,6 +102,33 @@ from src.db import execute_sql
 rows = execute_sql('SELECT symbol, COUNT(*) FROM ohlcv_daily GROUP BY 1 ORDER BY 2 DESC LIMIT 5', fetch_results=True)
 for r in rows: print(dict(r._mapping))
 "
+```
+
+### Session 8 Post-Push (Feb 8, 2026) — Copy-Paste Block
+
+This session's backend changes: webhook signature hardening (single canonical `Signature` header, removed deprecated `X-SnapTrade-Signature` fallback) and nginx security hardening (scanner blocking, method filtering, docs hiding). No new schema migrations. No backend Python dependency changes.
+
+> **Frontend:** The new UI components (CursorTrail, StarfieldBackground, SigninIntro, scroll-snap CSS) deploy automatically via Vercel on push to `LLM-portfolio-frontend/main`. No EC2 action required for frontend.
+
+```bash
+ssh -i "~/.ssh/backfillkey.pem" ubuntu@ec2-3-80-44-55.compute-1.amazonaws.com
+cd /home/ubuntu/llm-portfolio
+
+# Pull + redeploy (no new deps or migrations)
+git pull origin main
+source .venv/bin/activate
+
+# Update nginx config (scanner blocking, method filtering, docs hiding)
+sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+sudo nginx -t && sudo systemctl reload nginx
+
+# Restart API (webhook hardening: canonical Signature header only)
+sudo systemctl restart api.service
+
+# Quick smoke test
+curl -s http://127.0.0.1:8000/health | python3 -m json.tool
+sudo systemctl status api.service discord-bot.service --no-pager
+sudo journalctl -u api.service -n 10 --no-pager
 ```
 
 ---
