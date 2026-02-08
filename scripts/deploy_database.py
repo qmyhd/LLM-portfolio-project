@@ -22,7 +22,13 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
 import subprocess
 import json
-import sqlparse
+
+try:
+    import sqlparse
+
+    HAS_SQLPARSE = True
+except ImportError:
+    HAS_SQLPARSE = False
 
 # Add project root and src to path
 project_root = Path(__file__).parent.parent
@@ -507,6 +513,10 @@ class UnifiedDatabaseDeployer:
         - Multi-line statements (preserves structure)
         - Quoted strings and identifiers
         """
+        if not HAS_SQLPARSE:
+            logger.debug("sqlparse not available, using simple SQL splitter")
+            return self._split_sql_statements_simple(sql_content)
+
         try:
             # Use sqlparse to split statements - respects DO blocks and comments
             parsed = sqlparse.parse(sql_content)

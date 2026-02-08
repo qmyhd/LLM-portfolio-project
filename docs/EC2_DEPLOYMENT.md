@@ -294,9 +294,9 @@ print(f'✅ Loaded {count} secrets')
 ### Step 5: Install Systemd Services
 
 ```bash
-# Create log directories
-sudo mkdir -p /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
-sudo chown -R ubuntu:ubuntu /var/log/discord-bot /var/log/portfolio-api /var/log/portfolio-nightly
+# Enable persistent journald storage (recommended)
+sudo mkdir -p /var/log/journal
+sudo systemctl restart systemd-journald
 
 # Copy service files
 sudo cp systemd/*.service /etc/systemd/system/
@@ -491,13 +491,47 @@ python scripts/check_secrets.py
 
 | Log | Location | Command |
 |-----|----------|---------|
-| API server | `/var/log/portfolio-api/combined.log` | `tail -f /var/log/portfolio-api/combined.log` |
-| Discord bot | `/var/log/discord-bot/combined.log` | `tail -f /var/log/discord-bot/combined.log` |
-| Nightly pipeline | `/var/log/portfolio-nightly/combined.log` | `sudo journalctl -u nightly-pipeline.service -f` |
+| API server | journald | `sudo journalctl -u api.service -f` |
+| Discord bot | journald | `sudo journalctl -u discord-bot.service -f` |
+| Nightly pipeline | journald | `sudo journalctl -u nightly-pipeline.service -f` |
 | Nginx access | `/var/log/nginx/api_access.log` | `tail -f /var/log/nginx/api_access.log` |
 | Nginx error | `/var/log/nginx/api_error.log` | `tail -f /var/log/nginx/api_error.log` |
 
 ---
+
+## Journald Logging (Existing Instances)
+
+If an older instance still writes to `/var/log/portfolio-*`, migrate to journald-only:
+
+```bash
+# 1) Enable persistent journald storage
+sudo mkdir -p /var/log/journal
+
+# 2) Add a production journald config (optional but recommended)
+sudo mkdir -p /etc/systemd/journald.conf.d
+sudo tee /etc/systemd/journald.conf.d/99-llm-portfolio.conf > /dev/null << 'EOF'
+[Journal]
+Storage=persistent
+SystemMaxUse=1G
+SystemKeepFree=2G
+Compress=yes
+RateLimitBurst=10000
+RateLimitIntervalSec=30s
+EOF
+
+# 3) Restart journald
+sudo systemctl restart systemd-journald
+
+# 4) Redeploy systemd units from repo (they log to journald)
+sudo cp /home/ubuntu/llm-portfolio/systemd/*.service /etc/systemd/system/
+sudo cp /home/ubuntu/llm-portfolio/systemd/*.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+
+# 5) Restart services
+sudo systemctl restart api.service discord-bot.service
+sudo systemctl restart nightly-pipeline.timer
+```
+
 
 ## Troubleshooting
 
@@ -649,9 +683,7 @@ sudo systemctl restart api.service discord-bot.service
 
 | Directory | Purpose |
 |-----------|---------|
-| `/home/ubuntu/llm-portfolio/logs/` | Application logs (journald) |
+| `/var/log/journal/` | Persistent journald storage |
+| `/home/ubuntu/llm-portfolio/logs/` | Optional local artifacts (if generated) |
 | `/home/ubuntu/llm-portfolio/logs/batch_output/` | NLP batch processing output |
 | `/home/ubuntu/llm-portfolio/charts/` | Chart image output |
-| `/var/log/discord-bot/` | Discord bot file logs |
-| `/var/log/portfolio-api/` | API file logs |
-| `/var/log/portfolio-nightly/` | Nightly pipeline file logs |
