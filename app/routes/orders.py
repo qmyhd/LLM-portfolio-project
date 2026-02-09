@@ -203,7 +203,7 @@ async def mark_order_notified(order_id: str):
     """
     try:
         execute_sql(
-            "UPDATE orders SET notified = true WHERE order_id = :order_id",
+            "UPDATE orders SET notified = true WHERE brokerage_order_id = :order_id",
             params={"order_id": order_id},
         )
 

@@ -732,6 +732,245 @@ class SnapTradeCollector:
         logger.info(f"✅ Processed {len(df)} orders")
         return df
 
+    # ------------------------------------------------------------------
+    # Activities  (account-level, paginated)
+    # ------------------------------------------------------------------
+
+    def get_activities(
+        self,
+        account_id: Optional[str] = None,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+        activity_type: Optional[str] = None,
+        page_size: int = 1000,
+    ) -> pd.DataFrame:
+        """
+        Fetch account activities from SnapTrade (buys, sells, dividends, fees, etc.).
+
+        Uses the preferred account-level endpoint:
+            GET /accounts/{accountId}/activities
+        which supports offset/limit pagination (default limit 1000).
+
+        The deprecated user-level ``/activities`` endpoint is intentionally
+        NOT used.
+
+        Args:
+            account_id: Account ID (defaults to ROBINHOOD_ACCOUNT_ID from .env).
+            start_date: Inclusive start date (YYYY-MM-DD). Default: 90 days ago.
+            end_date: Inclusive end date (YYYY-MM-DD). Default: today.
+            activity_type: Optional type filter (BUY, SELL, DIVIDEND, etc.).
+            page_size: Number of records per request (max/default 1000).
+
+        Returns:
+            DataFrame with activity records ready for DB upsert.
+        """
+        if not self.client:
+            logger.error("SnapTrade client not initialized")
+            return pd.DataFrame()
+
+        user_id, user_secret = self._get_user_credentials()
+
+        # Default account – required for account-level endpoint
+        if not account_id:
+            account_id = getattr(self.config, "ROBINHOOD_ACCOUNT_ID", "") or getattr(
+                self.config, "robinhood_account_id", ""
+            )
+
+        if not account_id:
+            raise ValueError("Account ID is required for activity retrieval")
+
+        # Default date range: last 90 days
+        from datetime import timedelta
+
+        if not start_date:
+            start_date = (datetime.now(timezone.utc) - timedelta(days=90)).strftime(
+                "%Y-%m-%d"
+            )
+        if not end_date:
+            end_date = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        logger.info(
+            f"🔄 Fetching activities for account={account_id}, "
+            f"range={start_date}..{end_date}, type={activity_type or 'ALL'}"
+        )
+
+        # ── Paginated fetch ──────────────────────────────────────────
+        all_raw: List[Any] = []
+        offset = 0
+
+        while True:
+            kwargs: Dict[str, Any] = {
+                "account_id": account_id,
+                "user_id": user_id,
+                "user_secret": user_secret,
+                "start_date": start_date,
+                "end_date": end_date,
+                "offset": offset,
+                "limit": page_size,
+            }
+            if activity_type:
+                kwargs["type"] = activity_type
+
+            try:
+                response = self.client.account_information.get_account_activities(
+                    **kwargs
+                )
+            except Exception as e:
+                logger.error(f"SnapTrade get_account_activities API error: {e}")
+                break
+
+            # PaginatedUniversalActivity → .data (list), .pagination (offset/limit/total)
+            # The response object may expose data via .parsed, .body, .data, or .content.
+            # We try each attribute to locate the list; pagination info lives alongside it.
+            page_items: list = []
+            total_available: Optional[int] = None
+
+            # Prefer direct attribute access on well-typed SDK response
+            if hasattr(response, "data") and isinstance(response.data, list):
+                page_items = response.data
+                pag = getattr(response, "pagination", None)
+                if pag is not None:
+                    total_available = getattr(pag, "total", None)
+            else:
+                # Fallback: use generic extractor (handles parsed/body/content)
+                data, is_list = self.safely_extract_response_data(
+                    response, f"get_account_activities (offset={offset})"
+                )
+                if isinstance(data, dict):
+                    # dict with "data" + "pagination" keys
+                    page_items = data.get("data", [])
+                    pag_dict = data.get("pagination", {})
+                    total_available = (
+                        pag_dict.get("total") if isinstance(pag_dict, dict) else None
+                    )
+                elif isinstance(data, list):
+                    page_items = data
+                elif data is None:
+                    page_items = []
+
+            if not page_items:
+                if offset == 0:
+                    logger.warning("No activities data returned from SnapTrade")
+                break
+
+            all_raw.extend(page_items)
+            fetched_so_far = len(all_raw)
+
+            # Determine whether more pages exist
+            if total_available is not None:
+                logger.info(
+                    f"   Page offset={offset}: {len(page_items)} items "
+                    f"({fetched_so_far}/{total_available} total)"
+                )
+                if fetched_so_far >= total_available:
+                    break
+            else:
+                # No total count available — stop when page is short
+                logger.info(
+                    f"   Page offset={offset}: {len(page_items)} items (no total)"
+                )
+                if len(page_items) < page_size:
+                    break
+
+            offset += page_size
+
+        if not all_raw:
+            return pd.DataFrame()
+
+        # ── Parse each activity record ───────────────────────────────
+        activities: List[Dict[str, Any]] = []
+        for act in all_raw:
+            try:
+                # Normalise – SDK may give dict-like objects with .get()
+                if not isinstance(act, dict):
+                    act = dict(act) if hasattr(act, "__iter__") else vars(act)
+
+                activity_id = act.get("id")
+                if not activity_id:
+                    logger.debug("Skipping activity with no id")
+                    continue
+
+                # Extract symbol – account-level activities may use a simpler
+                # structure than the user-level endpoint; handle both.
+                symbol_obj = act.get("symbol")
+                extracted_symbol = None
+                if isinstance(symbol_obj, dict):
+                    inner = symbol_obj.get("symbol", {})
+                    if isinstance(inner, dict):
+                        extracted_symbol = inner.get("symbol") or inner.get(
+                            "raw_symbol"
+                        )
+                    elif isinstance(inner, str):
+                        extracted_symbol = inner
+                    if not extracted_symbol:
+                        extracted_symbol = symbol_obj.get("raw_symbol")
+                elif isinstance(symbol_obj, str):
+                    extracted_symbol = symbol_obj
+
+                # Account-level endpoint has no nested .account — use param
+                act_account = act.get("account")
+                if isinstance(act_account, dict):
+                    act_account_id = act_account.get("id", account_id)
+                else:
+                    act_account_id = account_id
+
+                # Extract currency
+                currency_obj = act.get("currency")
+                currency_code = "USD"
+                if isinstance(currency_obj, dict):
+                    currency_code = currency_obj.get("code", "USD")
+                elif isinstance(currency_obj, str):
+                    currency_code = currency_obj
+
+                activities.append(
+                    {
+                        "id": str(activity_id),
+                        "account_id": str(act_account_id),
+                        "activity_type": act.get("type"),
+                        "trade_date": act.get("trade_date"),
+                        "settlement_date": act.get("settlement_date"),
+                        "amount": (
+                            float(act["amount"])
+                            if act.get("amount") is not None
+                            else None
+                        ),
+                        "price": (
+                            float(act["price"])
+                            if act.get("price") is not None
+                            else None
+                        ),
+                        "units": (
+                            float(act["units"])
+                            if act.get("units") is not None
+                            else None
+                        ),
+                        "symbol": extracted_symbol,
+                        "description": act.get("description"),
+                        "currency": currency_code,
+                        "fee": float(act.get("fee") or 0),
+                        "fx_rate": (
+                            float(act["fx_rate"])
+                            if act.get("fx_rate") is not None
+                            else None
+                        ),
+                        "external_reference_id": act.get("external_reference_id"),
+                        "institution": act.get("institution"),
+                        "option_type": act.get("option_type"),
+                        "sync_timestamp": datetime.now(timezone.utc),
+                    }
+                )
+            except Exception as e:
+                logger.error(
+                    f"Error processing activity {act.get('id', 'unknown')}: {e}"
+                )
+                continue
+
+        df = pd.DataFrame(activities)
+        logger.info(
+            f"✅ Processed {len(df)} activities across {offset // page_size + 1} page(s)"
+        )
+        return df
+
     def upsert_symbols_table(self, symbols_data: List[Dict]) -> bool:
         """
         Upsert symbols into the symbols table with comprehensive field updates.
@@ -943,6 +1182,7 @@ class SnapTradeCollector:
             "balances": 0,
             "positions": 0,
             "orders": 0,
+            "activities": 0,
             "symbols": 0,
             "errors": [],
         }
@@ -1035,6 +1275,21 @@ class SnapTradeCollector:
                 if symbols_data:
                     self.upsert_symbols_table(symbols_data)
                     results["symbols"] += len(symbols_data)
+
+            # Collect activities
+            logger.info("🔄 Collecting activities...")
+            try:
+                activities_df = self.get_activities(account_id)
+                if not activities_df.empty:
+                    self.write_to_database(
+                        activities_df, "activities", conflict_columns=["id"]
+                    )
+                    if write_parquet:
+                        self.write_parquet_snapshot(activities_df, "activities")
+                    results["activities"] = len(activities_df)
+            except Exception as act_err:
+                logger.warning(f"⚠️ Activities collection failed (non-fatal): {act_err}")
+                results["errors"].append(f"Activities: {act_err}")
 
         except Exception as e:
             logger.error(f"Error in collect_all_data: {e}")

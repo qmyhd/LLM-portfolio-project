@@ -29,7 +29,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import require_api_key
-from app.routes import portfolio, orders, stocks, search, watchlist, chat, webhook
+from app.routes import (
+    portfolio,
+    orders,
+    stocks,
+    search,
+    watchlist,
+    chat,
+    webhook,
+    activities,
+)
 
 # Configure logging
 logging.basicConfig(
@@ -124,6 +133,12 @@ app.include_router(
     chat.router,
     prefix="/stocks",
     tags=["Chat"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    activities.router,
+    prefix="/activities",
+    tags=["Activities"],
     dependencies=[Depends(require_api_key)],
 )
 

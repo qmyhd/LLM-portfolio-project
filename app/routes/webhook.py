@@ -266,20 +266,25 @@ async def handle_snaptrade_webhook(
             try:
                 # Trigger order refresh via SnapTrade collector
                 collector = SnapTradeCollector()
-                await asyncio.to_thread(collector.sync_orders)
+                await asyncio.to_thread(
+                    collector.write_to_database,
+                    collector.get_orders(account_id),
+                    "orders",
+                    ["brokerage_order_id"],
+                )
                 logger.info("Orders synced from SnapTrade")
             except Exception as e:
                 logger.error(f"Failed to sync orders: {e}")
 
-            # Reset notified_at for any newly filled orders so they get notified
+            # Reset notified flag for any newly filled orders so they get notified
             execute_sql(
                 """
                 UPDATE orders
-                SET notified_at = NULL
+                SET notified = false
                 WHERE account_id = :account_id
-                  AND status = 'filled'
-                  AND notified_at IS NOT NULL
-                  AND filled_at > NOW() - INTERVAL '1 hour'
+                  AND status = 'FILLED'
+                  AND notified = true
+                  AND time_executed > NOW() - INTERVAL '1 hour'
                 """,
                 params={"account_id": account_id},
             )
@@ -309,23 +314,23 @@ async def handle_snaptrade_webhook(
 
             logger.info(f"Order filled: {side} {quantity} {symbol} @ ${price}")
 
-            # Update order in database with filled status, notified_at = NULL for pending notification
+            # Update order in database with filled status, notified = false for pending notification
             execute_sql(
                 """
                 UPDATE orders
                 SET
-                    status = 'filled',
-                    filled_price = :price,
+                    status = 'FILLED',
+                    execution_price = :price,
                     filled_quantity = :quantity,
-                    filled_at = :filled_at,
-                    notified_at = NULL
-                WHERE order_id = :order_id
+                    time_executed = :time_executed,
+                    notified = false
+                WHERE brokerage_order_id = :order_id
                 """,
                 params={
                     "order_id": order_id,
                     "price": price,
                     "quantity": quantity,
-                    "filled_at": datetime.now(timezone.utc).isoformat(),
+                    "time_executed": datetime.now(timezone.utc).isoformat(),
                 },
             )
 
@@ -336,7 +341,7 @@ async def handle_snaptrade_webhook(
             logger.info(f"Order cancelled: {order_id}")
 
             execute_sql(
-                "UPDATE orders SET status = 'cancelled' WHERE order_id = :order_id",
+                "UPDATE orders SET status = 'CANCELED' WHERE brokerage_order_id = :order_id",
                 params={"order_id": order_id},
             )
 

@@ -74,6 +74,7 @@ async def get_portfolio():
                 p.symbol,
                 p.quantity,
                 p.average_buy_price as average_cost,
+                p.price as snaptrade_price,
                 p.raw_symbol,
                 p.account_id
             FROM positions p
@@ -121,8 +122,24 @@ async def get_portfolio():
             quantity = float(row_dict["quantity"] or 0)
             avg_cost = float(row_dict["average_cost"] or 0)
 
-            # Get current price from batch-fetched prices, fallback to avg_cost
-            current_price = prices_map.get(symbol, avg_cost)
+            # Get current price: Databento → SnapTrade price → avg_cost
+            snaptrade_price = float(row_dict.get("snaptrade_price") or 0)
+            databento_price = prices_map.get(symbol)
+
+            if databento_price:
+                current_price = databento_price
+            elif snaptrade_price > 0:
+                logger.info(
+                    f"💱 {symbol}: Databento missing, using SnapTrade price "
+                    f"${snaptrade_price:.2f} (avg_cost=${avg_cost:.2f})"
+                )
+                current_price = snaptrade_price
+            else:
+                logger.warning(
+                    f"⚠️ {symbol}: No Databento or SnapTrade price, "
+                    f"falling back to avg_cost=${avg_cost:.2f}"
+                )
+                current_price = avg_cost
 
             # Calculate position metrics
             market_value = quantity * current_price

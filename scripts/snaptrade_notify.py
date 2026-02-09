@@ -41,7 +41,7 @@ def get_unnotified_orders(limit: Optional[int] = None) -> list[dict]:
     """
     Fetch filled orders that haven't been notified yet.
 
-    Uses notified_at IS NULL pattern for pending notifications.
+    Uses notified = false pattern for pending notifications.
 
     Args:
         limit: Maximum number of orders to return
@@ -51,19 +51,19 @@ def get_unnotified_orders(limit: Optional[int] = None) -> list[dict]:
     """
     query = """
         SELECT 
-            o.order_id,
+            o.brokerage_order_id,
             o.symbol,
-            o.side,
+            o.action,
             o.order_type,
             o.filled_quantity,
-            o.filled_price,
-            o.filled_at,
-            a.account_name
+            o.execution_price,
+            o.time_executed,
+            a.name as account_name
         FROM orders o
-        LEFT JOIN accounts a ON o.account_id = a.account_id
-        WHERE o.status = 'filled'
-          AND o.notified_at IS NULL
-        ORDER BY o.filled_at ASC
+        LEFT JOIN accounts a ON o.account_id = a.id
+        WHERE o.status = 'FILLED'
+          AND o.notified = false
+        ORDER BY o.time_executed ASC
     """
 
     if limit:
@@ -74,17 +74,17 @@ def get_unnotified_orders(limit: Optional[int] = None) -> list[dict]:
 
 def mark_order_notified(order_id: str) -> bool:
     """
-    Mark an order as notified in the database by setting notified_at timestamp.
+    Mark an order as notified in the database by setting notified = true.
 
     Args:
-        order_id: The order ID to mark
+        order_id: The brokerage order ID to mark
 
     Returns:
         True if successful
     """
     try:
         execute_sql(
-            "UPDATE orders SET notified_at = NOW() WHERE order_id = :order_id",
+            "UPDATE orders SET notified = true WHERE brokerage_order_id = :order_id",
             params={"order_id": order_id},
         )
         return True
@@ -104,10 +104,10 @@ def create_order_embed(order: dict) -> Embed:
         Discord Embed object
     """
     symbol = order.get("symbol", "UNKNOWN")
-    side = order.get("side", "").upper()
+    side = (order.get("action") or "").upper()
     quantity = order.get("filled_quantity", 0)
-    price = order.get("filled_price", 0)
-    filled_at = order.get("filled_at")
+    price = order.get("execution_price", 0)
+    filled_at = order.get("time_executed")
     account_name = order.get("account_name", "Unknown Account")
 
     # Calculate trade value
