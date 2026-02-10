@@ -46,8 +46,8 @@ python scripts/verify_database.py --verbose
 
 ### 2.1 Connect to EC2
 ```bash
-ssh -i ~/.ssh/backfillkey.pem ubuntu@ec2-3-80-44-55.compute-1.amazonaws.com
-cd /home/ubuntu/llm-portfolio
+ssh -i ~/.ssh/<ssh-key.pem> ubuntu@<ec2-host>
+cd <repo-path>
 ```
 
 ### 2.2 Pull Latest Code
