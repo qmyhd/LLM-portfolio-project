@@ -284,7 +284,7 @@ class UnifiedDatabaseDeployer:
         files: List[Path] = []
         for p in self.schema_dir.glob("*.sql"):
             try:
-                num = int(p.name[:3])
+                int(p.name[:3])
             except (ValueError, IndexError):
                 continue
             if not include_baseline and p.stem == BASELINE_STEM:
