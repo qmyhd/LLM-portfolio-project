@@ -39,7 +39,11 @@ sudo systemctl daemon-reload
 sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
 sudo nginx -t && sudo systemctl reload nginx
 
-# 5. Run database migrations (if new schema/*.sql files)
+# 5. Run database migrations
+#    The deployer auto-detects fresh vs existing databases.
+#    Fresh install: runs 060_baseline_current.sql then incremental migrations.
+#    Existing DB:   skips baseline, runs only unapplied 06N_*.sql files.
+#    Stops on first failure; never edit an applied migration.
 python scripts/deploy_database.py
 python scripts/verify_database.py
 
@@ -182,6 +186,26 @@ sudo journalctl -u api.service -n 10 --no-pager
      │ (Postgres)│      │   API    │       │   API    │
      └──────────┘       └──────────┘       └──────────┘
 ```
+
+### Database Migrations
+
+The project follows an **immutable-ledger** migration strategy:
+
+| Directory | Purpose |
+|-----------|---------|
+| `schema/060_baseline_current.sql` | Full `pg_dump --schema-only` snapshot for fresh installs |
+| `schema/061_*.sql`, `062_*.sql` … | Incremental migrations (never edited once applied) |
+| `schema/archive/` | Retired migrations 000–059 (reference only, never executed) |
+
+**How the deployer works** (`scripts/deploy_database.py`):
+1. Checks if any user tables exist in `public` schema.
+2. **Empty DB** → runs the baseline, then all incremental migrations.
+3. **Existing DB** → skips baseline, runs only unapplied `06N_*.sql` files.
+4. Tracks applied migrations by exact filename stem in `schema_migrations`.
+5. Stops on first failure; uses raw psycopg2 (no SQL splitting).
+
+**Creating a new migration:** add `schema/06N_descriptive_name.sql` with the next available number.
+Never edit an already-applied file—always create a new one.
 
 ## Prerequisites
 
