@@ -146,12 +146,13 @@ SQL DDL (schema/*.sql) → schema_parser.py → expected_schemas.py → verify_d
 ```
 
 **Source Files**: 
-- `schema/000_baseline.sql` - Complete baseline schema
-- `schema/015-050_*.sql` - Incremental migrations (37 files total)
+- `schema/060_baseline_current.sql` - Complete baseline schema (fresh installs)
+- `schema/061_*.sql` - Incremental migrations (new changes)
+- `schema/archive/` - Retired migrations (000-059), kept for reference
 
 ### Migration Workflow
 
-1. Create migration file: `schema/051_*.sql`
+1. Create migration file: `schema/062_your_change.sql` (never edit old files)
 2. Deploy: `python scripts/deploy_database.py`
 3. Regenerate: `python scripts/schema_parser.py --output expected`
 4. Verify: `python scripts/verify_database.py --mode comprehensive`

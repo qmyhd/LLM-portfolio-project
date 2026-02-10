@@ -19,6 +19,7 @@ sudo systemctl daemon-reload
 sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
 sudo nginx -t && sudo systemctl reload nginx
 
+python scripts/deploy_database.py                    # auto-detects fresh vs existing
 python scripts/verify_database.py
 sudo systemctl restart api.service discord-bot.service nightly-pipeline.timer
 ```

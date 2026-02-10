@@ -1,41 +1,48 @@
 #!/usr/bin/env python3
 """
 Unified Database Deployment Script
-=================================
+===================================
 
-Consolidates functionality from:
-- init_database.py (database initialization)
-- deploy_schema.ps1/.sh (schema deployment)
+Migration runner for the LLM Portfolio Journal.
 
-Provides comprehensive database setup with:
-- Schema deployment from SQL files
-- RLS policy configuration
-- Connection testing
-- Schema verification
-- Environment-specific configurations
+Design principles
+-----------------
+* **Immutable ledger** – once a migration file is applied, it is NEVER edited.
+  Fixes go in a new NNN_*.sql file.
+* **Exact-key tracking** – the ``schema_migrations`` table stores the full
+  filename stem (e.g. ``061_cleanup_migration_ledger``), not a numeric prefix.
+* **Baseline + incremental** – fresh installs execute ``060_baseline_current.sql``
+  to create the entire schema, then run any subsequent migrations.  Existing
+  databases skip the baseline and run only unapplied migrations.
+* **Raw psycopg2 execution** – migrations are executed as-is through the
+  PostgreSQL wire protocol, avoiding SQL-splitting bugs with ``DO $$`` blocks,
+  dollar-quoted functions, or embedded semicolons.
+
+Directory layout
+----------------
+::
+
+    schema/
+        060_baseline_current.sql   ← full schema snapshot for fresh installs
+        061_*.sql                  ← incremental migrations
+        archive/                   ← retired migrations (000-059), kept for
+                                     reference but never executed
 """
 
 import sys
 import argparse
 import logging
+import json
 from pathlib import Path
 from typing import Dict, List, Any, Optional, Tuple
-import subprocess
-import json
 
-try:
-    import sqlparse
-
-    HAS_SQLPARSE = True
-except ImportError:
-    HAS_SQLPARSE = False
-
-# Add project root and src to path
+# ---------------------------------------------------------------------------
+# Path bootstrapping
+# ---------------------------------------------------------------------------
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 sys.path.insert(0, str(project_root / "src"))
 
-# Bootstrap AWS secrets FIRST, before any other src imports
 from src.env_bootstrap import bootstrap_env
 
 bootstrap_env()
@@ -48,727 +55,603 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# Baseline filename constant
+# ---------------------------------------------------------------------------
+BASELINE_STEM = "060_baseline_current"
+
 
 class UnifiedDatabaseDeployer:
-    """Unified database deployment with multiple deployment modes."""
+    """Database deployer that honours the immutable-ledger convention."""
 
     def __init__(
-        self, database_url: Optional[str] = None, schema_dir: Optional[Path] = None
+        self,
+        database_url: Optional[str] = None,
+        schema_dir: Optional[Path] = None,
+        *,
+        dry_run: bool = False,
     ):
         self.database_url = database_url or self._get_database_url()
         self.schema_dir = schema_dir or (project_root / "schema")
-        self.engine = None
+        self.dry_run = dry_run
 
-    def _get_database_url(self) -> str:
-        """Get database URL with fallback logic."""
-        from src.config import get_database_url
-
-        return get_database_url()
+    # ------------------------------------------------------------------
+    # Public entry points
+    # ------------------------------------------------------------------
 
     def deploy_full(
         self, force: bool = False, skip_baseline: bool = False
     ) -> Dict[str, Any]:
-        """Full deployment: schema + policies + verification."""
-        results = {
+        """Full deployment: connection test -> baseline -> migrations -> RLS -> verify.
+
+        When ``self.dry_run`` is *True* the deployer reports what *would* happen
+        without executing any SQL or recording any ledger entries.
+        """
+        if self.dry_run:
+            return self._dry_run_report(force, skip_baseline)
+
+        results: Dict[str, Any] = {
             "mode": "full_deployment",
-            "timestamp": str(pd.Timestamp.now()) if "pd" in globals() else "unknown",
             "steps": {},
             "summary": {"successful_steps": 0, "failed_steps": 0, "total_steps": 0},
         }
 
-        steps = [
+        steps: List[Tuple[str, Any]] = [
             ("Connection Test", self._test_connection),
         ]
 
-        # Only deploy baseline if not skipped and not already present
+        # Decide whether to run the baseline
         if not skip_baseline:
-            if not self._is_baseline_applied() or force:
-                steps.append(
-                    (
-                        "Deploy Baseline Schema",
-                        lambda: self._deploy_schema_file("000_baseline.sql", force),
-                    )
-                )
-            else:
-                # Log that baseline was skipped
+            is_existing = self._is_database_initialised()
+            if is_existing and not force:
+                # Mark baseline as applied without executing it
+                self._record_migration(BASELINE_STEM)
                 results["steps"]["Deploy Baseline Schema"] = {
                     "success": True,
-                    "message": "Baseline schema already applied, skipping (use --force to reapply)",
-                    "details": {"skipped": True, "reason": "baseline_already_exists"},
-                    "status": "⏭️  SKIPPED",
+                    "message": "Existing database detected - baseline marked applied (skip)",
+                    "details": {"skipped": True},
+                    "status": "SKIPPED",
                 }
                 results["summary"]["successful_steps"] += 1
                 results["summary"]["total_steps"] += 1
+            else:
+                steps.append(
+                    (
+                        "Deploy Baseline Schema",
+                        lambda: self._deploy_single_file(f"{BASELINE_STEM}.sql", force),
+                    )
+                )
         else:
-            # Log that baseline was explicitly skipped
             results["steps"]["Deploy Baseline Schema"] = {
                 "success": True,
-                "message": "Baseline schema deployment skipped via --skip-baseline flag",
-                "details": {"skipped": True, "reason": "explicit_skip"},
-                "status": "⏭️  SKIPPED",
+                "message": "Baseline skipped via --skip-baseline",
+                "details": {"skipped": True},
+                "status": "SKIPPED",
             }
             results["summary"]["successful_steps"] += 1
             results["summary"]["total_steps"] += 1
 
-        # Add remaining steps
         steps.extend(
             [
-                (
-                    "Deploy Migrations",
-                    lambda: self._deploy_migrations(force),
-                ),
+                ("Deploy Migrations", lambda: self._deploy_migrations(force)),
                 ("Configure RLS Policies", self._configure_rls_policies),
                 ("Verify Deployment", self._verify_deployment),
             ]
         )
 
-        results["summary"]["total_steps"] = len(steps)
+        results["summary"]["total_steps"] += len(steps)
 
         for step_name, step_func in steps:
             try:
                 success, message, details = step_func()
+                status = "SUCCESS" if success else "FAILED"
                 results["steps"][step_name] = {
                     "success": success,
                     "message": message,
                     "details": details or {},
-                    "status": "✅ SUCCESS" if success else "❌ FAILED",
+                    "status": status,
                 }
-
                 if success:
                     results["summary"]["successful_steps"] += 1
+                    logger.info("Step succeeded: %s", step_name)
                 else:
                     results["summary"]["failed_steps"] += 1
-                    logger.error(f"Step failed: {step_name} - {message}")
-
-                    # Stop on critical failures unless force is enabled
-                    if not force and step_name in [
-                        "Connection Test",
-                        "Deploy Base Schema",
-                    ]:
-                        logger.error("Critical step failed, stopping deployment")
+                    logger.error("Step FAILED: %s - %s", step_name, message)
+                    if not force:
+                        logger.error(
+                            "Aborting deployment (use --force to continue past errors)"
+                        )
                         break
-
             except Exception as e:
                 results["steps"][step_name] = {
                     "success": False,
-                    "message": f"Step failed with error: {e}",
+                    "message": f"Exception: {e}",
                     "details": {},
-                    "status": "❌ ERROR",
+                    "status": "ERROR",
                 }
                 results["summary"]["failed_steps"] += 1
                 logger.error(f"Step error: {step_name} - {e}")
-
                 if not force:
                     break
 
         return results
 
     def deploy_schema_only(self, force: bool = False) -> Dict[str, Any]:
-        """Schema-only deployment."""
-        results = {
+        """Deploy all schema/*.sql files (baseline + migrations).
+
+        Stops on first failure.
+        """
+        results: Dict[str, Any] = {
             "mode": "schema_only",
-            "timestamp": str(pd.Timestamp.now()) if "pd" in globals() else "unknown",
             "files": {},
             "summary": {"deployed_files": 0, "failed_files": 0},
         }
-
-        # Find all SQL files in schema directory
-        sql_files = sorted(self.schema_dir.glob("*.sql"))
-
-        for sql_file in sql_files:
+        for sql_file in self._sorted_migration_files(include_baseline=True):
             try:
-                success, message, details = self._deploy_schema_file(
-                    sql_file.name, force
-                )
+                ok, msg, det = self._deploy_single_file(sql_file.name, force)
+                if det.get("skipped"):
+                    status = "SKIPPED"
+                elif ok:
+                    status = "DEPLOYED"
+                else:
+                    status = "FAILED"
                 results["files"][sql_file.name] = {
-                    "success": success,
-                    "message": message,
-                    "details": details or {},
-                    "status": "✅ DEPLOYED" if success else "❌ FAILED",
+                    "success": ok,
+                    "message": msg,
+                    "details": det or {},
+                    "status": status,
                 }
-
-                if success:
+                if ok:
                     results["summary"]["deployed_files"] += 1
                 else:
                     results["summary"]["failed_files"] += 1
-
+                    if not force:
+                        break  # stop on first failure
             except Exception as e:
                 results["files"][sql_file.name] = {
                     "success": False,
-                    "message": f"Deployment failed: {e}",
+                    "message": str(e),
                     "details": {},
-                    "status": "❌ ERROR",
+                    "status": "ERROR",
                 }
                 results["summary"]["failed_files"] += 1
-
+                if not force:
+                    break  # stop on first failure
         return results
 
     def deploy_policies_only(self) -> Dict[str, Any]:
         """RLS policies-only deployment."""
-        results = {
+        ok, msg, det = self._configure_rls_policies()
+        return {
             "mode": "policies_only",
-            "timestamp": str(pd.Timestamp.now()) if "pd" in globals() else "unknown",
+            "success": ok,
+            "message": msg,
+            "details": det or {},
+            "status": "CONFIGURED" if ok else "FAILED",
         }
 
-        success, message, details = self._configure_rls_policies()
-        results["success"] = success
-        results["message"] = message
-        results["details"] = details or {}
-        results["status"] = "✅ CONFIGURED" if success else "❌ FAILED"
+    # ------------------------------------------------------------------
+    # Dry-run
+    # ------------------------------------------------------------------
 
+    def _dry_run_report(
+        self, force: bool = False, skip_baseline: bool = False
+    ) -> Dict[str, Any]:
+        """Read-only report of what *would* be applied."""
+        results: Dict[str, Any] = {
+            "mode": "dry_run",
+            "pending": [],
+            "skipped": [],
+            "summary": {"pending_count": 0, "skipped_count": 0},
+        }
+
+        # Baseline decision
+        if not skip_baseline:
+            is_existing = self._is_database_initialised()
+            if is_existing and not force:
+                results["skipped"].append(f"{BASELINE_STEM}.sql (existing DB)")
+            else:
+                if not self._is_migration_applied(BASELINE_STEM) or force:
+                    results["pending"].append(f"{BASELINE_STEM}.sql")
+                else:
+                    results["skipped"].append(f"{BASELINE_STEM}.sql (already applied)")
+        else:
+            results["skipped"].append(f"{BASELINE_STEM}.sql (--skip-baseline)")
+
+        # Incremental migrations
+        for mf in self._sorted_migration_files(include_baseline=False):
+            if not force and self._is_migration_applied(mf.stem):
+                results["skipped"].append(f"{mf.name} (already applied)")
+            else:
+                results["pending"].append(mf.name)
+
+        results["summary"]["pending_count"] = len(results["pending"])
+        results["summary"]["skipped_count"] = len(results["skipped"])
         return results
 
-    def _test_connection(self) -> Tuple[bool, str, Dict[str, Any]]:
-        """Test database connectivity."""
-        try:
-            connection_info = test_connection()
-            if connection_info["status"] == "connected":
-                return (
-                    True,
-                    f"Connected to {connection_info.get('database', 'database')}",
-                    connection_info,
-                )
-            else:
-                return (
-                    False,
-                    f"Connection failed: {connection_info.get('error', 'Unknown error')}",
-                    connection_info,
-                )
-        except Exception as e:
-            return False, f"Connection test failed: {e}", {}
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _get_database_url() -> str:
+        from src.config import get_database_url
+
+        return get_database_url()
+
+    def _sorted_migration_files(self, *, include_baseline: bool = False) -> List[Path]:
+        """Return schema/*.sql sorted by numeric prefix.  Ignores archive/."""
+        files: List[Path] = []
+        for p in self.schema_dir.glob("*.sql"):
+            try:
+                num = int(p.name[:3])
+            except (ValueError, IndexError):
+                continue
+            if not include_baseline and p.stem == BASELINE_STEM:
+                continue
+            files.append(p)
+        files.sort(key=lambda p: int(p.name[:3]))
+        return files
+
+    # ------------------------------------------------------------------
+    # Migration execution
+    # ------------------------------------------------------------------
 
     def _deploy_migrations(
         self, force: bool = False
     ) -> Tuple[bool, str, Dict[str, Any]]:
-        """Deploy all migration files (NNN_*.sql) in numeric order, excluding baseline and archive."""
-        try:
-            # Find all migration files (NNN_*.sql) excluding baseline and archive
-            migration_files = []
-            for sql_file in self.schema_dir.glob("*.sql"):
-                if sql_file.name != "000_baseline.sql" and "archive" not in str(
-                    sql_file.parent
-                ):
-                    # Extract number from filename (e.g., 014_security_fixes.sql -> 014)
-                    try:
-                        file_num = int(sql_file.name[:3])
-                        migration_files.append((file_num, sql_file))
-                    except ValueError:
-                        # Skip non-numbered files
-                        continue
+        """Deploy incremental migrations (everything except baseline).
 
-            # Sort migrations by number
-            migration_files.sort(key=lambda x: x[0])
+        Stops on the first failure so the ledger never records a version that
+        only partially applied.
+        """
+        migration_files = self._sorted_migration_files(include_baseline=False)
+        deployed = skipped = 0
+        errors: List[str] = []
 
-            deployed_count = 0
-            skipped_count = 0
-            errors = []
-
-            for file_num, migration_file in migration_files:
-                success, message, details = self._deploy_schema_file(
-                    migration_file.name, force
-                )
-                if success:
-                    if details.get("skipped", False):
-                        skipped_count += 1
-                    else:
-                        deployed_count += 1
+        for mf in migration_files:
+            logger.info("Processing migration: %s", mf.name)
+            ok, msg, det = self._deploy_single_file(mf.name, force)
+            if ok:
+                if det.get("skipped"):
+                    skipped += 1
+                    logger.info("  -> SKIPPED (already applied)")
                 else:
-                    errors.append(f"{migration_file.name}: {message}")
+                    deployed += 1
+                    logger.info("  -> APPLIED")
+            else:
+                errors.append(f"{mf.name}: {msg}")
+                logger.error("  -> FAILED: %s", msg)
+                break  # stop on first failure
 
-            if errors:
-                return (
-                    False,
-                    f"Migration errors: {'; '.join(errors)}",
-                    {"errors": errors},
-                )
+        if errors:
+            return False, f"Errors: {'; '.join(errors)}", {"errors": errors}
+        return (
+            True,
+            f"Deployed {deployed}, skipped {skipped}",
+            {"deployed": deployed, "skipped": skipped, "total": len(migration_files)},
+        )
 
-            return (
-                True,
-                f"Deployed {deployed_count} migrations, skipped {skipped_count}",
-                {
-                    "deployed": deployed_count,
-                    "skipped": skipped_count,
-                    "total_files": len(migration_files),
-                },
-            )
-
-        except Exception as e:
-            return False, f"Failed to deploy migrations: {e}", {"error": str(e)}
-
-    def _deploy_schema_file(
+    def _deploy_single_file(
         self, filename: str, force: bool = False
     ) -> Tuple[bool, str, Dict[str, Any]]:
-        """Deploy a single schema file."""
-        schema_file = self.schema_dir / filename
+        """Deploy one SQL file.  Tracks by exact filename stem."""
+        sql_path = self.schema_dir / filename
+        if not sql_path.exists():
+            return False, f"File not found: {filename}", {}
 
-        if not schema_file.exists():
-            return False, f"Schema file not found: {filename}", {}
+        stem = sql_path.stem  # e.g. '061_cleanup_migration_ledger'
 
-        try:
-            # Read SQL content
-            sql_content = schema_file.read_text(encoding="utf-8")
-
-            # Check if already applied (look for migration record)
-            migration_name = Path(filename).stem  # Remove .sql extension
-            if not force and self._is_migration_applied(migration_name):
-                return (
-                    True,
-                    f"Migration {migration_name} already applied (use --force to reapply)",
-                    {"skipped": True, "migration_name": migration_name},
-                )
-
-            # Execute SQL
-            statements = self._split_sql_statements(sql_content)
-            executed_statements = 0
-
-            for statement in statements:
-                statement = statement.strip()
-                if not statement or statement.startswith("--"):
-                    continue
-
-                execute_sql(statement)
-                executed_statements += 1
-
-            # Record migration
-            self._record_migration(migration_name)
-
+        if not force and self._is_migration_applied(stem):
             return (
                 True,
-                f"Deployed {filename}: {executed_statements} statements executed",
-                {
-                    "file": filename,
-                    "statements_executed": executed_statements,
-                    "migration_recorded": True,
-                },
+                f"{stem} already applied",
+                {"skipped": True, "migration": stem},
             )
 
+        try:
+            sql = sql_path.read_text(encoding="utf-8")
+            self._execute_raw(sql)
+            self._record_migration(stem)
+            logger.info(f"Applied {filename}")
+            return True, f"Deployed {filename}", {"migration": stem}
         except Exception as e:
-            return (
-                False,
-                f"Failed to deploy {filename}: {e}",
-                {"file": filename, "error": str(e)},
+            logger.error(f"Failed {filename}: {e}")
+            return False, f"Failed: {e}", {"migration": stem, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Raw psycopg2 execution (no SQL splitting)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _execute_raw(sql_content: str) -> None:
+        """Execute an entire migration file in one transaction via raw psycopg2.
+
+        Uses ``autocommit = False`` (the default) so the whole file runs in a
+        single transaction.  On success we ``COMMIT``; on any error we
+        ``ROLLBACK`` so a failed migration leaves no partial state.
+
+        This avoids SQL statement splitting which breaks on:
+        - ``DO $$ ... $$`` blocks
+        - ``CREATE FUNCTION ... AS $function$ ... $function$``
+        - Any PL/pgSQL containing semicolons inside dollar-quoted strings
+        """
+        engine = get_sync_engine()
+        raw = engine.raw_connection()
+        try:
+            raw.autocommit = False  # explicit transaction
+            cur = raw.cursor()
+            cur.execute(sql_content)
+            raw.commit()
+            cur.close()
+            logger.debug("Raw SQL executed and committed (%d chars)", len(sql_content))
+        except Exception:
+            raw.rollback()
+            raise
+        finally:
+            raw.close()
+
+    # ------------------------------------------------------------------
+    # Ledger helpers
+    # ------------------------------------------------------------------
+
+    def _is_migration_applied(self, stem: str) -> bool:
+        """Check for an exact match on the full filename stem."""
+        try:
+            rows = execute_sql(
+                "SELECT 1 FROM schema_migrations WHERE version = :v",
+                {"v": stem},
+                fetch_results=True,
             )
+            return bool(rows)
+        except Exception:
+            return False
+
+    @staticmethod
+    def _record_migration(stem: str) -> None:
+        """Insert into the ledger (upsert for safety)."""
+        try:
+            execute_sql(
+                """
+                CREATE TABLE IF NOT EXISTS schema_migrations (
+                    version    TEXT PRIMARY KEY,
+                    description TEXT,
+                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+                """
+            )
+            execute_sql(
+                "INSERT INTO schema_migrations (version) VALUES (:v) "
+                "ON CONFLICT (version) DO NOTHING",
+                {"v": stem},
+            )
+        except Exception as e:
+            logger.warning(f"Could not record migration {stem}: {e}")
+
+    def _is_database_initialised(self) -> bool:
+        """True when the public schema already has user tables beyond just
+        ``schema_migrations``.
+
+        The baseline should only run on a *completely* empty database (zero
+        public tables, or only the ``schema_migrations`` bookkeeping table).
+        """
+        try:
+            rows = execute_sql(
+                """
+                SELECT table_name
+                FROM   information_schema.tables
+                WHERE  table_schema = 'public'
+                  AND  table_type   = 'BASE TABLE'
+                  AND  table_name  != 'schema_migrations'
+                LIMIT 1
+                """,
+                fetch_results=True,
+            )
+            has_user_tables = bool(rows)
+            if has_user_tables:
+                logger.info("Existing database detected (found table: %s)", rows[0][0])
+            else:
+                logger.info("Empty database detected - baseline will run")
+            return has_user_tables
+        except Exception as exc:
+            logger.warning("Could not check DB state (%s); assuming existing", exc)
+            return True  # safe default: skip baseline rather than clobber data
+
+    # ------------------------------------------------------------------
+    # RLS configuration
+    # ------------------------------------------------------------------
 
     def _configure_rls_policies(self) -> Tuple[bool, str, Dict[str, Any]]:
-        """Configure Row Level Security policies."""
-        # PostgreSQL-only system, always configure RLS
-        policies_configured = 0
-        errors = []
-
-        # Core tables that need RLS (as specified in user requirements)
-        # Note: discord_processing_log was dropped in migration 049
-        tables_with_rls = [
+        """Ensure RLS + service_role policy exist on core tables."""
+        core_tables = [
             "accounts",
             "account_balances",
             "positions",
             "symbols",
             "schema_migrations",
         ]
+        configured = 0
+        errors: List[str] = []
 
-        try:
-            for table in tables_with_rls:
-                try:
-                    # Enable RLS on table
-                    execute_sql(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
-
-                    # Create service role allow-all policy (if not exists)
-                    policy_sql = f"""
-                        DO $$ BEGIN
-                            IF NOT EXISTS (
-                                SELECT 1 FROM pg_policies 
-                                WHERE tablename = '{table}' 
-                                AND policyname = 'service_role_all'
-                            ) THEN
-                                CREATE POLICY "service_role_all" ON {table}
-                                FOR ALL TO service_role USING (true) WITH CHECK (true);
-                            END IF;
-                        END $$;
+        for table in core_tables:
+            try:
+                execute_sql(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY;")
+                execute_sql(
+                    f"""
+                    DO $$ BEGIN
+                        IF NOT EXISTS (
+                            SELECT 1 FROM pg_policies
+                            WHERE tablename = '{table}'
+                              AND policyname = 'service_role_all'
+                        ) THEN
+                            CREATE POLICY "service_role_all" ON {table}
+                            FOR ALL TO service_role USING (true) WITH CHECK (true);
+                        END IF;
+                    END $$;
                     """
-                    execute_sql(policy_sql)
-                    policies_configured += 1
+                )
+                configured += 1
+            except Exception as e:
+                if "does not exist" not in str(e).lower():
+                    errors.append(f"{table}: {e}")
 
-                except Exception as e:
-                    # Table might not exist, that's ok for some tables
-                    if "does not exist" not in str(e).lower():
-                        errors.append(f"{table}: {e}")
+        ok = len(errors) == 0
+        msg = f"RLS configured for {configured} tables"
+        if errors:
+            msg += f", {len(errors)} errors"
+        return ok, msg, {"configured": configured, "errors": errors}
 
-            success = len(errors) == 0
-            message = f"Configured RLS policies for {policies_configured} tables"
-            if errors:
-                message += f", {len(errors)} errors"
-
-            return (
-                success,
-                message,
-                {
-                    "policies_configured": policies_configured,
-                    "errors": errors,
-                    "tables_processed": len(tables_with_rls),
-                },
-            )
-
-        except Exception as e:
-            return (
-                False,
-                f"RLS configuration failed: {e}",
-                {"policies_configured": policies_configured, "error": str(e)},
-            )
+    # ------------------------------------------------------------------
+    # Post-deployment verification
+    # ------------------------------------------------------------------
 
     def _verify_deployment(self) -> Tuple[bool, str, Dict[str, Any]]:
-        """Verify deployment by running basic checks."""
+        """Run the schema verifier."""
         try:
-            # Use the unified verifier for consistency
-            from scripts.verify_database import UnifiedDatabaseVerifier
+            from scripts.verify_database import DatabaseSchemaVerifier
 
-            verifier = UnifiedDatabaseVerifier(self.database_url)
-            basic_results = verifier.verify_basic()
-
-            success = (
-                basic_results["database_connected"]
-                and basic_results["summary"]["tables_exist"] >= 3  # Minimum expected
-            )
-
-            message = (
-                f"Verification: {basic_results['summary']['tables_exist']} tables exist"
-            )
-            if basic_results["summary"]["issues"]:
-                message += f", {len(basic_results['summary']['issues'])} issues found"
-
-            return (
-                success,
-                message,
-                {
-                    "tables_exist": basic_results["summary"]["tables_exist"],
-                    "issues_found": len(basic_results["summary"]["issues"]),
-                    "verification_details": basic_results,
-                },
-            )
-
+            verifier = DatabaseSchemaVerifier(database_url=self.database_url)
+            basic = verifier.verify_basic()
+            summary = basic.get("summary", {})
+            tables = summary.get("existing_tables", 0)
+            missing = summary.get("missing_tables", 0)
+            ok = basic["database_connected"] and tables >= 3
+            msg = f"{tables} tables found"
+            if missing:
+                msg += f", {missing} missing"
+            return ok, msg, {"tables": tables, "missing": missing}
         except Exception as e:
-            return False, f"Verification failed: {e}", {"error": str(e)}
+            return False, f"Verification error: {e}", {"error": str(e)}
 
-    def _is_migration_applied(self, migration_name: str) -> bool:
-        """Check if migration is already applied."""
-        try:
-            result = execute_sql(
-                "SELECT version FROM schema_migrations WHERE version = :migration_name",
-                {"migration_name": migration_name},
-                fetch_results=True,
-            )
-            return bool(result)
-        except Exception:
-            # Table might not exist yet
-            return False
+    # ------------------------------------------------------------------
+    # Connection test
+    # ------------------------------------------------------------------
 
-    def _is_baseline_applied(self) -> bool:
-        """
-        Check if baseline schema is already applied by looking for core tables.
-        This allows skipping baseline.sql if database is already initialized.
-        """
+    @staticmethod
+    def _test_connection() -> Tuple[bool, str, Dict[str, Any]]:
         try:
-            # Check if 'accounts' table exists - a core table that's only created in baseline
-            result = execute_sql(
-                """
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.tables 
-                    WHERE table_name = 'accounts' AND table_schema = 'public'
-                )
-                """,
-                fetch_results=True,
-            )
-            return result[0][0] if result else False
+            info = test_connection()
+            if info["status"] == "connected":
+                return True, f"Connected to {info.get('database', 'db')}", info
+            return False, f"Failed: {info.get('error', '?')}", info
         except Exception as e:
-            logger.debug(f"Could not check baseline status: {e}")
-            # If we can't check, assume it's not applied
-            return False
-
-    def _record_migration(self, migration_name: str):
-        """Record migration in schema_migrations table."""
-        try:
-            # Ensure table exists
-            execute_sql(
-                """
-                CREATE TABLE IF NOT EXISTS schema_migrations (
-                    version VARCHAR(255) PRIMARY KEY,
-                    applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """
-            )
-
-            # Record migration
-            execute_sql(
-                "INSERT INTO schema_migrations (version) VALUES (:migration_name) ON CONFLICT (version) DO NOTHING",
-                {"migration_name": migration_name},
-            )
-        except Exception as e:
-            logger.warning(f"Could not record migration {migration_name}: {e}")
-
-    def _split_sql_statements(self, sql_content: str) -> List[str]:
-        """
-        Split SQL content into individual statements using sqlparse.
-
-        Handles:
-        - DO $$ blocks (treated as single statements)
-        - -- and /* */ comments (preserved in context, but leading comments removed)
-        - Multi-line statements (preserves structure)
-        - Quoted strings and identifiers
-        """
-        if not HAS_SQLPARSE:
-            logger.debug("sqlparse not available, using simple SQL splitter")
-            return self._split_sql_statements_simple(sql_content)
-
-        try:
-            # Use sqlparse to split statements - respects DO blocks and comments
-            parsed = sqlparse.parse(sql_content)
-            statements = []
-
-            for statement in parsed:
-                # Convert statement back to string and strip whitespace
-                stmt_str = str(statement).strip()
-
-                # Skip empty statements
-                if not stmt_str:
-                    continue
-
-                # Skip comment-only statements
-                if stmt_str.startswith("--") or stmt_str.startswith("/*"):
-                    continue
-
-                statements.append(stmt_str)
-
-            return statements
-        except Exception as e:
-            logger.warning(f"sqlparse failed, falling back to simple split: {e}")
-            # Fallback to simple split if sqlparse fails
-            return self._split_sql_statements_simple(sql_content)
-
-    def _split_sql_statements_simple(self, sql_content: str) -> List[str]:
-        """
-        Simple fallback SQL statement splitter.
-        Preserves newlines and handles basic cases when sqlparse is unavailable.
-        """
-        statements = []
-        current_statement = []
-        in_single_quote = False
-        in_double_quote = False
-        in_block_comment = False
-        i = 0
-
-        while i < len(sql_content):
-            char = sql_content[i]
-            next_char = sql_content[i + 1] if i + 1 < len(sql_content) else None
-
-            # Handle block comments /* */
-            if not in_single_quote and not in_double_quote:
-                if char == "/" and next_char == "*":
-                    in_block_comment = True
-                    current_statement.append(char)
-                    i += 1
-                    current_statement.append(next_char)
-                    i += 1
-                    continue
-                elif char == "*" and next_char == "/" and in_block_comment:
-                    in_block_comment = False
-                    current_statement.append(char)
-                    i += 1
-                    current_statement.append(next_char)
-                    i += 1
-                    continue
-
-            # Handle quotes
-            if char == "'" and not in_double_quote and not in_block_comment:
-                in_single_quote = not in_single_quote
-            elif char == '"' and not in_single_quote and not in_block_comment:
-                in_double_quote = not in_double_quote
-
-            # Handle line comments (only outside quotes/blocks)
-            if (
-                char == "-"
-                and next_char == "-"
-                and not in_single_quote
-                and not in_double_quote
-                and not in_block_comment
-            ):
-                # Skip until end of line
-                while i < len(sql_content) and sql_content[i] != "\n":
-                    i += 1
-                if i < len(sql_content):
-                    current_statement.append("\n")
-                    i += 1
-                continue
-
-            # Handle statement terminator
-            if (
-                char == ";"
-                and not in_single_quote
-                and not in_double_quote
-                and not in_block_comment
-            ):
-                current_statement.append(char)
-                stmt = "".join(current_statement).strip()
-                if stmt and not stmt.startswith("--"):
-                    statements.append(stmt)
-                current_statement = []
-                i += 1
-                continue
-
-            current_statement.append(char)
-            i += 1
-
-        # Add final statement if exists
-        if current_statement:
-            stmt = "".join(current_statement).strip()
-            if stmt and not stmt.startswith("--"):
-                statements.append(stmt)
-
-        return statements
+            return False, str(e), {}
 
 
-def print_deployment_results(results: Dict[str, Any], verbose: bool = False):
-    """Print deployment results in a formatted way."""
+# =========================================================================
+# CLI output
+# =========================================================================
+
+
+def _print_results(results: Dict[str, Any], verbose: bool = False) -> None:
     mode = results.get("mode", "unknown")
-    timestamp = results.get("timestamp", "unknown")
+    print(f"\n{'=' * 70}")
+    print(f"  DATABASE DEPLOYMENT - {mode.upper()}")
+    print(f"{'=' * 70}")
 
-    print(f"\n{'='*80}")
-    print(f"DATABASE DEPLOYMENT RESULTS - {mode.upper()}")
-    print(f"{'='*80}")
-    print(f"Timestamp: {timestamp}")
-
-    if mode == "full_deployment":
-        print_full_deployment_results(results, verbose)
+    if mode == "dry_run":
+        s = results["summary"]
+        print(
+            f"  {s['pending_count']} migration(s) to apply, "
+            f"{s['skipped_count']} already applied\n"
+        )
+        if results["pending"]:
+            print("  PENDING:")
+            for f in results["pending"]:
+                print(f"    - {f}")
+        if verbose and results["skipped"]:
+            print("  SKIPPED:")
+            for f in results["skipped"]:
+                print(f"    - {f}")
+        if s["pending_count"] == 0:
+            print("  Nothing to do — database is up to date.")
+    elif mode == "full_deployment":
+        s = results["summary"]
+        print(f"  {s['successful_steps']}/{s['total_steps']} steps succeeded\n")
+        for name, info in results["steps"].items():
+            print(f"  [{info['status']}]  {name}")
+            if verbose or not info["success"]:
+                print(f"           {info['message']}")
     elif mode == "schema_only":
-        print_schema_deployment_results(results, verbose)
+        s = results["summary"]
+        print(f"  {s['deployed_files']} deployed, {s['failed_files']} failed\n")
+        for fname, info in results["files"].items():
+            print(f"  [{info['status']}]  {fname}")
+            if verbose or not info["success"]:
+                print(f"           {info['message']}")
     elif mode == "policies_only":
-        print_policies_deployment_results(results, verbose)
+        print(f"  [{results['status']}]  {results['message']}")
+
+    print()
 
 
-def print_full_deployment_results(results: Dict[str, Any], verbose: bool):
-    """Print full deployment results."""
-    summary = results["summary"]
-
-    print(
-        f"\nSUMMARY: {summary['successful_steps']}/{summary['total_steps']} steps completed"
-    )
-
-    print(f"\nDEPLOYMENT STEPS:")
-    for step_name, info in results["steps"].items():
-        print(f"  {info['status']} {step_name}")
-
-        if verbose or not info["success"]:
-            print(f"    {info['message']}")
-
-            if info.get("details") and verbose:
-                details = info["details"]
-                for key, value in details.items():
-                    print(f"      {key}: {value}")
+# =========================================================================
+# CLI entry point
+# =========================================================================
 
 
-def print_schema_deployment_results(results: Dict[str, Any], verbose: bool):
-    """Print schema deployment results."""
-    summary = results["summary"]
-
-    print(
-        f"\nSUMMARY: {summary['deployed_files']} deployed, {summary['failed_files']} failed"
-    )
-
-    print(f"\nSCHEMA FILES:")
-    for filename, info in results["files"].items():
-        print(f"  {info['status']} {filename}")
-
-        if verbose or not info["success"]:
-            print(f"    {info['message']}")
-
-
-def print_policies_deployment_results(results: Dict[str, Any], verbose: bool):
-    """Print policies deployment results."""
-    print(f"\nRLS POLICIES: {results['status']}")
-    print(f"Message: {results['message']}")
-
-    if verbose and results.get("details"):
-        details = results["details"]
-        for key, value in details.items():
-            print(f"  {key}: {value}")
-
-
-def main():
-    """Main CLI entry point."""
+def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Unified database deployment",
+        description="LLM Portfolio Journal - database deployer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python deploy_database.py                         # Full deployment
-  python deploy_database.py --schema-only          # Schema files only
-  python deploy_database.py --policies-only        # RLS policies only
-  python deploy_database.py --force                # Force reapply migrations
-  python deploy_database.py --skip-baseline        # Skip baseline.sql (use for existing DBs)
-  python deploy_database.py --skip-baseline --force # Force remaining migrations, skip baseline
+  python deploy_database.py                    # Full deploy (auto-detects fresh vs existing)
+  python deploy_database.py --dry-run          # Preview what would be applied (read-only)
+  python deploy_database.py --skip-baseline    # Existing DB, skip baseline check
+  python deploy_database.py --schema-only      # Apply all schema files
+  python deploy_database.py --policies-only    # RLS policies only
+  python deploy_database.py --force            # Re-apply everything
         """,
     )
-
-    parser.add_argument(
-        "--schema-only", action="store_true", help="Deploy schema files only"
-    )
-    parser.add_argument(
-        "--policies-only", action="store_true", help="Configure RLS policies only"
-    )
+    parser.add_argument("--schema-only", action="store_true", help="Schema files only")
+    parser.add_argument("--policies-only", action="store_true", help="RLS only")
     parser.add_argument(
         "--skip-baseline",
         action="store_true",
-        help="Skip baseline.sql deployment (use if database already has core tables)",
+        help="Skip baseline (existing DB)",
     )
+    parser.add_argument("--force", action="store_true", help="Force re-apply")
     parser.add_argument(
-        "--force", action="store_true", help="Force reapply existing migrations"
+        "--dry-run",
+        action="store_true",
+        help="Preview pending migrations without executing (read-only)",
     )
-    parser.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
-    parser.add_argument("--json", action="store_true", help="Output as JSON")
-    parser.add_argument("--database-url", help="Database URL (default: from config)")
-    parser.add_argument(
-        "--schema-dir", type=Path, help="Schema directory (default: ./schema)"
-    )
+    parser.add_argument("--verbose", "-v", action="store_true")
+    parser.add_argument("--json", action="store_true", help="JSON output")
+    parser.add_argument("--database-url", help="Override DATABASE_URL")
+    parser.add_argument("--schema-dir", type=Path, help="Override schema directory")
 
     args = parser.parse_args()
+    deployer = UnifiedDatabaseDeployer(
+        args.database_url, args.schema_dir, dry_run=args.dry_run
+    )
 
-    # Initialize deployer
-    deployer = UnifiedDatabaseDeployer(args.database_url, args.schema_dir)
-
-    # Run deployment
-    if args.schema_only:
+    if args.dry_run:
+        results = deployer.deploy_full(args.force, skip_baseline=args.skip_baseline)
+    elif args.schema_only:
         results = deployer.deploy_schema_only(args.force)
     elif args.policies_only:
         results = deployer.deploy_policies_only()
     else:
         results = deployer.deploy_full(args.force, skip_baseline=args.skip_baseline)
 
-    # Output results
     if args.json:
         print(json.dumps(results, indent=2, default=str))
     else:
-        print_deployment_results(results, args.verbose)
+        _print_results(results, args.verbose)
 
-    # Exit with appropriate code
-    if results.get("mode") == "full_deployment":
+    # Exit code
+    if results.get("mode") == "dry_run":
+        return 0  # read-only, always succeeds
+    elif results.get("mode") == "full_deployment":
         return 1 if results["summary"]["failed_steps"] > 0 else 0
     elif results.get("mode") == "schema_only":
         return 1 if results["summary"]["failed_files"] > 0 else 0
     elif results.get("mode") == "policies_only":
-        return 1 if not results.get("success") else 0
-
+        return 0 if results.get("success") else 1
     return 0
 
 
 if __name__ == "__main__":
-    # Import pandas if available for timestamps
-    try:
-        import pandas as pd
-    except ImportError:
-        import datetime
-
-        class MockPandas:
-            @staticmethod
-            def Timestamp():
-                return datetime.datetime.now()
-
-        pd = MockPandas()
-
     sys.exit(main())

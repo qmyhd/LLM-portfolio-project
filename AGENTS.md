@@ -39,7 +39,7 @@ Sophisticated data-driven portfolio analytics system:
 - **UI System**: Standardized embed factory with color coding, interactive views (portfolio filters, help dropdown), and pagination
 - **NLP Pipeline**: OpenAI structured outputs for semantic parsing (triage → main → escalation model routing)
 - **OHLCV Pipeline**: Databento Historical API → Supabase `ohlcv_daily`
-- **Schema**: Modern PostgreSQL schema (000_baseline.sql → 057_add_orders_notified.sql, 17 Supabase tables)
+- **Schema**: Modern PostgreSQL schema (060_baseline_current.sql + incremental migrations, 19 Supabase tables)
 
 ## 📁 Project Map & Service Purposes
 
@@ -101,16 +101,13 @@ src/
 
 ```
 schema/
-├── 000_baseline.sql                  # SSOT baseline schema with 18 confirmed tables
-├── 015-026_*.sql                     # Core migrations (RLS, timestamps, cleanup, Twitter)
-├── 027_institutional_holdings.sql    # Institutional holdings table
-├── 028_add_raw_symbol_to_positions.sql # Raw symbol column
-├── 029_fix_account_balances_pk.sql   # Account balances PK fix
-├── 030-038_*.sql                     # Discord chunks, stock mentions, LLM tagging columns
-├── 039_add_parse_status_to_discord_messages.sql # NLP parse status tracking
-├── 040_create_discord_parsed_ideas.sql # Core NLP parsed ideas table
-├── 041-049_*.sql                     # Chunk indexing, FK constraints, cleanup
-└── 050_ohlcv_daily.sql               # OHLCV daily bars table for Databento data
+├── 060_baseline_current.sql           # Complete schema snapshot (fresh installs)
+├── 061_cleanup_migration_ledger.sql   # Ledger consolidation
+├── 06N_*.sql                          # Future incremental migrations
+└── archive/                           # Retired migrations (000-059), reference only
+    ├── 000_baseline.sql
+    ├── 015-059_*.sql
+    └── README.md
 
 scripts/
 ├── bootstrap.py                      # Comprehensive database setup and validation
