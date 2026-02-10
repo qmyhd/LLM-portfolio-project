@@ -281,17 +281,19 @@ class UnifiedDatabaseDeployer:
 
     def _sorted_migration_files(self, *, include_baseline: bool = False) -> List[Path]:
         """Return schema/*.sql sorted by numeric prefix.  Ignores archive/."""
-        files: List[Path] = []
+        # Collect (prefix, path) tuples to avoid parsing prefix twice
+        parsed: List[Tuple[int, Path]] = []
         for p in self.schema_dir.glob("*.sql"):
             try:
-                num = int(p.name[:3])
-            except (ValueError, IndexError):
+                prefix = int(p.name[:3])
+            except ValueError:
+                # Slicing never raises IndexError; only int() can fail
                 continue
             if not include_baseline and p.stem == BASELINE_STEM:
                 continue
-            files.append(p)
-        files.sort(key=lambda p: int(p.name[:3]))
-        return files
+            parsed.append((prefix, p))
+        parsed.sort(key=lambda t: t[0])
+        return [p for _, p in parsed]
 
     # ------------------------------------------------------------------
     # Migration execution
