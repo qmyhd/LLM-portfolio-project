@@ -6,7 +6,10 @@ pandas>=2.3.1
 tweepy>=4.14
 vaderSentiment==3.3.2
 Pillow>=12.1.1
-cryptography>=46.0.5
+# cryptography: ceiling forced by snaptrade-python-sdk (requires <44.0.0,>=43.0.3).
+# CVE-2026-26007 cannot be resolved until snaptrade loosens this constraint.
+# Track: https://github.com/passiv/snaptrade-sdks/issues
+cryptography>=43.0.3,<44.0.0
 openai>=1.98.0	
 google-generativeai>=0.8.0
 langchain>=0.3.27	
