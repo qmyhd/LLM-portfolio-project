@@ -23,10 +23,17 @@ Note: This is a simple wrapper around src.journal_generator - all functionality 
 """
 
 import argparse
+import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
+
 # Import main function from journal_generator
-from src.journal_generator import main
+from src.journal_generator import main  # noqa: E402
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate a portfolio journal automatically")

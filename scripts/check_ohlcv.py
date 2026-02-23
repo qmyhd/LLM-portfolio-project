@@ -1,6 +1,15 @@
 """Quick smoke-test script: check ohlcv_daily contents."""
 
-from src.db import execute_sql
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
+
+from src.db import execute_sql  # noqa: E402
 
 
 def main():

@@ -20,6 +20,10 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
+
 from src.snaptrade_collector import SnapTradeCollector  # noqa: E402
 
 logging.basicConfig(

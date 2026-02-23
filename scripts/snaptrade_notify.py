@@ -25,6 +25,10 @@ from discord import Embed, Color
 # Add project root to path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
+
 from src.db import execute_sql
 from src.config import settings
 from src.price_service import get_latest_close

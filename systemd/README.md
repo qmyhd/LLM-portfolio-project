@@ -209,6 +209,47 @@ timedatectl
 sudo systemctl start nightly-pipeline.service
 ```
 
+## Production Interpreter
+
+**Always use the venv Python on EC2 — never system python.**
+
+```bash
+# Correct — uses the project venv
+/home/ubuntu/llm-portfolio/.venv/bin/python scripts/check_system_status.py
+/home/ubuntu/llm-portfolio/.venv/bin/python scripts/verify_database.py --verbose
+/home/ubuntu/llm-portfolio/.venv/bin/python scripts/deploy_database.py
+
+# Wrong — system python lacks project dependencies
+python3 scripts/check_system_status.py    # ← will fail with ImportError
+```
+
+### Quick DB test from the CLI
+
+```bash
+cd /home/ubuntu/llm-portfolio
+.venv/bin/python -c "
+from src.env_bootstrap import bootstrap_env; bootstrap_env()
+from src.db import test_connection
+print(test_connection())
+"
+```
+
+### Health check script
+
+```bash
+cd /home/ubuntu/llm-portfolio
+./scripts/doctor_ec2.sh
+```
+
+### Optional shell alias
+
+Add this to your `.bashrc` if you want a shortcut (do **not** auto-edit):
+
+```bash
+alias llm-python='/home/ubuntu/llm-portfolio/.venv/bin/python'
+alias llm-doctor='cd /home/ubuntu/llm-portfolio && ./scripts/doctor_ec2.sh'
+```
+
 ## Security Notes
 
 - Services run as `ubuntu` (not root)

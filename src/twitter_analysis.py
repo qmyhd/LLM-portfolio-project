@@ -8,12 +8,7 @@ from typing import Any, Dict, List, Optional, Union
 
 import pandas as pd
 
-try:
-    from textblob import TextBlob
-
-    TEXTBLOB_AVAILABLE = True
-except ImportError:
-    TEXTBLOB_AVAILABLE = False
+from src.nlp.sentiment import sentiment_score
 
 # Import message cleaning functions
 from src.message_cleaner import extract_ticker_symbols, clean_text
@@ -126,12 +121,10 @@ def extract_tweet_id(url: str):
 
 
 def analyze_sentiment(text: str) -> float:
-    if not text or not TEXTBLOB_AVAILABLE:
+    if not text:
         return 0.0
     try:
-        blob = TextBlob(text)
-        # Type ignore for TextBlob sentiment property access
-        return float(blob.sentiment.polarity)  # type: ignore
+        return sentiment_score(text)
     except Exception as e:
         logger.error(f"Error analyzing sentiment: {e}")
         return 0.0

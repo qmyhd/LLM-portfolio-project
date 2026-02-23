@@ -25,8 +25,17 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
+import sys
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
 
 from src.db import execute_sql, get_connection
 from src.price_service import get_ohlcv, is_available as ohlcv_available

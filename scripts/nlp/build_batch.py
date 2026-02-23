@@ -48,7 +48,11 @@ from typing import List, Dict, Any, Optional
 # Add project root to path
 sys.path.insert(0, str(__file__).rsplit("scripts", 1)[0].rstrip("/\\"))
 
-from src.db import execute_sql
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
+
+from src.db import execute_sql  # noqa: E402
 from src.nlp.soft_splitter import prepare_for_parsing, summarize_splits
 from src.nlp.openai_parser import (
     build_batch_request,

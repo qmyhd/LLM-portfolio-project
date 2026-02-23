@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union, Literal
 
 import pandas as pd
-from textblob import TextBlob
+from src.nlp.sentiment import sentiment_score
 
 
 logger = logging.getLogger(__name__)
@@ -685,7 +685,7 @@ def clean_text(text: str) -> str:
 
 
 def calculate_sentiment(text: str) -> float:
-    """Calculate sentiment score for text using TextBlob.
+    """Calculate sentiment score for text.
 
     Args:
         text: Text to analyze sentiment for
@@ -697,9 +697,7 @@ def calculate_sentiment(text: str) -> float:
         return 0.0
 
     try:
-        blob = TextBlob(text)
-        # Type ignore for TextBlob sentiment property access
-        return float(blob.sentiment.polarity)  # type: ignore
+        return sentiment_score(text)
     except Exception as e:
         logger.warning(f"Error calculating sentiment for text '{text[:50]}...': {e}")
         return 0.0
