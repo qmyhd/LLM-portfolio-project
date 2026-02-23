@@ -16,6 +16,10 @@ import time
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
+
 
 async def fetch_channel_history_batch(
     bot, channel_id: int, limit: int = 50, batch_size: int = 25

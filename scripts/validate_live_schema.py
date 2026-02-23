@@ -12,7 +12,11 @@ from pathlib import Path
 # Add project root to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from src.db import execute_sql
+from src.env_bootstrap import bootstrap_env  # noqa: E402
+
+bootstrap_env()
+
+from src.db import execute_sql  # noqa: E402
 
 
 def get_live_table_columns(table_name: str) -> dict:
