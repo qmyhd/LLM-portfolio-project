@@ -67,7 +67,7 @@ def main():
         print("   EOF")
 
     # Environment configuration
-    use_aws = os.environ.get("USE_AWS_SECRETS", "0")
+    use_aws = os.environ.get("USE_AWS_SECRETS", "1")
     region = os.environ.get("AWS_REGION", "us-east-1")
     secret_name = os.environ.get("AWS_SECRET_NAME", "")
     prefix = os.environ.get("AWS_SECRETS_PREFIX", "llm-portfolio")
