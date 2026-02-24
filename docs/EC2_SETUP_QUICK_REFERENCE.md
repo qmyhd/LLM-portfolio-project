@@ -16,7 +16,7 @@ sudo cp systemd/*.service /etc/systemd/system/
 sudo cp systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
-sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+# Nginx: edit in place (see docs/ops/NGINX_HARDENING.md for snippet updates)
 sudo nginx -t && sudo systemctl reload nginx
 
 python scripts/deploy_database.py                    # auto-detects fresh vs existing
@@ -47,7 +47,8 @@ USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
 AWS_SECRET_NAME=qqqAppsecrets
 EOF
-sudo chmod 644 /etc/llm-portfolio/llm.env
+sudo chown root:ubuntu /etc/llm-portfolio/llm.env
+sudo chmod 640 /etc/llm-portfolio/llm.env
 
 python scripts/check_secrets.py
 
@@ -58,7 +59,8 @@ sudo cp systemd/*.service /etc/systemd/system/
 sudo cp systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
-sudo cp nginx/api.conf /etc/nginx/sites-available/
+# Nginx: create initial config, then paste hardening snippet inside HTTPS server{}
+# See docs/ops/NGINX_HARDENING.md for the snippet and placement instructions
 sudo ln -sf /etc/nginx/sites-available/api.conf /etc/nginx/sites-enabled/
 sudo rm -f /etc/nginx/sites-enabled/default
 sudo nginx -t

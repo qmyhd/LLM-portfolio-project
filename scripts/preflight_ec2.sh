@@ -245,7 +245,7 @@ echo "-----------------------------------"
 
 warn "Nginx config exists" \
     "[ -f '/etc/nginx/sites-enabled/api.conf' ] || [ -f '/etc/nginx/conf.d/api.conf' ]" \
-    "sudo cp $PROJECT_DIR/nginx/api.conf /etc/nginx/sites-available/api.conf && sudo ln -sf /etc/nginx/sites-available/api.conf /etc/nginx/sites-enabled/api.conf"
+    "Create /etc/nginx/sites-available/api.conf manually, then symlink (see docs/ops/NGINX_HARDENING.md)"
 
 warn "Nginx config valid" \
     "sudo nginx -t 2>/dev/null" \

@@ -27,6 +27,8 @@ class WatchlistItem(BaseModel):
     change: float
     changePercent: float
     volume: int
+    updatedAt: Optional[str] = None  # Date of the latest OHLCV record (YYYY-MM-DD)
+    source: str = "databento"  # Price data source
 
 
 class WatchlistResponse(BaseModel):
@@ -86,8 +88,35 @@ async def get_watchlist_prices(
             change = current_price - previous_close
             change_pct = (change / previous_close * 100) if previous_close > 0 else 0
 
-            # Volume would need OHLCV lookup - simplified here
+            # Get the date of the latest OHLCV record for this symbol
+            date_row = execute_sql(
+                "SELECT MAX(date)::text AS latest_date FROM ohlcv_daily WHERE symbol = :s",
+                params={"s": symbol},
+                fetch_results=True,
+            )
+            updated_at = None
+            if date_row:
+                dr = (
+                    dict(date_row[0]._mapping)
+                    if hasattr(date_row[0], "_mapping")
+                    else dict(date_row[0])
+                )
+                updated_at = dr.get("latest_date")
+
+            # Volume from OHLCV
+            vol_row = execute_sql(
+                "SELECT volume FROM ohlcv_daily WHERE symbol = :s ORDER BY date DESC LIMIT 1",
+                params={"s": symbol},
+                fetch_results=True,
+            )
             volume = 0
+            if vol_row:
+                vr = (
+                    dict(vol_row[0]._mapping)
+                    if hasattr(vol_row[0], "_mapping")
+                    else dict(vol_row[0])
+                )
+                volume = int(vr.get("volume") or 0)
 
             items.append(
                 WatchlistItem(
@@ -96,6 +125,7 @@ async def get_watchlist_prices(
                     change=round(change, 2),
                     changePercent=round(change_pct, 2),
                     volume=volume,
+                    updatedAt=updated_at,
                 )
             )
 

@@ -158,7 +158,8 @@ USE_AWS_SECRETS=1
 AWS_REGION=${AWS_REGION}
 AWS_SECRET_NAME=qqqAppsecrets
 EOF
-sudo chmod 644 /etc/llm-portfolio/llm.env
+sudo chown root:ubuntu /etc/llm-portfolio/llm.env
+sudo chmod 640 /etc/llm-portfolio/llm.env
 
 # Also create project .env for local/manual runs
 cat > "$PROJECT_DIR/.env" << EOF

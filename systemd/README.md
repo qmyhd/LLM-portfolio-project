@@ -36,8 +36,12 @@ USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
 AWS_SECRET_NAME=qqqAppsecrets
 EOF
-sudo chmod 644 /etc/llm-portfolio/llm.env
+sudo chown root:ubuntu /etc/llm-portfolio/llm.env
+sudo chmod 640 /etc/llm-portfolio/llm.env
 ```
+
+> **Why 640?** Readable by `root` (owner) and `ubuntu` group (services/scripts),
+> but not world-readable. Safer than 644 since the file contains AWS secret references.
 
 ### 2. Enable Persistent Journald Logs (Recommended)
 
@@ -170,7 +174,8 @@ USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
 AWS_SECRET_NAME=qqqAppsecrets
 EOF
-sudo chmod 644 /etc/llm-portfolio/llm.env
+sudo chown root:ubuntu /etc/llm-portfolio/llm.env
+sudo chmod 640 /etc/llm-portfolio/llm.env
 ```
 
 ### Service Fails to Start - Other Issues

@@ -35,8 +35,7 @@ sudo cp systemd/*.service /etc/systemd/system/
 sudo cp systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# 4. Update Nginx config (if changed)
-sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+# 4. Nginx: hardening snippet is edited in place (see docs/ops/NGINX_HARDENING.md)
 sudo nginx -t && sudo systemctl reload nginx
 
 # 5. Run database migrations
@@ -122,8 +121,7 @@ cd /home/ubuntu/llm-portfolio
 git pull origin main
 source .venv/bin/activate
 
-# Update nginx config (scanner blocking, method filtering, docs hiding)
-sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+# Nginx: hardening snippet is edited in place (see docs/ops/NGINX_HARDENING.md)
 sudo nginx -t && sudo systemctl reload nginx
 
 # Restart API (webhook hardening: canonical Signature header only)
@@ -321,7 +319,8 @@ USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
 AWS_SECRET_NAME=qqqAppsecrets
 EOF
-sudo chmod 644 /etc/llm-portfolio/llm.env
+sudo chown root:ubuntu /etc/llm-portfolio/llm.env
+sudo chmod 640 /etc/llm-portfolio/llm.env
 ```
 
 ### Step 4: Verify Secrets Access
@@ -363,8 +362,9 @@ sudo systemctl enable api.service discord-bot.service nightly-pipeline.timer
 ### Step 6: Configure Nginx and SSL
 
 ```bash
-# Install nginx config (Ubuntu standard: sites-available + sites-enabled)
-sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+# Nginx config is managed in place on EC2 (not copied from repo).
+# For hardening, paste nginx/snippets/api_hardening.conf into the HTTPS server{}.
+# See docs/ops/NGINX_HARDENING.md for details.
 sudo ln -sf /etc/nginx/sites-available/api.conf /etc/nginx/sites-enabled/api.conf
 
 # Remove default site if present
@@ -381,8 +381,8 @@ sudo systemctl enable nginx
 sudo systemctl start nginx
 ```
 
-> **Note:** If your nginx uses `/etc/nginx/conf.d/` instead (check with `ls /etc/nginx/`),
-> use `sudo cp nginx/api.conf /etc/nginx/conf.d/api.conf` instead.
+> **Note:** The nginx config is edited in place at `/etc/nginx/sites-available/api.conf`.
+> Do NOT copy to `/etc/nginx/conf.d/`. See [docs/ops/NGINX_HARDENING.md](ops/NGINX_HARDENING.md) for the snippet approach.
 
 ### Step 7: Start Services
 
@@ -602,7 +602,8 @@ USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
 AWS_SECRET_NAME=qqqAppsecrets
 EOF
-sudo chmod 644 /etc/llm-portfolio/llm.env
+sudo chown root:ubuntu /etc/llm-portfolio/llm.env
+sudo chmod 640 /etc/llm-portfolio/llm.env
 ```
 
 ### Bot Won't Start
@@ -723,7 +724,7 @@ sudo systemctl restart api.service discord-bot.service
 | `systemd/discord-bot.service` | Discord bot systemd service |
 | `systemd/nightly-pipeline.service` | Nightly pipeline service |
 | `systemd/nightly-pipeline.timer` | Nightly pipeline timer (1 AM ET) |
-| `nginx/api.conf` | Nginx reverse proxy config |
+| `nginx/snippets/api_hardening.conf` | Nginx hardening snippet (paste into server{}) |
 | `scripts/bootstrap.sh` | Automated EC2 setup |
 | `scripts/check_secrets.py` | AWS Secrets Manager validation |
 | `scripts/preflight_ec2.sh` | EC2 readiness check |

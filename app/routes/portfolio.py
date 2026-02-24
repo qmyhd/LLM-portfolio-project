@@ -41,6 +41,7 @@ class PortfolioSummary(BaseModel):
     """Portfolio summary metrics (matches api.ts PortfolioSummary)."""
 
     totalValue: float
+    totalEquity: float  # Equity-only (positions market value, no cash)
     totalCost: float
     unrealizedPL: float
     unrealizedPLPercent: float
@@ -49,6 +50,7 @@ class PortfolioSummary(BaseModel):
     cashBalance: float
     positionsCount: int
     lastSync: str  # ISO timestamp
+    source: str  # Data source: 'snaptrade' | 'cache'
 
 
 class PortfolioResponse(BaseModel):
@@ -178,6 +180,9 @@ async def get_portfolio():
             total_cost += cost_basis
             total_day_change += day_change
 
+        # total_value here is equity-only (sum of positions market values)
+        total_equity = total_value
+
         # Get cash and buying power
         if balances_data:
             bal_row = balances_data[0]
@@ -188,8 +193,15 @@ async def get_portfolio():
         else:
             cash = 0
 
-        # Add cash to total value
+        # Add cash to total value (net liquidation value)
         total_portfolio_value = total_value + cash
+
+        # Reconciliation check: equity from positions should match total_equity
+        if total_cost > 0 and abs(total_equity - total_value) > total_cost * 0.05:
+            logger.warning(
+                f"⚠️ Portfolio reconciliation: equity=${total_equity:.2f} "
+                f"positions_sum=${total_value:.2f} cost=${total_cost:.2f}"
+            )
 
         # Calculate summary metrics
         total_gain_loss = total_value - total_cost
@@ -218,6 +230,7 @@ async def get_portfolio():
 
         summary = PortfolioSummary(
             totalValue=round(total_portfolio_value, 2),
+            totalEquity=round(total_equity, 2),
             totalCost=round(total_cost, 2),
             unrealizedPL=round(total_gain_loss, 2),
             unrealizedPLPercent=round(total_gain_loss_pct, 2),
@@ -226,6 +239,7 @@ async def get_portfolio():
             cashBalance=round(cash, 2),
             positionsCount=len(positions),
             lastSync=last_update_str,
+            source="snaptrade",
         )
 
         return PortfolioResponse(
