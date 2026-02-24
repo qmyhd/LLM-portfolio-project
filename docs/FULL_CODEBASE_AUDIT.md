@@ -386,7 +386,7 @@ All routes proxy to FastAPI backend via `backendFetch()` with Bearer token auth.
 | `CLAUDE.md` | Claude Code guidance | ✅ Current |
 | `README.md` | Project README | ✅ Current (Python 3.11+) |
 | `.env.example` | Env var template (173 lines) | ✅ `SQLITE_PATH` commented as deprecated |
-| `nginx/api.conf` | Nginx reverse proxy config | ✅ Current |
+| `nginx/snippets/api_hardening.conf` | Nginx hardening snippet (paste into server{}) | ✅ Current |
 
 ---
 

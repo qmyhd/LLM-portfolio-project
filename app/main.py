@@ -30,6 +30,7 @@ from fastapi.responses import JSONResponse
 
 from app.auth import require_api_key
 from app.routes import (
+    sentiment,
     portfolio,
     orders,
     stocks,
@@ -139,6 +140,13 @@ app.include_router(
     activities.router,
     prefix="/activities",
     tags=["Activities"],
+    dependencies=[Depends(require_api_key)],
+)
+
+app.include_router(
+    sentiment.router,
+    prefix="/sentiment",
+    tags=["Sentiment"],
     dependencies=[Depends(require_api_key)],
 )
 

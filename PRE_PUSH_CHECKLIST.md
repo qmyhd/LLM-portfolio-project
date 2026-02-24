@@ -104,8 +104,7 @@ sudo cp systemd/*.service /etc/systemd/system/
 sudo cp systemd/*.timer /etc/systemd/system/
 sudo systemctl daemon-reload
 
-# Update nginx (if changed)
-sudo cp nginx/api.conf /etc/nginx/sites-available/api.conf
+# Nginx: hardening snippet is edited in place (see docs/ops/NGINX_HARDENING.md)
 sudo nginx -t && sudo systemctl reload nginx
 
 # Restart backend services

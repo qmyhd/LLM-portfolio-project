@@ -135,6 +135,37 @@ for svc in api.service discord-bot.service nightly-pipeline.timer; do
     fi
 done
 
+# ── 7. Nginx config check (warn-only) ─────────────────────────────────
+echo ""
+echo "── Nginx ──"
+
+if command -v nginx &>/dev/null; then
+    if sudo nginx -t 2>/dev/null; then
+        ok "nginx -t (config syntax valid)"
+    else
+        fail "nginx -t (config syntax invalid)"
+        echo "       Fix: sudoedit /etc/nginx/sites-available/api.conf"
+        echo "            sudo nginx -t   # repeat until clean"
+    fi
+
+    # Warn if limit_req_zone appears more than once across enabled configs
+    ZONE_COUNT=$(sudo grep -R "limit_req_zone" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | wc -l)
+    if [[ "$ZONE_COUNT" -gt 1 ]]; then
+        warn "limit_req_zone declared $ZONE_COUNT times (risk of duplicate zone error)"
+        echo "       Check: sudo grep -rn limit_req_zone /etc/nginx/sites-enabled/ /etc/nginx/conf.d/"
+    else
+        ok "limit_req_zone count: $ZONE_COUNT (no duplicates)"
+    fi
+
+    # Note about backups
+    BAK_COUNT=$(ls /etc/nginx/sites-available/*.bak 2>/dev/null | wc -l)
+    if [[ "$BAK_COUNT" -gt 0 ]]; then
+        ok "$BAK_COUNT .bak file(s) in sites-available (harmless, not loaded)"
+    fi
+else
+    warn "nginx not installed (skip nginx checks)"
+fi
+
 # ── Summary ──────────────────────────────────────────────────────────
 echo ""
 if [[ $FAILURES -eq 0 ]]; then

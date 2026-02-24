@@ -190,26 +190,19 @@ install_nginx() {
     log_info "Installing Nginx..."
     sudo apt install -y nginx
     
-# Copy nginx config (Ubuntu standard: sites-available + sites-enabled)
-    if [ -f "${PROJECT_DIR}/nginx/api.conf" ]; then
-        log_info "Configuring Nginx..."
-        sudo cp ${PROJECT_DIR}/nginx/api.conf /etc/nginx/sites-available/api.conf
+# Nginx config is managed in place (not copied from repo).
+    # On first setup: create /etc/nginx/sites-available/api.conf manually,
+    # then paste nginx/snippets/api_hardening.conf into the HTTPS server{}.
+    # See docs/ops/NGINX_HARDENING.md for details.
+    if [ -f "/etc/nginx/sites-available/api.conf" ]; then
+        log_info "Nginx site config exists, ensuring symlink..."
         sudo ln -sf /etc/nginx/sites-available/api.conf /etc/nginx/sites-enabled/api.conf
-
-        # Update server_name with actual domain
-        sudo sed -i "s/server_name .*;/server_name ${DOMAIN};/" /etc/nginx/sites-available/api.conf
-        
-        # Remove default site if exists
         sudo rm -f /etc/nginx/sites-enabled/default
-        
-        # Test config
         sudo nginx -t
-        
-        # Restart nginx
         sudo systemctl restart nginx
         sudo systemctl enable nginx
     else
-        log_warn "nginx/api.conf not found, skipping Nginx config"
+        log_warn "No /etc/nginx/sites-available/api.conf — create it manually (see docs/ops/NGINX_HARDENING.md)"
     fi
 }
 
@@ -270,7 +263,8 @@ USE_AWS_SECRETS=1
 AWS_REGION=us-east-1
 AWS_SECRET_NAME=qqqAppsecrets
 EOF
-    sudo chmod 644 /etc/llm-portfolio/llm.env
+    sudo chown root:ubuntu /etc/llm-portfolio/llm.env
+    sudo chmod 640 /etc/llm-portfolio/llm.env
 
     # Enable persistent journald logs (survive reboot on Ubuntu)
     # This replaces file-based logging in /var/log/portfolio-*
