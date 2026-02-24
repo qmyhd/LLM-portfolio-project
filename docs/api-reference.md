@@ -519,7 +519,7 @@ Text processing and ticker extraction with sentiment analysis.
 
 - `extract_ticker_symbols(text)` → List[str]: Extract $TICKER symbols using regex
 - `clean_text(text)` → str: Clean and normalize text content
-- `calculate_sentiment(text)` → float: TextBlob sentiment analysis (-1.0 to 1.0)
+- `calculate_sentiment(text)` → float: vaderSentiment analysis (-1.0 to 1.0)
 - `process_messages_for_channel(messages, channel_type)` → DataFrame: Process message batch
 
 **Regular Expressions:**
@@ -534,7 +534,7 @@ Twitter/X integration with sentiment analysis.
 
 - `detect_twitter_links(text)` → List[str]: Extract Twitter/X URLs from text
 - `extract_tweet_id(url)` → str: Get tweet ID from URL
-- `analyze_sentiment(text)` → float: TextBlob sentiment analysis
+- `analyze_sentiment(text)` → float: vaderSentiment analysis
 - `fetch_tweet_data(tweet_id, twitter_client=None)`: Retrieve tweet data via API
 - `process_tweet_for_stocks(tweet_data)` → Dict: Extract stock mentions from tweets
 

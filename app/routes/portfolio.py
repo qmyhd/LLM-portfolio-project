@@ -114,6 +114,17 @@ async def get_portfolio():
             get_previous_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
         )
 
+        # yfinance fallback for symbols Databento doesn't cover (e.g. crypto)
+        yf_quotes: dict[str, dict] = {}
+        databento_missing = [s for s in symbols_to_fetch if s not in prices_map]
+        if databento_missing:
+            try:
+                from src.market_data_service import get_realtime_quotes_batch
+
+                yf_quotes = get_realtime_quotes_batch(databento_missing)
+            except Exception as exc:
+                logger.debug("yfinance batch quotes skipped: %s", exc)
+
         positions = []
         total_value = 0.0
         total_cost = 0.0
@@ -124,9 +135,10 @@ async def get_portfolio():
             quantity = float(row_dict["quantity"] or 0)
             avg_cost = float(row_dict["average_cost"] or 0)
 
-            # Get current price: Databento → SnapTrade price → avg_cost
+            # Get current price: Databento → SnapTrade → yfinance → avg_cost
             snaptrade_price = float(row_dict.get("snaptrade_price") or 0)
             databento_price = prices_map.get(symbol)
+            yf_quote = yf_quotes.get(symbol)
 
             if databento_price:
                 current_price = databento_price
@@ -136,9 +148,14 @@ async def get_portfolio():
                     f"${snaptrade_price:.2f} (avg_cost=${avg_cost:.2f})"
                 )
                 current_price = snaptrade_price
+            elif yf_quote:
+                current_price = yf_quote["price"]
+                logger.info(
+                    f"📊 {symbol}: Using yfinance price ${current_price:.2f}"
+                )
             else:
                 logger.warning(
-                    f"⚠️ {symbol}: No Databento or SnapTrade price, "
+                    f"⚠️ {symbol}: No price sources available, "
                     f"falling back to avg_cost=${avg_cost:.2f}"
                 )
                 current_price = avg_cost
@@ -151,14 +168,16 @@ async def get_portfolio():
                 (total_gain_loss / cost_basis * 100) if cost_basis > 0 else 0
             )
 
-            # Day change from previous close
+            # Day change from previous close (Databento → yfinance fallback)
             prev_close = prev_closes_map.get(symbol)
+            if not prev_close and yf_quote:
+                prev_close = yf_quote.get("previousClose")
             if prev_close and prev_close > 0:
                 day_change = (current_price - prev_close) * quantity
                 day_change_pct = ((current_price - prev_close) / prev_close) * 100
             else:
-                day_change = 0.0
-                day_change_pct = 0.0
+                day_change = None
+                day_change_pct = None
 
             positions.append(
                 Position(
@@ -178,7 +197,7 @@ async def get_portfolio():
 
             total_value += market_value
             total_cost += cost_basis
-            total_day_change += day_change
+            total_day_change += day_change or 0.0
 
         # total_value here is equity-only (sum of positions market values)
         total_equity = total_value
@@ -189,12 +208,18 @@ async def get_portfolio():
             bal_dict: dict[str, Any] = (
                 dict(bal_row._mapping) if hasattr(bal_row, "_mapping") else dict(bal_row)  # type: ignore[arg-type]
             )
-            cash = float(bal_dict["total_cash"] or 0)
+            raw_cash = float(bal_dict["total_cash"] or 0)
         else:
-            cash = 0
+            raw_cash = 0.0
 
-        # Add cash to total value (net liquidation value)
-        total_portfolio_value = total_value + cash
+        # For margin accounts, cash can be negative (debit balance).
+        # Only add positive cash to total portfolio value; negative cash
+        # represents margin borrowing already reflected in position values.
+        cash_for_display = raw_cash
+        cash_for_total = max(raw_cash, 0.0)
+
+        # Total portfolio value = equity + positive cash
+        total_portfolio_value = total_value + cash_for_total
 
         # Reconciliation check: equity from positions should match total_equity
         if total_cost > 0 and abs(total_equity - total_value) > total_cost * 0.05:
@@ -236,7 +261,7 @@ async def get_portfolio():
             unrealizedPLPercent=round(total_gain_loss_pct, 2),
             dayChange=round(total_day_change, 2),
             dayChangePercent=round(day_change_pct, 2),
-            cashBalance=round(cash, 2),
+            cashBalance=round(cash_for_display, 2),
             positionsCount=len(positions),
             lastSync=last_update_str,
             source="snaptrade",

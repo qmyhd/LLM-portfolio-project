@@ -128,7 +128,7 @@ scripts/
 - **PostgreSQL-only**: All data persists to Supabase PostgreSQL with CSV backup for historical data
 - **Database requirement**: PostgreSQL/Supabase connection required via `get_database_url()` (no SQLite fallback)
 - **Symbol extraction**: Robust regex patterns for `$TICKER` format, handles complex API responses
-- **Sentiment scoring**: TextBlob integration with numerical values (-1.0 to 1.0)
+- **Sentiment scoring**: vaderSentiment rule-based scoring with numerical values (-1.0 to 1.0)
 
 ## ⚡ Essential Setup Commands
 
@@ -222,7 +222,7 @@ snaptrade-python-sdk>=11.0.98
 openai>=1.98.0
 
 # Social Media (SENTIMENT ANALYSIS)
-discord.py>=2.5.2, tweepy>=4.14, textblob>=0.17
+discord.py>=2.5.2, tweepy>=4.14, vaderSentiment>=3.3
 
 # Development & Testing (VALIDATION)
 pytest>=8.2, coverage>=7.5, jupyterlab>=4.2, ipykernel>=6.29

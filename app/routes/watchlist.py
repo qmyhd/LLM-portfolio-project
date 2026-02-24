@@ -13,7 +13,12 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from src.db import execute_sql
-from src.price_service import get_latest_close, get_previous_close
+from src.price_service import (
+    get_latest_close,
+    get_latest_closes_batch,
+    get_previous_close,
+    get_previous_closes_batch,
+)
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -72,68 +77,88 @@ async def get_watchlist_prices(
     if not ticker_list:
         return WatchlistResponse(items=[])
 
-    items = []
+    # Batch fetch prices from Databento (2 queries total instead of N×2)
+    prices_map = get_latest_closes_batch(ticker_list)
+    prev_map = get_previous_closes_batch(ticker_list)
 
-    for symbol in ticker_list:
+    # Batch fetch volume + latest date in one query
+    vol_date_map = _batch_fetch_volume_and_date(ticker_list)
+
+    # yfinance fallback for symbols not in Databento
+    yf_quotes: dict[str, dict] = {}
+    missing = [t for t in ticker_list if t not in prices_map]
+    if missing:
         try:
-            # Get current and previous close
-            current_price = get_latest_close(symbol)
+            from src.market_data_service import get_realtime_quotes_batch
 
-            if current_price is None:
-                continue
+            yf_quotes = get_realtime_quotes_batch(missing)
+        except Exception:
+            pass
 
-            previous_close = get_previous_close(symbol) or current_price
+    items = []
+    for symbol in ticker_list:
+        price = prices_map.get(symbol)
+        prev = prev_map.get(symbol)
+        yf_q = yf_quotes.get(symbol)
 
-            # Calculate change
-            change = current_price - previous_close
-            change_pct = (change / previous_close * 100) if previous_close > 0 else 0
+        if price is None and yf_q:
+            price = yf_q["price"]
+            prev = yf_q.get("previousClose", price)
+            source = "yfinance"
+        elif price is not None:
+            prev = prev or price
+            source = "databento"
+        else:
+            continue  # No data from any source
 
-            # Get the date of the latest OHLCV record for this symbol
-            date_row = execute_sql(
-                "SELECT MAX(date)::text AS latest_date FROM ohlcv_daily WHERE symbol = :s",
-                params={"s": symbol},
-                fetch_results=True,
+        change = price - (prev or price)
+        change_pct = (change / prev * 100) if prev and prev > 0 else 0
+
+        vd = vol_date_map.get(symbol, {})
+        items.append(
+            WatchlistItem(
+                symbol=symbol,
+                price=round(price, 2),
+                change=round(change, 2),
+                changePercent=round(change_pct, 2),
+                volume=int(vd.get("volume") or 0),
+                updatedAt=vd.get("latest_date"),
+                source=source,
             )
-            updated_at = None
-            if date_row:
-                dr = (
-                    dict(date_row[0]._mapping)
-                    if hasattr(date_row[0], "_mapping")
-                    else dict(date_row[0])
-                )
-                updated_at = dr.get("latest_date")
-
-            # Volume from OHLCV
-            vol_row = execute_sql(
-                "SELECT volume FROM ohlcv_daily WHERE symbol = :s ORDER BY date DESC LIMIT 1",
-                params={"s": symbol},
-                fetch_results=True,
-            )
-            volume = 0
-            if vol_row:
-                vr = (
-                    dict(vol_row[0]._mapping)
-                    if hasattr(vol_row[0], "_mapping")
-                    else dict(vol_row[0])
-                )
-                volume = int(vr.get("volume") or 0)
-
-            items.append(
-                WatchlistItem(
-                    symbol=symbol,
-                    price=round(current_price, 2),
-                    change=round(change, 2),
-                    changePercent=round(change_pct, 2),
-                    volume=volume,
-                    updatedAt=updated_at,
-                )
-            )
-
-        except Exception as e:
-            logger.warning(f"Error fetching watchlist data for {symbol}: {e}")
-            continue
+        )
 
     return WatchlistResponse(items=items)
+
+
+def _batch_fetch_volume_and_date(symbols: list[str]) -> dict[str, dict]:
+    """Fetch latest volume and date for *symbols* in a single query."""
+    if not symbols:
+        return {}
+    try:
+        rows = execute_sql(
+            """
+            SELECT DISTINCT ON (symbol)
+                symbol,
+                volume,
+                date::text AS latest_date
+            FROM ohlcv_daily
+            WHERE symbol = ANY(:symbols)
+            ORDER BY symbol, date DESC
+            """,
+            params={"symbols": symbols},
+            fetch_results=True,
+        )
+        result: dict[str, dict] = {}
+        for row in rows or []:
+            rd = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+            result[rd["symbol"]] = {
+                "volume": int(rd.get("volume") or 0),
+                "latest_date": rd.get("latest_date"),
+            }
+        return result
+    except Exception as e:
+        logger.warning("Batch volume/date fetch failed: %s", e)
+        return {}
 
 
 @router.post("/validate", response_model=ValidationResponse)

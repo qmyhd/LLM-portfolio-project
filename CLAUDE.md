@@ -72,7 +72,8 @@ Twitter/X      ─┘
 - **`src/snaptrade_collector.py`** — SnapTrade ETL (accounts, positions, orders, balances)
 - **`src/databento_collector.py`** — Databento OHLCV → Supabase upsert + optional S3 archive
 - **`src/retry_utils.py`** — `@hardened_retry()` for API calls, `@database_retry()` for DB operations
-- **`src/message_cleaner.py`** — Ticker extraction (`$AAPL`, `$BRK.B`), sentiment scoring via TextBlob
+- **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes, company info, return metrics, and search fallback
+- **`src/message_cleaner.py`** — Ticker extraction (`$AAPL`, `$BRK.B`), sentiment scoring via vaderSentiment
 
 ### Discord Bot (`src/bot/`)
 
@@ -80,7 +81,7 @@ Modular command pattern. Each command file in `src/bot/commands/` exports a `reg
 
 ### Database Schema
 
-58 migration files in `schema/` (000_baseline.sql through 058). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `twitter_data`, `stock_profile_current`. All tables have RLS enabled — service role key required in DATABASE_URL.
+Consolidated schema in `schema/` (060_baseline_current.sql + 061_cleanup, older files archived). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `twitter_data`, `stock_profile_current`. All tables have RLS enabled — service role key required in DATABASE_URL.
 
 ### Deployment
 
