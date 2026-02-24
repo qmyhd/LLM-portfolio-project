@@ -149,7 +149,7 @@ if command -v nginx &>/dev/null; then
     fi
 
     # Warn if limit_req_zone appears more than once across enabled configs
-    ZONE_COUNT=$(sudo grep -R "limit_req_zone" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | wc -l)
+    ZONE_COUNT=$(sudo grep -R "limit_req_zone" /etc/nginx/sites-enabled/ /etc/nginx/conf.d/ 2>/dev/null | wc -l || true)
     if [[ "$ZONE_COUNT" -gt 1 ]]; then
         warn "limit_req_zone declared $ZONE_COUNT times (risk of duplicate zone error)"
         echo "       Check: sudo grep -rn limit_req_zone /etc/nginx/sites-enabled/ /etc/nginx/conf.d/"
@@ -158,7 +158,7 @@ if command -v nginx &>/dev/null; then
     fi
 
     # Note about backups
-    BAK_COUNT=$(ls /etc/nginx/sites-available/*.bak 2>/dev/null | wc -l)
+    BAK_COUNT=$(ls /etc/nginx/sites-available/*.bak 2>/dev/null | wc -l || true)
     if [[ "$BAK_COUNT" -gt 0 ]]; then
         ok "$BAK_COUNT .bak file(s) in sites-available (harmless, not loaded)"
     fi
