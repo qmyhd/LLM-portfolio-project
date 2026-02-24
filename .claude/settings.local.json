@@ -4,7 +4,17 @@
       "Bash(pip show:*)",
       "WebFetch(domain:codepen.io)",
       "Bash(python -m pytest:*)",
-      "Bash(npx next build:*)"
+      "Bash(npx next build:*)",
+      "WebFetch(domain:docs.openbb.co)",
+      "Bash(ls -la \"c:\\\\Users\\\\qaism\\\\OneDrive\\\\Documents\\\\Github\\\\LLM-portfolio-frontend\\\\frontend\\\\src\\\\app\\\\stock\"\" 2>/dev/null || ls -la \"c:UsersqaismOneDriveDocumentsGithubLLM-portfolio-frontendfrontendsrcapp\"\")",
+      "mcp__plugin_context7_context7__resolve-library-id",
+      "mcp__plugin_context7_context7__query-docs",
+      "Bash(python3 -c \":*)",
+      "Bash(python -c \":*)",
+      "Bash(python -m ruff check src/openbb_service.py app/routes/openbb.py tests/test_openbb_service.py)",
+      "Bash(ruff check src/openbb_service.py app/routes/openbb.py tests/test_openbb_service.py)",
+      "Bash(ruff check --fix src/openbb_service.py app/routes/openbb.py tests/test_openbb_service.py)",
+      "Bash(npm run build)"
     ]
   }
 }

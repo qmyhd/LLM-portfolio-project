@@ -123,6 +123,8 @@ SECRET_KEY_MAPPING = {
     "GITHUB_PERSONAL_ACCESS_TOKEN": "Github_Personal_Access_Token",
     # Twitter (optional)
     "TWITTER_BEARER_TOKEN": "TWITTER_BEARER_TOKEN",
+    # OpenBB / FMP
+    "FMP_API_KEY": "FMP_API_KEY",
 }
 
 

@@ -139,6 +139,33 @@ async def search_symbols(
             except Exception as exc:
                 logger.debug("yfinance search fallback failed: %s", exc)
 
+        # Second fallback: OpenBB equity search (SEC provider, free)
+        if not results:
+            try:
+                from src.openbb_service import is_available as obb_available
+
+                if obb_available():
+                    from openbb import obb as _obb
+
+                    search_resp = _obb.equity.search(query=q, provider="sec")
+                    for item in (search_resp.results or [])[:limit]:
+                        d = item.__dict__ if hasattr(item, "__dict__") else {}
+                        sym = d.get("symbol", "")
+                        if sym and sym not in seen_tickers:
+                            seen_tickers.add(sym)
+                            results.append(
+                                SearchResult(
+                                    symbol=sym,
+                                    name=d.get("name", sym),
+                                    sector=None,
+                                    type="stock",
+                                )
+                            )
+                            if len(results) >= limit:
+                                break
+            except Exception as exc:
+                logger.debug("OpenBB search fallback failed: %s", exc)
+
         return SearchResponse(
             results=results,
             query=q,
