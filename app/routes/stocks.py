@@ -96,6 +96,12 @@ class StockProfileCurrent(BaseModel):
     labelOptionsCount: int = 0
     labelCatalystNewsCount: int = 0
 
+    # Company metadata (from yfinance)
+    companyName: Optional[str] = None
+    sector: Optional[str] = None
+    industry: Optional[str] = None
+    marketCap: Optional[int] = None
+
 
 # ---------------------------------------------------------------------------
 # Trading idea models  (matches api.ts StockIdea / PriceLevel)
@@ -314,12 +320,30 @@ async def get_stock_profile(
 
         now_str = datetime.utcnow().isoformat() + "Z"
 
+        # ---- 7. yfinance enrichment (return metrics + company info) --------
+        yf_returns: Optional[dict] = None
+        yf_company: Optional[dict] = None
+        try:
+            from src.market_data_service import get_return_metrics, get_company_info
+
+            yf_returns = get_return_metrics(symbol)
+            yf_company = get_company_info(symbol)
+        except Exception as exc:
+            logger.debug("yfinance enrichment skipped for %s: %s", symbol, exc)
+
         return StockProfileCurrent(
             ticker=symbol,
             lastUpdated=now_str,
             latestClosePrice=round(latest, 2) if latest else None,
             previousClosePrice=round(prev, 2) if prev else None,
             dailyChangePct=daily_chg_pct,
+            # Return metrics from yfinance
+            return1wPct=(yf_returns or {}).get("return1w"),
+            return1mPct=(yf_returns or {}).get("return1m"),
+            return3mPct=(yf_returns or {}).get("return3m"),
+            return1yPct=(yf_returns or {}).get("return1y"),
+            volatility30d=(yf_returns or {}).get("volatility30d"),
+            volatility90d=(yf_returns or {}).get("volatility90d"),
             yearHigh=(
                 float(stats_dict["year_high"]) if stats_dict.get("year_high") else None
             ),
@@ -361,6 +385,11 @@ async def get_stock_profile(
             labelTechnicalAnalysisCount=int(lc.get("ta") or 0),
             labelOptionsCount=int(lc.get("opt") or 0),
             labelCatalystNewsCount=int(lc.get("cat") or 0),
+            # Company metadata from yfinance
+            companyName=(yf_company or {}).get("name"),
+            sector=(yf_company or {}).get("sector") or None,
+            industry=(yf_company or {}).get("industry") or None,
+            marketCap=(yf_company or {}).get("marketCap") or None,
         )
 
     except HTTPException:

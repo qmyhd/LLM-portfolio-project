@@ -116,6 +116,29 @@ async def search_symbols(
                 )
             )
 
+        # Fallback to yfinance search when local DB returns no results
+        if not results:
+            try:
+                from src.market_data_service import search_symbols as yf_search
+
+                yf_results = yf_search(q)
+                for item in yf_results:
+                    sym = item.get("symbol", "")
+                    if sym and sym not in seen_tickers:
+                        seen_tickers.add(sym)
+                        results.append(
+                            SearchResult(
+                                symbol=sym,
+                                name=item.get("name", sym),
+                                sector=None,
+                                type=item.get("type", "stock"),
+                            )
+                        )
+                        if len(results) >= limit:
+                            break
+            except Exception as exc:
+                logger.debug("yfinance search fallback failed: %s", exc)
+
         return SearchResponse(
             results=results,
             query=q,

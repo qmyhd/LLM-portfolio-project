@@ -64,6 +64,17 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.error(f"Database initialization error: {e}")
 
+    # Check yfinance availability (non-blocking)
+    try:
+        from src.market_data_service import is_available as yf_available
+
+        if yf_available():
+            logger.info("yfinance market data service available")
+        else:
+            logger.warning("yfinance not available — supplementary market data disabled")
+    except Exception:
+        logger.warning("yfinance module not loaded")
+
     yield
 
     # Shutdown

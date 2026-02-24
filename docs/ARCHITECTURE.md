@@ -1,6 +1,6 @@
 # LLM Portfolio Journal - Architecture Documentation
 
-> **Last Updated:** February 1, 2026  
+> **Last Updated:** February 24, 2026  
 > **Database:** PostgreSQL (Supabase) - 17 core tables, RLS 100% compliant
 
 ## Overview
@@ -113,7 +113,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 
 2. Data Processing
    ├─ Symbol Extraction → Ticker Normalization
-   ├─ Sentiment Analysis → TextBlob Processing
+   ├─ Sentiment Analysis → vaderSentiment Processing
    ├─ NLP Parsing → OpenAI Structured Outputs
    └─ Deduplication → Database Upserts
 
