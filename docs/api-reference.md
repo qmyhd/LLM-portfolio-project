@@ -136,6 +136,140 @@ Get order history with optional filters.
 }
 ```
 
+#### `GET /portfolio/movers`
+
+Get top portfolio gainers and losers by day change percentage.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | int | 10 | Number per side (1-50) |
+
+**Response Model:** `MoversResponse`
+
+```json
+{
+  "topGainers": [
+    {
+      "symbol": "AAPL",
+      "currentPrice": 185.5,
+      "previousClose": 182.0,
+      "dayChange": 3.5,
+      "dayChangePct": 1.92,
+      "quantity": 100,
+      "equity": 18550.0
+    }
+  ],
+  "topLosers": [...],
+  "source": "intraday"
+}
+```
+
+**Price Cascade:** Databento → SnapTrade → yfinance → average cost fallback. `source` is `"intraday"` when day-change data available, `"unrealized"` when falling back to open P/L%.
+
+---
+
+### Ideas (`/ideas`)
+
+#### `GET /ideas`
+
+Paginated list of user ideas with filtering.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `symbol` | string | null | Filter by ticker (case-insensitive) |
+| `tag` | string | null | Filter by tag (array contains) |
+| `source` | string | null | Filter: `discord`, `manual`, `transcribe` |
+| `status` | string | null | Filter: `draft`, `refined`, `archived` |
+| `q` | string | null | Full-text content search (ILIKE) |
+| `limit` | int | 50 | Page size (1-100) |
+| `offset` | int | 0 | Pagination offset |
+
+**Response Model:** `IdeasListResponse`
+
+```json
+{
+  "ideas": [
+    {
+      "id": "a1b2c3d4-...",
+      "symbol": "AAPL",
+      "symbols": ["AAPL", "MSFT"],
+      "content": "Buy AAPL on dip near 180 support",
+      "source": "manual",
+      "status": "draft",
+      "tags": ["thesis", "entry"],
+      "originMessageId": null,
+      "contentHash": "abc123...",
+      "createdAt": "2026-02-24T12:00:00+00:00",
+      "updatedAt": "2026-02-24T12:00:00+00:00"
+    }
+  ],
+  "total": 42,
+  "hasMore": true
+}
+```
+
+#### `POST /ideas`
+
+Create a new idea. Content hash is auto-computed for same-day deduplication.
+
+**Request Body:**
+
+```json
+{
+  "content": "Buy AAPL on dip near 180 support",
+  "symbol": "AAPL",
+  "symbols": ["AAPL", "MSFT"],
+  "tags": ["thesis", "entry"],
+  "source": "manual"
+}
+```
+
+**Response:** `201 Created` with the created `IdeaOut` object.
+
+#### `PUT /ideas/{id}`
+
+Partial update of an idea. Re-computes `contentHash` if content changes.
+
+**Request Body:** (all fields optional, at least one required)
+
+```json
+{
+  "content": "Updated thesis text",
+  "status": "refined",
+  "tags": ["thesis", "technical"]
+}
+```
+
+**Response:** `200 OK` with the updated `IdeaOut` object. `404` if not found.
+
+#### `DELETE /ideas/{id}`
+
+Delete an idea.
+
+**Response:** `204 No Content`. `404` if not found.
+
+#### `POST /ideas/{id}/refine`
+
+AI auto-refine an idea using OpenAI (gpt-4o-mini). Returns structured suggestions.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `apply` | bool | false | Auto-apply refinements to the idea |
+
+**Response Model:** `RefineResponse`
+
+```json
+{
+  "refinedContent": "Consider buying AAPL on a pullback to the $180 support level...",
+  "extractedSymbols": ["AAPL"],
+  "suggestedTags": ["thesis", "entry", "technical"],
+  "changesSummary": "Added price level and improved clarity."
+}
+```
+
 ---
 
 ### Stocks (`/stocks`)
@@ -263,13 +397,206 @@ Chat with AI about a stock using OpenAI.
 
 ---
 
+### OpenBB Insights (`/stocks` — OpenBB endpoints)
+
+> Powered by the [OpenBB Platform SDK](https://docs.openbb.co). Requires `FMP_API_KEY` for FMP-sourced data. SEC filings are free.
+
+#### `GET /stocks/{ticker}/transcript`
+
+Get earnings call transcripts for a stock.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `year` | int | null | Filter by fiscal year |
+| `quarter` | int | null | Filter by quarter (1-4) |
+
+**Response Model:** `TranscriptResponse`
+
+```json
+{
+  "symbol": "AAPL",
+  "items": [
+    {
+      "date": "2026-01-30",
+      "content": "Good afternoon. My name is Suhasini and I will be your...",
+      "quarter": 1,
+      "year": 2026,
+      "symbol": "AAPL"
+    }
+  ]
+}
+```
+
+#### `GET /stocks/{ticker}/management`
+
+Get executive team for a stock.
+
+**Response Model:** `ManagementResponse`
+
+```json
+{
+  "symbol": "AAPL",
+  "executives": [
+    {
+      "name": "Timothy D. Cook",
+      "title": "Chief Executive Officer",
+      "pay": 16425933,
+      "currency": "USD",
+      "gender": "male",
+      "yearBorn": 1960,
+      "titleSince": "2011-08-24"
+    }
+  ]
+}
+```
+
+#### `GET /stocks/{ticker}/fundamentals`
+
+Get key financial metrics for a stock.
+
+**Response Model:** `FundamentalsResponse`
+
+```json
+{
+  "symbol": "AAPL",
+  "marketCap": 3450000000000,
+  "peRatio": 32.5,
+  "pegRatio": 2.1,
+  "epsActual": 6.42,
+  "debtToEquity": 1.87,
+  "returnOnEquity": 1.47,
+  "revenueGrowth": 0.05,
+  "netMargin": 0.26,
+  "operatingMargin": 0.31,
+  "dividendYield": 0.005,
+  "beta": 1.28,
+  "priceToBook": 48.5,
+  "currentRatio": 0.99,
+  "freeCashFlowPerShare": 7.11
+}
+```
+
+#### `GET /stocks/{ticker}/filings`
+
+Get SEC filings for a stock. Uses the free SEC provider (no API key).
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `form_type` | string | null | Filter: `10-K`, `10-Q`, `8-K`, `4`, etc. |
+| `limit` | int | 10 | Number of filings (1-50) |
+
+**Response Headers:** `Cache-Control: public, max-age=3600, stale-while-revalidate=300`
+
+**Response Model:** `FilingsResponse`
+
+```json
+{
+  "symbol": "AAPL",
+  "filings": [
+    {
+      "filingDate": "2026-01-28",
+      "formType": "10-Q",
+      "reportUrl": "https://www.sec.gov/Archives/edgar/...",
+      "description": "Quarterly report for period ending 12/28/2025",
+      "acceptedDate": "2026-01-28T16:04:00"
+    }
+  ]
+}
+```
+
+#### `GET /stocks/{ticker}/news`
+
+Get recent company news.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | int | 10 | Number of articles (1-50) |
+
+**Response Model:** `NewsResponse`
+
+```json
+{
+  "symbol": "AAPL",
+  "articles": [
+    {
+      "date": "2026-02-24T14:30:00",
+      "title": "Apple Announces New AI Features at WWDC",
+      "text": "Apple today unveiled a suite of new artificial intelligence...",
+      "url": "https://example.com/article",
+      "source": "Reuters",
+      "images": ["https://example.com/image.jpg"]
+    }
+  ]
+}
+```
+
+#### `GET /stocks/{ticker}/notes`
+
+Get user notes for a stock. Stored in the `stock_notes` PostgreSQL table.
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | int | 50 | Number of notes (1-200) |
+
+**Response Model:** `NotesResponse`
+
+```json
+{
+  "symbol": "AAPL",
+  "notes": [
+    {
+      "id": 1,
+      "symbol": "AAPL",
+      "content": "Strong earnings beat, watching for guidance revisions",
+      "createdAt": "2026-02-20T10:30:00Z",
+      "updatedAt": "2026-02-20T10:30:00Z"
+    }
+  ]
+}
+```
+
+#### `POST /stocks/{ticker}/notes`
+
+Create a new note for a stock.
+
+**Request Body:**
+
+```json
+{
+  "content": "Watching the 180 support level for re-entry"
+}
+```
+
+**Response:** `201 Created` with the created `StockNote` object.
+
+#### `DELETE /stocks/{ticker}/notes/{note_id}`
+
+Delete a specific note.
+
+**Response:** `204 No Content`
+
+---
+
 ### Search (`/search`)
 
 #### `GET /search`
 
-Search for stocks/tickers by symbol or name.
+Search for stocks/tickers by symbol or name. Uses a three-tier fallback chain:
+
+1. **Local DB** — `symbols` table (instant)
+2. **yfinance** — Yahoo Finance search
+3. **OpenBB SEC** — `obb.equity.search()` with SEC provider (free, no API key)
 
 **Query Parameters:**
+
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `q` | string | required | Search query (min 1 char) |
@@ -813,6 +1140,9 @@ TWITTER_BEARER_TOKEN=AAAA...
 # LLM Services
 OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AIza...
+
+# OpenBB / Financial Modeling Prep (optional — SEC filings work without it)
+FMP_API_KEY=your_fmp_api_key_here
 ```
 
 ### Database URLs

@@ -3,8 +3,6 @@ from pathlib import Path
 from typing import List, Optional, Tuple
 
 import discord
-import matplotlib.pyplot as plt
-import mplfinance as mpf
 import pandas as pd
 from discord.ext import commands
 
@@ -100,8 +98,20 @@ CANDLE_UP = "#3ba55d"  # Discord green
 CANDLE_DOWN = "#ed4245"  # Discord red
 
 
+def _load_charting_dependencies():
+    try:
+        import matplotlib.pyplot as plt
+        import mplfinance as mpf
+    except ModuleNotFoundError as exc:
+        raise ModuleNotFoundError(
+            "Charting dependencies not installed. Install requirements-dev.txt."
+        ) from exc
+
+    return plt, mpf
+
+
 # ── Discord Dark Style Factory ────────────────────────────────────────────
-def discord_dark_style():
+def discord_dark_style(mpf):
     mc = mpf.make_marketcolors(
         up=CANDLE_UP,
         down=CANDLE_DOWN,
@@ -126,11 +136,12 @@ def discord_dark_style():
     return mpf.make_mpf_style(base_mpf_style="charles", marketcolors=mc, rc=rc)
 
 
-# Available chart themes: discord (dark), yahoo (classic)
-STYLES = {
-    "discord": discord_dark_style(),
-    "yahoo": mpf.make_mpf_style(base_mpf_style="yahoo"),  # Built-in yahoo style
-}
+def get_styles(mpf):
+    return {
+        "discord": discord_dark_style(mpf),
+        "yahoo": mpf.make_mpf_style(base_mpf_style="yahoo"),  # Built-in yahoo style
+    }
+
 
 # Period/interval mapping with moving averages
 PERIOD_CONFIG = {
@@ -245,7 +256,7 @@ def calculate_chart_date_range(period: str, end_date: Optional[datetime] = None)
 from src.trade_queries import query_trade_data  # noqa: E402
 
 
-def process_trade_markers(trade_data: pd.DataFrame, price_data: pd.DataFrame):
+def process_trade_markers(trade_data: pd.DataFrame, price_data: pd.DataFrame, mpf):
     """
     Process trade data and generate marker positions with FIFO P/L calculation.
 
@@ -519,10 +530,20 @@ def register(bot: commands.Bot):
             return
 
         # Validate theme
-        if theme not in STYLES:
+        try:
+            plt, mpf = _load_charting_dependencies()
+        except ModuleNotFoundError:
+            await ctx.send(
+                "❌ Charting dependencies not installed. Install requirements-dev.txt."
+            )
+            return
+
+        styles = get_styles(mpf)
+
+        if theme not in styles:
             await ctx.send(
                 f"❌ **Error**: Invalid theme '{theme}'\n\n"
-                "**Available themes:** " + ", ".join(STYLES.keys())
+                "**Available themes:** " + ", ".join(styles.keys())
             )
             return
 
@@ -548,7 +569,7 @@ def register(bot: commands.Bot):
         # Determine chart settings
         chart_type = get_chart_type(final_interval)
         show_volume = should_show_volume(period)
-        style = STYLES[theme]
+        style = styles[theme]
 
         # Create organized chart directory and generate unique filename
         chart_dir = create_chart_directory(symbol)
@@ -605,7 +626,7 @@ def register(bot: commands.Bot):
                 trade_count = len(trade_data) if not trade_data.empty else 0
 
                 # Process trade markers with FIFO P/L calculation
-                addplot_list, label_data = process_trade_markers(trade_data, data)
+                addplot_list, label_data = process_trade_markers(trade_data, data, mpf)
 
                 # Create cost basis line if position data exists
                 cost_basis_series, position_analysis = create_cost_basis_line(

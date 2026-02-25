@@ -124,7 +124,7 @@ def hardened_retry(
                             f"Function {func.__name__} failed after {max_retries} retries. "
                             f"Final error: {type(e).__name__}: {e}"
                         )
-                        raise last_exception
+                        raise last_exception from e
 
                     logger.warning(
                         f"Retry {retries}/{max_retries} for {func.__name__} after "
@@ -200,7 +200,7 @@ def database_retry(max_retries: int = 3, delay: float = 1.0):
                             f"Database operation {func.__name__} failed after {max_retries} retries. "
                             f"Final error: {type(e).__name__}: {e}"
                         )
-                        raise last_exception
+                        raise last_exception from e
 
                     logger.warning(
                         f"Database retry {retries}/{max_retries} for {func.__name__} after "
@@ -275,7 +275,7 @@ def csv_processing_retry(max_retries: int = 2, delay: float = 0.5):
                             f"CSV operation {func.__name__} failed after {max_retries} retries. "
                             f"Final error: {type(e).__name__}: {e}"
                         )
-                        raise last_exception
+                        raise last_exception from e
 
                     logger.warning(
                         f"CSV retry {retries}/{max_retries} for {func.__name__} after "

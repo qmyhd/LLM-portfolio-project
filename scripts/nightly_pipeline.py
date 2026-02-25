@@ -5,14 +5,16 @@ Nightly Pipeline Orchestrator
 Runs after market close (1 AM ET) to:
 1. SnapTrade sync (accounts, positions, orders, balances)
 2. Backfill OHLCV data from Databento
-3. Run NLP batch processing on pending Discord messages
-4. Refresh stock profile data
+3. Discord incremental ingestion (catch up on missed messages)
+4. Run NLP batch processing on pending Discord messages
+5. Refresh stock profile data
 
 Designed to be run by systemd timer (nightly-pipeline.timer).
 
 Environment Variables:
     REQUIRE_SNAPTRADE: If "1", abort pipeline on SnapTrade failure. Default "0" (continue).
     REQUIRE_DATABENTO: If "1", abort pipeline on Databento OHLCV failure. Default "1" (critical).
+    REQUIRE_DISCORD_INGEST: If "1", abort pipeline on Discord ingestion failure. Default "0".
     STOCK_REFRESH_TIMEOUT: Timeout in seconds for stock refresh. Default "600".
 
 This is the CANONICAL pipeline.
@@ -48,6 +50,7 @@ REQUIRE_SNAPTRADE = os.environ.get("REQUIRE_SNAPTRADE", "0") == "1"
 REQUIRE_DATABENTO = (
     os.environ.get("REQUIRE_DATABENTO", "1") == "1"
 )  # Critical by default
+REQUIRE_DISCORD_INGEST = os.environ.get("REQUIRE_DISCORD_INGEST", "0") == "1"
 STOCK_REFRESH_TIMEOUT = int(
     os.environ.get("STOCK_REFRESH_TIMEOUT", "600")
 )  # 10 min default
@@ -188,6 +191,18 @@ def main():
         logger.warning(f"New symbol backfill exception (non-critical): {e}")
         results["new_symbols"] = False
 
+    # Step 1c: Discord Incremental Ingestion (catch up on missed messages)
+    logger.info("\n💬 Step 1c: Discord Incremental Ingestion")
+    try:
+        results["discord_ingest"] = run_script(
+            "scripts/ingest_discord.py",
+            args=["--max-pages", "50"],
+            timeout=600,  # 10 min
+        )
+    except Exception as e:
+        logger.warning(f"Discord ingestion exception: {e}")
+        results["discord_ingest"] = False
+
     # Step 2: NLP Batch Processing
     logger.info("\n🧠 Step 2: NLP Batch Processing")
     results["nlp"] = run_script(
@@ -251,6 +266,13 @@ def main():
     # Stock refresh failure is non-critical (logs warning only)
     if results.get("stock_refresh") is False:
         logger.warning("⚠️ Stock refresh failed (non-critical)")
+
+    # Discord ingestion failure is non-critical by default
+    if REQUIRE_DISCORD_INGEST and results.get("discord_ingest") is False:
+        logger.error("Discord ingestion failed and REQUIRE_DISCORD_INGEST=1 - aborting")
+        critical_failures.append(True)
+    elif results.get("discord_ingest") is False:
+        logger.warning("⚠️ Discord ingestion failed (REQUIRE_DISCORD_INGEST=0, continuing)")
 
     # New symbol backfill failure is non-critical
     if results.get("new_symbols") is False:

@@ -18,12 +18,22 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.patches as mpatches
-import matplotlib.patheffects as path_effects
-from matplotlib.offsetbox import OffsetImage, AnnotationBbox
 
 logger = logging.getLogger(__name__)
+
+
+def _load_matplotlib_components():
+    try:
+        import matplotlib.pyplot as plt
+        import matplotlib.patheffects as path_effects
+        from matplotlib.offsetbox import OffsetImage, AnnotationBbox
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "Charting dependencies not installed. Install requirements-dev.txt (matplotlib)."
+        ) from exc
+
+    return plt, path_effects, OffsetImage, AnnotationBbox
+
 
 # ── Discord Dark Style Constants ──────────────────────────────────────────
 FIG_BG = "#1e1f22"  # outer window – Discord dark grey‑black
@@ -127,6 +137,8 @@ def generate_portfolio_pie_chart(
     Returns:
         Tuple of (BytesIO buffer or None, chart_filename)
     """
+    plt, path_effects, OffsetImage, AnnotationBbox = _load_matplotlib_components()
+
     if not positions:
         return None, ""
 
@@ -202,7 +214,9 @@ def generate_portfolio_pie_chart(
     ]
 
     # Add ticker + logo inside each slice
-    for i, (wedge, label, pct) in enumerate(zip(wedges, labels, percentages)):
+    for i, (wedge, label, pct) in enumerate(
+        zip(wedges, labels, percentages, strict=False)
+    ):
         # Calculate center position of the wedge
         theta_mid = (wedge.theta1 + wedge.theta2) / 2
         theta_rad = math.radians(theta_mid)

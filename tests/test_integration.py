@@ -4,6 +4,8 @@ Quick integration test for repository setup validation.
 Verifies that core modules import correctly after setup.
 """
 
+import importlib.util
+
 import pytest
 
 
@@ -19,6 +21,7 @@ def test_import_consolidation():
             ],
         ),
         ("src.snaptrade_collector", ["SnapTradeCollector"]),
+        ("src.bot.commands", ["register_commands"]),
         ("src.bot.commands.process", ["register"]),
     ]
 
@@ -36,3 +39,11 @@ def test_import_consolidation():
             errors.append(f"{module_name}: Missing {missing_items}")
 
     assert not errors, f"Import consolidation failed: {errors}"
+
+    commands_module = __import__("src.bot.commands", fromlist=["chart"])
+    has_matplotlib = importlib.util.find_spec("matplotlib") is not None
+
+    if has_matplotlib:
+        assert (
+            getattr(commands_module, "chart", None) is not None
+        ), "Expected chart command module when matplotlib is installed"

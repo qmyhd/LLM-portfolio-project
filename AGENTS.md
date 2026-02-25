@@ -213,7 +213,7 @@ Based on `.env.example`, configure these for full functionality:
 ```bash
 # Core Data & Database (ESSENTIAL)
 pandas>=2.3.1, sqlalchemy>=2.0.29, psycopg2-binary>=2.9.0
-python-dotenv>=1.0.1, pydantic-settings>=2.2, pydantic==2.11.7
+python-dotenv>=1.0.1, pydantic-settings>=2.2, pydantic==2.12.3
 
 # Brokerage API (CORE FUNCTIONALITY)
 snaptrade-python-sdk>=11.0.98

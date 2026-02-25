@@ -1,0 +1,10 @@
+# ── Version pins for high-churn / solver-bounce packages ──────────────
+# Usage:  pip install -r requirements.txt -c constraints.txt
+# Only add packages here that have caused CI install flapping or
+# incompatible transitive-dependency resolution.
+fastapi==0.128.0
+starlette==0.50.0
+yfinance==0.2.65
+cachetools==5.5.2
+pandas==2.3.2
+pydantic==2.12.3

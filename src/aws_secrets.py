@@ -123,6 +123,8 @@ SECRET_KEY_MAPPING = {
     "GITHUB_PERSONAL_ACCESS_TOKEN": "Github_Personal_Access_Token",
     # Twitter (optional)
     "TWITTER_BEARER_TOKEN": "TWITTER_BEARER_TOKEN",
+    # OpenBB / FMP
+    "FMP_API_KEY": "FMP_API_KEY",
 }
 
 
@@ -191,11 +193,11 @@ def get_secrets_client():
     """
     try:
         import boto3
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "boto3 is required for AWS Secrets Manager. "
             "Install with: pip install boto3"
-        )
+        ) from exc
 
     region = os.environ.get("AWS_REGION", "us-east-1")
     return boto3.client("secretsmanager", region_name=region)
@@ -227,7 +229,7 @@ def fetch_secret(secret_name: str) -> Dict[str, str]:
             _redact_secret_name(secret_name),
         )
         raise
-    except Exception as e:
+    except Exception:
         logger.error(
             "Error fetching secret: %s",
             _redact_secret_name(secret_name),

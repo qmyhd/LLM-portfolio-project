@@ -53,6 +53,9 @@ class _Settings(BaseSettings):
     TWITTER_ACCESS_TOKEN: str = ""
     TWITTER_ACCESS_TOKEN_SECRET: str = ""
 
+    # === OpenBB / FMP Configuration =================================
+    FMP_API_KEY: str = ""
+
     # === System Configuration =======================================
     LOG_CHANNEL_IDS: str = ""  # Comma-separated channel IDs for Discord bot
 

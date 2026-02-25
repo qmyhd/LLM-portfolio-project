@@ -351,7 +351,7 @@ def parsed_idea_to_db_row(
     ]
 
     # Build label_scores (placeholder - can be enhanced)
-    label_scores = {label: 1.0 for label in idea.labels}
+    label_scores = dict.fromkeys(idea.labels, 1.0)
 
     return {
         "message_id": message_id,

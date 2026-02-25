@@ -39,6 +39,8 @@ from app.routes import (
     chat,
     webhook,
     activities,
+    openbb as openbb_routes,
+    ideas,
 )
 
 # Configure logging
@@ -74,6 +76,17 @@ async def lifespan(app: FastAPI):
             logger.warning("yfinance not available — supplementary market data disabled")
     except Exception:
         logger.warning("yfinance module not loaded")
+
+    # Check OpenBB availability (non-blocking)
+    try:
+        from src.openbb_service import is_available as obb_available
+
+        if obb_available():
+            logger.info("OpenBB Platform SDK available (FMP + SEC providers)")
+        else:
+            logger.warning("OpenBB not available — fundamental data disabled")
+    except Exception:
+        logger.warning("OpenBB module not loaded")
 
     yield
 
@@ -158,6 +171,18 @@ app.include_router(
     sentiment.router,
     prefix="/sentiment",
     tags=["Sentiment"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    openbb_routes.router,
+    prefix="/stocks",
+    tags=["OpenBB Insights"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    ideas.router,
+    prefix="/ideas",
+    tags=["Ideas"],
     dependencies=[Depends(require_api_key)],
 )
 
