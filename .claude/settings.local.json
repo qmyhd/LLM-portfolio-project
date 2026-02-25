@@ -14,7 +14,18 @@
       "Bash(python -m ruff check src/openbb_service.py app/routes/openbb.py tests/test_openbb_service.py)",
       "Bash(ruff check src/openbb_service.py app/routes/openbb.py tests/test_openbb_service.py)",
       "Bash(ruff check --fix src/openbb_service.py app/routes/openbb.py tests/test_openbb_service.py)",
-      "Bash(npm run build)"
+      "Bash(npm run build)",
+      "Bash(ruff check src/ tests/)",
+      "Bash(ruff check src/ tests/ --output-format json)",
+      "WebFetch(domain:github.com)",
+      "Bash(ruff check src/ tests/ --fix)",
+      "Bash(grep -n \"after=\\\\|history\\\\|pagination\\\\|cursor\\\\|last_message\" \"c:/Users/qaism/OneDrive/Documents/Github/LLM-portfolio-project/src/bot/\"*.py)",
+      "Bash(pip install pytest-asyncio)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:gist.githubusercontent.com)",
+      "Bash(curl -sL \"https://gist.githubusercontent.com/qmyhd/1e46dfbd8326fc2f5df337c84ac422cc/raw/script.js\")",
+      "Bash(npm install three)",
+      "Bash(npm install --save-dev @types/three)"
     ]
   }
 }

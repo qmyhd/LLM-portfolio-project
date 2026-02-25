@@ -399,7 +399,7 @@ def retry_on_connection_error(max_retries=3, delay=1):
                         logger.error(
                             f"Database operation failed after {max_retries} attempts: {e}"
                         )
-                        raise last_exception
+                        raise last_exception from e
 
             return None
 

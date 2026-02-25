@@ -80,7 +80,7 @@ def register(bot: commands.Bot):
 
             await ctx.send(embed=embed)
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             await prompt_msg.edit(
                 embed=EmbedFactory.warning(
                     title="Timeout",

@@ -40,6 +40,7 @@ from app.routes import (
     webhook,
     activities,
     openbb as openbb_routes,
+    ideas,
 )
 
 # Configure logging
@@ -176,6 +177,12 @@ app.include_router(
     openbb_routes.router,
     prefix="/stocks",
     tags=["OpenBB Insights"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    ideas.router,
+    prefix="/ideas",
+    tags=["Ideas"],
     dependencies=[Depends(require_api_key)],
 )
 

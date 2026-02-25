@@ -202,7 +202,7 @@ def generate_portfolio_pie_chart(
     ]
 
     # Add ticker + logo inside each slice
-    for i, (wedge, label, pct) in enumerate(zip(wedges, labels, percentages)):
+    for i, (wedge, label, pct) in enumerate(zip(wedges, labels, percentages, strict=False)):
         # Calculate center position of the wedge
         theta_mid = (wedge.theta1 + wedge.theta2) / 2
         theta_rad = math.radians(theta_mid)

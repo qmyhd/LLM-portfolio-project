@@ -89,7 +89,7 @@ ALIAS_MAP = {
     "target store": "TGT",
     "target stores": "TGT",
     "target retail": "TGT",
-    "amazon": "AMZN",
+    # "amazon" already mapped above (Mega-cap section)
     # Cloud / Enterprise
     "salesforce": "CRM",
     "snowflake": "SNOW",
@@ -107,7 +107,7 @@ ALIAS_MAP = {
     "googl": "GOOGL",
     "tsla": "TSLA",
     "hood": "HOOD",
-    "sofi": "SOFI",
+    # "sofi" already mapped above (Fintech section)
     "afrm": "AFRM",
     "coin": "COIN",
     "mstr": "MSTR",

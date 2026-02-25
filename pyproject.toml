@@ -113,6 +113,10 @@ ignore = [
     "E402",   # module level import not at top of file
     "F401",   # unused import (sometimes intentional for re-exports)
     "B008",   # do not perform function calls in argument defaults
+    "W291",   # trailing whitespace (handled by formatter)
+    "W293",   # whitespace before punctuation (handled by formatter)
+    "C401",   # unnecessary generator — use set comprehension (style preference)
+    "C408",   # unnecessary dict call — use literal (style preference)
 ]
 
 [tool.ruff.lint.isort]
@@ -120,12 +124,15 @@ known-first-party = ["src"]
 
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Allow unused imports in __init__.py
-"tests/*.py" = ["B011"]   # Allow assert in tests
+"tests/*.py" = ["B011", "UP006", "UP007", "UP015", "UP017", "UP035", "UP038", "UP045", "I001"]
+# Defer cosmetic pyupgrade / isort cleanup in src/ to a dedicated "ruff cleanup" PR
+"src/**/*.py" = ["UP006", "UP007", "UP015", "UP017", "UP035", "UP038", "UP045", "I001"]
 
 # ============================================
 # Pytest Configuration
 # ============================================
 [tool.pytest.ini_options]
+asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]

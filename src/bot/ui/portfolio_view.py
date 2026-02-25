@@ -400,7 +400,7 @@ class PortfolioView(discord.ui.View):
                 self.all_positions = new_positions
                 self._apply_filter()
 
-        except Exception as e:
+        except Exception:
             pass  # Keep existing data on error
 
         # Reset button

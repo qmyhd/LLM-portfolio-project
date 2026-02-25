@@ -71,10 +71,10 @@ class DatabentoCollector:
                 import databento as db
 
                 self._db_client = db.Historical(self.api_key)
-            except ImportError:
+            except ImportError as exc:
                 raise ImportError(
                     "databento package not installed. Run: pip install databento"
-                )
+                ) from exc
         return self._db_client
 
     def get_portfolio_symbols(self) -> list[str]:

@@ -533,7 +533,7 @@ def register(bot: commands.Bot, twitter_client=None):
                 "option_strike",
                 "option_right",
             ]
-            orders = [dict(zip(columns, row)) for row in result]
+            orders = [dict(zip(columns, row, strict=False)) for row in result]
 
             # Get current prices for "price since trade" calculation
             symbols = list(set(o["symbol"] for o in orders if o["symbol"]))

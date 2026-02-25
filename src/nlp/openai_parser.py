@@ -165,9 +165,9 @@ def _diagnose_response_failure(response: Response, result_type: type) -> str:
             # Check content attribute
             content_list = getattr(item, "content", None)
             if content_list is None:
-                diag_parts.append(f"    content: None")
+                diag_parts.append("    content: None")
             elif not content_list:
-                diag_parts.append(f"    content: empty list")
+                diag_parts.append("    content: empty list")
             else:
                 diag_parts.append(f"    content: {len(content_list)} items")
                 for j, content in enumerate(content_list[:2]):

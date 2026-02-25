@@ -242,7 +242,7 @@ def get_stored_positions():
                 "account_id",
                 "sync_timestamp",
             ]
-            return [dict(zip(columns, row)) for row in result]
+            return [dict(zip(columns, row, strict=False)) for row in result]
         return []
     except Exception as e:
         logger.error(f"Error getting stored positions: {e}")

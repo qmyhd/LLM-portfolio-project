@@ -14,6 +14,7 @@ def log_message_to_database(
     is_bot: bool = False,
     is_command: bool = False,
     channel_type: str = None,
+    content_hash: str = None,
 ):
     """Persist a Discord message to database using unified execute_sql approach.
 
@@ -56,6 +57,11 @@ def log_message_to_database(
         import json
 
         # 1. Insert Discord message (primary operation - always succeeds)
+        # Auto-compute content_hash if not provided
+        if content_hash is None and message.content:
+            from src.discord_ingest import compute_content_hash
+            content_hash = compute_content_hash(message.content)
+
         tickers = extract_ticker_symbols(message.content)
 
         # Capture attachments as JSON array
@@ -94,6 +100,7 @@ def log_message_to_database(
             "is_bot": is_bot,
             "is_command": is_command,
             "channel_type": channel_type,
+            "content_hash": content_hash,
         }
 
         execute_sql(
@@ -102,11 +109,11 @@ def log_message_to_database(
             (message_id, author, author_id, content, channel, timestamp,
              user_id, num_chars, num_words, tickers_detected,
              is_reply, reply_to_id, mentions, attachments,
-             is_bot, is_command, channel_type)
+             is_bot, is_command, channel_type, content_hash)
             VALUES (:message_id, :author, :author_id, :content, :channel, :timestamp,
                     :user_id, :num_chars, :num_words, :tickers_detected,
                     :is_reply, :reply_to_id, :mentions, :attachments,
-                    :is_bot, :is_command, :channel_type)
+                    :is_bot, :is_command, :channel_type, :content_hash)
             ON CONFLICT (message_id) DO UPDATE SET
                 author = EXCLUDED.author,
                 author_id = EXCLUDED.author_id,
@@ -122,7 +129,8 @@ def log_message_to_database(
                 attachments = EXCLUDED.attachments,
                 is_bot = EXCLUDED.is_bot,
                 is_command = EXCLUDED.is_command,
-                channel_type = EXCLUDED.channel_type
+                channel_type = EXCLUDED.channel_type,
+                content_hash = EXCLUDED.content_hash
             """,
             message_data,
         )

@@ -60,9 +60,9 @@ def load_pyproject(file_path: Path) -> Dict[Any, Any]:
         with open(file_path, "rb") as f:
             return tomllib.load(f)
     except tomllib.TOMLDecodeError as e:
-        raise ValueError(f"Malformed TOML in {file_path}: {e}")
+        raise ValueError(f"Malformed TOML in {file_path}: {e}") from e
     except Exception as e:
-        raise ValueError(f"Failed to read TOML file {file_path}: {e}")
+        raise ValueError(f"Failed to read TOML file {file_path}: {e}") from e
 
 
 def validate_toml_file(file_path: Path) -> Tuple[bool, str]:

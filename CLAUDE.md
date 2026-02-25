@@ -56,7 +56,8 @@ python scripts/nightly_pipeline.py
 SnapTrade API  ─┐
 Discord msgs   ─┼→ PostgreSQL (Supabase) → NLP Parser → discord_parsed_ideas
 Databento OHLCV ─┤                         (OpenAI structured outputs)
-Twitter/X      ─┘
+Twitter/X      ─┤
+OpenBB (FMP+SEC)─┘→ Cached fundamentals/filings/news → FastAPI → Next.js frontend
 ```
 
 ### Key Modules
@@ -74,6 +75,7 @@ Twitter/X      ─┘
 - **`src/retry_utils.py`** — `@hardened_retry()` for API calls, `@database_retry()` for DB operations
 - **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes, company info, return metrics, and search fallback
 - **`src/message_cleaner.py`** — Ticker extraction (`$AAPL`, `$BRK.B`), sentiment scoring via vaderSentiment
+- **`src/openbb_service.py`** — OpenBB Platform SDK wrapper. Thread-safe TTL caches (transcripts 24h, fundamentals 1h, news 15m). FMP provider for fundamentals/transcripts/management/news, SEC provider for filings (free). Never raises — returns `None`/`[]` on failure. Requires `FMP_API_KEY` for FMP data.
 
 ### Discord Bot (`src/bot/`)
 
@@ -81,7 +83,7 @@ Modular command pattern. Each command file in `src/bot/commands/` exports a `reg
 
 ### Database Schema
 
-Consolidated schema in `schema/` (060_baseline_current.sql + 061_cleanup, older files archived). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `twitter_data`, `stock_profile_current`. All tables have RLS enabled — service role key required in DATABASE_URL.
+Consolidated schema in `schema/` (060_baseline_current.sql + 061_cleanup, older files archived). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `twitter_data`, `stock_profile_current`, `stock_notes`. All tables have RLS enabled — service role key required in DATABASE_URL.
 
 ### Deployment
 

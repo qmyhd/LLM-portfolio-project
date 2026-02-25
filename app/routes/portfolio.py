@@ -310,3 +310,173 @@ async def sync_portfolio():
     except Exception as e:
         logger.error(f"Error syncing portfolio: {e}")
         raise HTTPException(status_code=500, detail="Sync failed")
+
+
+# ---------------------------------------------------------------------------
+# Top Movers
+# ---------------------------------------------------------------------------
+
+class MoverItem(BaseModel):
+    """Single mover item."""
+
+    symbol: str
+    currentPrice: float
+    previousClose: Optional[float]
+    dayChange: Optional[float]
+    dayChangePct: Optional[float]
+    quantity: float
+    equity: float
+
+
+class MoversResponse(BaseModel):
+    """Top movers response."""
+
+    topGainers: list[MoverItem]
+    topLosers: list[MoverItem]
+    source: str  # 'intraday' or 'unrealized'
+
+
+@router.get("/movers", response_model=MoversResponse)
+async def get_movers(
+    limit: int = Query(10, ge=1, le=50),
+):
+    """
+    Get top gainers and losers from current positions.
+
+    Uses intraday day-change when available, falls back to unrealized P/L %.
+    Only includes positions with valid price data.
+    """
+    try:
+        positions_data = execute_sql(
+            """
+            SELECT p.symbol, p.quantity, p.average_buy_price as average_cost,
+                   p.price as snaptrade_price
+            FROM positions p
+            WHERE p.quantity > 0
+            ORDER BY p.symbol
+            """,
+            fetch_results=True,
+        )
+
+        if not positions_data:
+            return MoversResponse(topGainers=[], topLosers=[], source="intraday")
+
+        # Collect symbols and batch fetch prices
+        position_rows = []
+        symbols = []
+        for row in positions_data:
+            rd: dict = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+            position_rows.append(rd)
+            symbols.append(rd["symbol"])
+
+        prices_map = get_latest_closes_batch(symbols) if symbols else {}
+        prev_closes_map = get_previous_closes_batch(symbols) if symbols else {}
+
+        # yfinance fallback for missing symbols
+        yf_quotes: dict = {}
+        missing = [s for s in symbols if s not in prices_map]
+        if missing:
+            try:
+                from src.market_data_service import get_realtime_quotes_batch
+
+                yf_quotes = get_realtime_quotes_batch(missing)
+            except Exception as exc:
+                logger.debug("yfinance batch quotes skipped: %s", exc)
+
+        # Build mover items
+        items: list[dict] = []
+        use_unrealized = True
+
+        for rd in position_rows:
+            symbol = rd["symbol"]
+            qty = float(rd["quantity"] or 0)
+            avg_cost = float(rd["average_cost"] or 0)
+
+            # Price cascade
+            snaptrade_price = float(rd.get("snaptrade_price") or 0)
+            databento_price = prices_map.get(symbol)
+            yf_quote = yf_quotes.get(symbol)
+
+            if databento_price:
+                current_price = databento_price
+            elif snaptrade_price > 0:
+                current_price = snaptrade_price
+            elif yf_quote:
+                current_price = yf_quote["price"]
+            else:
+                current_price = avg_cost
+
+            equity = qty * current_price
+
+            # Day change
+            prev_close = prev_closes_map.get(symbol)
+            if not prev_close and yf_quote:
+                prev_close = yf_quote.get("previousClose")
+
+            day_change = None
+            day_change_pct = None
+            if prev_close and prev_close > 0:
+                day_change = (current_price - prev_close) * qty
+                day_change_pct = ((current_price - prev_close) / prev_close) * 100
+                use_unrealized = False
+
+            # Unrealized P/L as fallback
+            open_pnl_pct = ((current_price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0.0
+
+            items.append({
+                "symbol": symbol,
+                "currentPrice": round(current_price, 2),
+                "previousClose": round(prev_close, 2) if prev_close else None,
+                "dayChange": round(day_change, 2) if day_change is not None else None,
+                "dayChangePct": round(day_change_pct, 2) if day_change_pct is not None else None,
+                "quantity": qty,
+                "equity": round(equity, 2),
+                "openPnlPct": round(open_pnl_pct, 2),
+            })
+
+        # Check if any items have day change data
+        has_day_change = any(i["dayChangePct"] is not None for i in items)
+        source = "intraday" if has_day_change else "unrealized"
+
+        # Sort by the appropriate metric
+        if has_day_change:
+            with_change = [i for i in items if i["dayChangePct"] is not None]
+            sorted_items = sorted(with_change, key=lambda x: x["dayChangePct"], reverse=True)
+        else:
+            sorted_items = sorted(items, key=lambda x: x["openPnlPct"], reverse=True)
+
+        # Split into gainers/losers
+        sort_key = "dayChangePct" if has_day_change else "openPnlPct"
+        gainers = [
+            MoverItem(
+                symbol=i["symbol"],
+                currentPrice=i["currentPrice"],
+                previousClose=i["previousClose"],
+                dayChange=i["dayChange"],
+                dayChangePct=i.get("dayChangePct") if has_day_change else i["openPnlPct"],
+                quantity=i["quantity"],
+                equity=i["equity"],
+            )
+            for i in sorted_items
+            if (i[sort_key] or 0) > 0
+        ][:limit]
+
+        losers = [
+            MoverItem(
+                symbol=i["symbol"],
+                currentPrice=i["currentPrice"],
+                previousClose=i["previousClose"],
+                dayChange=i["dayChange"],
+                dayChangePct=i.get("dayChangePct") if has_day_change else i["openPnlPct"],
+                quantity=i["quantity"],
+                equity=i["equity"],
+            )
+            for i in reversed(sorted_items)
+            if (i[sort_key] or 0) < 0
+        ][:limit]
+
+        return MoversResponse(topGainers=gainers, topLosers=losers, source=source)
+
+    except Exception as e:
+        logger.error(f"Error fetching movers: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch movers")
