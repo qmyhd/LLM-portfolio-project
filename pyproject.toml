@@ -132,7 +132,6 @@ known-first-party = ["src"]
 # Pytest Configuration
 # ============================================
 [tool.pytest.ini_options]
-asyncio_mode = "auto"
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
@@ -148,6 +147,7 @@ filterwarnings = [
     "ignore:All support for the `google.generativeai` package has ended:FutureWarning",
 ]
 markers = [
+    "anyio: marks async tests to run via anyio (registered by anyio pytest plugin)",
     "openai: marks tests that require OpenAI API (deselect with '-m \"not openai\"')",
     "slow: marks tests as slow running (deselect with '-m \"not slow\"')",
     "integration: marks integration tests that may require external services",
