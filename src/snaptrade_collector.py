@@ -61,6 +61,7 @@ class SnapTradeCollector:
         """Initialize the SnapTrade collector."""
         self.client = None
         self.config = settings()
+        self._resolved_account_id: Optional[str] = None
         self._initialize_client()
 
     def _initialize_client(self):
@@ -98,6 +99,106 @@ class SnapTradeCollector:
             raise ValueError("Missing SnapTrade user credentials")
 
         return user_id, user_secret
+
+    def _get_configured_account_id(self) -> str:
+        """Get account ID from config, returning empty string if not set."""
+        return (
+            getattr(self.config, "ROBINHOOD_ACCOUNT_ID", "")
+            or getattr(self.config, "robinhood_account_id", "")
+            or ""
+        )
+
+    def resolve_account_id(self, account_id: Optional[str] = None) -> str:
+        """
+        Resolve a valid account ID using this priority:
+        1. Explicitly passed account_id
+        2. Previously resolved account ID (cached)
+        3. ROBINHOOD_ACCOUNT_ID from config (validated against API)
+        4. Auto-discover: choose by highest total_equity (deterministic)
+
+        Validates that the resolved ID exists in the user's account list.
+
+        Returns:
+            Valid account ID string.
+
+        Raises:
+            ValueError: If no valid account can be found.
+            ConnectionError: If SnapTrade auth is invalid (401/relink required).
+        """
+        # 1. Use explicitly passed ID
+        if account_id:
+            return account_id
+
+        # 2. Use cached resolution
+        if self._resolved_account_id:
+            return self._resolved_account_id
+
+        # 3. Try config value, but validate it exists
+        configured_id = self._get_configured_account_id()
+
+        # 4. Fetch accounts from API to validate/discover
+        try:
+            accounts_df = self.get_accounts()
+        except Exception as e:
+            error_str = str(e).lower()
+            # Surface auth failures explicitly so callers can display "relink required"
+            if "401" in error_str or "1076" in error_str or "unauthorized" in error_str:
+                raise ConnectionError(
+                    "SnapTrade auth invalid — user must re-link brokerage "
+                    "(HTTP 401). Check SNAPTRADE_USER_ID / SNAPTRADE_USER_SECRET."
+                ) from e
+            # If we can't fetch accounts but have a configured ID, use it as fallback
+            if configured_id:
+                logger.warning(
+                    "Could not fetch accounts to validate ID (using configured): %s", e
+                )
+                self._resolved_account_id = configured_id
+                return configured_id
+            raise ValueError(f"No account ID configured and cannot fetch accounts: {e}") from e
+
+        if accounts_df.empty:
+            if configured_id:
+                logger.warning("No accounts returned from API, using configured ROBINHOOD_ACCOUNT_ID")
+                self._resolved_account_id = configured_id
+                return configured_id
+            raise ValueError("No accounts found for this SnapTrade user")
+
+        valid_ids = set(accounts_df["id"].astype(str).tolist())
+
+        # If configured ID is valid, use it
+        if configured_id and configured_id in valid_ids:
+            logger.info(
+                "Using configured ROBINHOOD_ACCOUNT_ID: %s (validated against %d accounts)",
+                configured_id, len(valid_ids),
+            )
+            self._resolved_account_id = configured_id
+            return configured_id
+
+        # Configured ID is invalid or missing — auto-select by policy
+        if configured_id:
+            logger.warning(
+                "Configured ROBINHOOD_ACCOUNT_ID '%s' not found in "
+                "user accounts %s. Auto-selecting by highest equity.",
+                configured_id, valid_ids,
+            )
+
+        # Deterministic selection: highest total_equity, then alphabetical ID as tiebreaker
+        accounts_df = accounts_df.copy()
+        accounts_df["_equity_sort"] = pd.to_numeric(accounts_df["total_equity"], errors="coerce").fillna(0.0)
+        accounts_df = accounts_df.sort_values(
+            by=["_equity_sort", "id"], ascending=[False, True]
+        )
+
+        chosen = accounts_df.iloc[0]
+        chosen_id = str(chosen["id"])
+        chosen_equity = chosen["_equity_sort"]
+        chosen_institution = chosen.get("institution_name", "unknown")
+        logger.info(
+            "Auto-selected account: %s (%s, equity=$%.2f) from %d accounts",
+            chosen_id, chosen_institution, chosen_equity, len(accounts_df),
+        )
+        self._resolved_account_id = chosen_id
+        return chosen_id
 
     def log_credentials_debug_info(self) -> Dict[str, Any]:
         """
@@ -438,15 +539,7 @@ class SnapTradeCollector:
             return pd.DataFrame()
 
         user_id, user_secret = self._get_user_credentials()
-
-        # Get account ID from config if not provided
-        if not account_id:
-            account_id = getattr(self.config, "ROBINHOOD_ACCOUNT_ID", "") or getattr(
-                self.config, "robinhood_account_id", ""
-            )
-
-        if not account_id:
-            raise ValueError("Account ID is required for balance retrieval")
+        account_id = self.resolve_account_id(account_id)
 
         response = self.client.account_information.get_user_account_balance(
             account_id=account_id, user_id=user_id, user_secret=user_secret
@@ -505,15 +598,7 @@ class SnapTradeCollector:
             return pd.DataFrame()
 
         user_id, user_secret = self._get_user_credentials()
-
-        # Get account ID from config if not provided
-        if not account_id:
-            account_id = getattr(self.config, "ROBINHOOD_ACCOUNT_ID", "") or getattr(
-                self.config, "robinhood_account_id", ""
-            )
-
-        if not account_id:
-            raise ValueError("Account ID is required for position retrieval")
+        account_id = self.resolve_account_id(account_id)
 
         response = self.client.account_information.get_user_account_positions(
             account_id=account_id, user_id=user_id, user_secret=user_secret
@@ -566,15 +651,7 @@ class SnapTradeCollector:
             return pd.DataFrame()
 
         user_id, user_secret = self._get_user_credentials()
-
-        # Get account ID from config if not provided
-        if not account_id:
-            account_id = getattr(self.config, "ROBINHOOD_ACCOUNT_ID", "") or getattr(
-                self.config, "robinhood_account_id", ""
-            )
-
-        if not account_id:
-            raise ValueError("Account ID is required for order retrieval")
+        account_id = self.resolve_account_id(account_id)
 
         response = self.client.account_information.get_user_account_orders(
             account_id=account_id,
@@ -769,15 +846,7 @@ class SnapTradeCollector:
             return pd.DataFrame()
 
         user_id, user_secret = self._get_user_credentials()
-
-        # Default account – required for account-level endpoint
-        if not account_id:
-            account_id = getattr(self.config, "ROBINHOOD_ACCOUNT_ID", "") or getattr(
-                self.config, "robinhood_account_id", ""
-            )
-
-        if not account_id:
-            raise ValueError("Account ID is required for activity retrieval")
+        account_id = self.resolve_account_id(account_id)
 
         # Default date range: last 90 days
         from datetime import timedelta
@@ -1185,10 +1254,12 @@ class SnapTradeCollector:
             "activities": 0,
             "symbols": 0,
             "errors": [],
+            "accountIdUsed": None,
+            "authError": False,
         }
 
         try:
-            # Collect accounts
+            # Collect accounts first (needed for account resolution)
             logger.info("🔄 Collecting accounts...")
             accounts_df = self.get_accounts()
             if not accounts_df.empty:
@@ -1197,9 +1268,25 @@ class SnapTradeCollector:
                     self.write_parquet_snapshot(accounts_df, "accounts")
                 results["accounts"] = len(accounts_df)
 
+            # Resolve account ID once, reuse for all subsequent calls
+            try:
+                resolved_id = self.resolve_account_id(account_id)
+                results["accountIdUsed"] = resolved_id
+                logger.info(f"Using account ID: {resolved_id}")
+            except ConnectionError as e:
+                # Auth failure (401) — surface clearly so UI can show "relink required"
+                results["success"] = False
+                results["authError"] = True
+                results["errors"].append(str(e))
+                return results
+            except ValueError as e:
+                results["success"] = False
+                results["errors"].append(f"Account resolution failed: {e}")
+                return results
+
             # Collect balances
             logger.info("🔄 Collecting balances...")
-            balances_df = self.get_balances(account_id)
+            balances_df = self.get_balances(resolved_id)
             if not balances_df.empty:
                 # CRITICAL: PK order is (currency_code, snapshot_date, account_id) in live DB
                 self.write_to_database(
@@ -1213,7 +1300,7 @@ class SnapTradeCollector:
 
             # Collect positions
             logger.info("🔄 Collecting positions...")
-            positions_df = self.get_positions(account_id)
+            positions_df = self.get_positions(resolved_id)
             if not positions_df.empty:
                 # Validate positions have account_id before database write
                 missing_account = positions_df["account_id"].isna().sum()
@@ -1250,7 +1337,7 @@ class SnapTradeCollector:
 
             # Collect orders
             logger.info("🔄 Collecting orders...")
-            orders_df = self.get_orders(account_id)
+            orders_df = self.get_orders(resolved_id)
             if not orders_df.empty:
                 # Validate orders have account_id before database write
                 missing_account = orders_df["account_id"].isna().sum()
@@ -1279,7 +1366,7 @@ class SnapTradeCollector:
             # Collect activities
             logger.info("🔄 Collecting activities...")
             try:
-                activities_df = self.get_activities(account_id)
+                activities_df = self.get_activities(resolved_id)
                 if not activities_df.empty:
                     self.write_to_database(
                         activities_df, "activities", conflict_columns=["id"]

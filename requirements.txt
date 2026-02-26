@@ -1,7 +1,7 @@
 # ── Runtime + test essentials ──────────────────────────────────────────
 pydantic-settings>=2.2
 python-dotenv>=1.0.1
-pydantic==2.12.3
+pydantic>=2.12.3
 discord.py>=2.5.2
 pandas>=2.3.1
 tweepy>=4.14
@@ -31,11 +31,13 @@ yfinance>=0.2.36
 cachetools>=5.3.0
 
 # OpenBB Platform – only the modules we actually use (equity fundamentals, news, FMP+SEC providers)
-openbb-core==1.5.8
-openbb-equity==1.5.1
-openbb-news==1.5.1
+# Upgraded from 1.5.x to resolve python-multipart <0.0.22 vulnerability (CVE path traversal)
+openbb-core==1.6.0
+openbb-equity==1.6.0
+openbb-news==1.6.0
 openbb-fmp==1.5.2
 openbb-sec==1.5.1
+python-multipart>=0.0.22
 
 # ── Test essentials (also needed in CI) ───────────────────────────────
 pytest>=8.2
