@@ -47,6 +47,11 @@ git pull --ff-only || die "git pull failed (is main diverged?)"
 step "Installing dependencies..."
 $VENV_PYTHON -m pip install -q -r requirements.txt || die "pip install failed"
 
+# ── 2c. Pre-build OpenBB (triggers first-import build outside systemd) ─
+step "Pre-building OpenBB..."
+$VENV_PYTHON -c "from openbb import obb; print('  OpenBB import OK')" 2>&1 \
+    || echo -e "  ${YELLOW}WARNING: OpenBB pre-build failed (non-critical)${NC}"
+
 # ── 3. Run doctor checks ────────────────────────────────────────────
 step "Running doctor_ec2.sh..."
 bash ./scripts/doctor_ec2.sh || die "doctor_ec2.sh reported failures — fix before deploying."
