@@ -25,6 +25,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def r2(x: Any) -> float:
+    """Round to 2 decimal places, coercing None → 0.0."""
+    return 0.0 if x is None else round(float(x), 2)
+
+
+def r4(x: Any) -> float:
+    """Round to 4 decimal places, coercing None → 0.0."""
+    return 0.0 if x is None else round(float(x), 4)
+
+
+def r2n(x: Any) -> float | None:
+    """Round to 2 decimal places, preserving None."""
+    return None if x is None else round(float(x), 2)
+
+
+def r4n(x: Any) -> float | None:
+    """Round to 4 decimal places, preserving None."""
+    return None if x is None else round(float(x), 4)
+
+
 # Response models (match frontend types/api.ts)
 class Position(BaseModel):
     """Individual portfolio position (matches api.ts Position)."""
@@ -190,14 +210,14 @@ async def get_portfolio(
             quantity = float(row_dict["quantity"] or 0)
             avg_cost = float(row_dict["average_cost"] or 0)
 
-            # Get current price: Databento → SnapTrade → yfinance → avg_cost
+            # Get current price: Databento → SnapTrade → yfinance → avg_cost → 0
             snaptrade_price = float(row_dict.get("snaptrade_price") or 0)
             databento_price = prices_map.get(symbol)
             yf_quote = yf_quotes.get(symbol)
             yf_price = yf_quote["price"] if yf_quote else None
 
             if databento_price:
-                current_price = databento_price
+                current_price = float(databento_price)
                 price_source = "databento"
             elif snaptrade_price > 0:
                 logger.info(
@@ -207,17 +227,23 @@ async def get_portfolio(
                 current_price = snaptrade_price
                 price_source = "snaptrade"
             elif yf_price:
-                current_price = yf_price
+                current_price = float(yf_price)
                 logger.info(
                     f"📊 {symbol}: Using yfinance price ${current_price:.2f}"
                 )
                 price_source = "yfinance"
             else:
-                logger.warning(
-                    f"⚠️ {symbol}: No price sources available, "
-                    f"falling back to avg_cost=${avg_cost:.2f}"
-                )
-                current_price = avg_cost
+                current_price = avg_cost or 0.0
+                if current_price > 0:
+                    logger.warning(
+                        f"⚠️ {symbol}: No price sources, "
+                        f"falling back to avg_cost=${current_price:.2f}"
+                    )
+                else:
+                    logger.warning(
+                        f"⚠️ {symbol}: No price sources and no avg_cost, "
+                        f"using $0.00"
+                    )
                 price_source = "avgcost"
 
             source_counts[price_source] += 1
@@ -249,13 +275,13 @@ async def get_portfolio(
                     symbol=symbol,
                     accountId=str(row_dict.get("account_id") or ""),
                     quantity=quantity,
-                    averageBuyPrice=round(avg_cost, 2),
-                    currentPrice=round(current_price, 2),
-                    equity=round(market_value, 2),
-                    openPnl=round(total_gain_loss, 2),
-                    openPnlPercent=round(total_gain_loss_pct, 2),
-                    dayChange=round(day_change, 2) if day_change is not None else None,
-                    dayChangePercent=round(day_change_pct, 2) if day_change_pct is not None else None,
+                    averageBuyPrice=r2(avg_cost),
+                    currentPrice=r2(current_price),
+                    equity=r2(market_value),
+                    openPnl=r2(total_gain_loss),
+                    openPnlPercent=r2(total_gain_loss_pct),
+                    dayChange=r2n(day_change),
+                    dayChangePercent=r2n(day_change_pct),
                     rawSymbol=row_dict.get("raw_symbol"),
                     companyName=company_names.get(symbol),
                 )
@@ -270,12 +296,12 @@ async def get_portfolio(
                     ReconPositionMeta(
                         symbol=symbol,
                         priceSource=price_source,
-                        priceUsed=round(current_price, 4),
-                        databentoPrice=round(databento_price, 4) if databento_price else None,
-                        snaptradePrice=round(snaptrade_price, 4) if snaptrade_price > 0 else None,
-                        yfinancePrice=round(yf_price, 4) if yf_price else None,
+                        priceUsed=r4(current_price),
+                        databentoPrice=r4n(databento_price),
+                        snaptradePrice=r4(snaptrade_price) if snaptrade_price > 0 else None,
+                        yfinancePrice=r4n(yf_price),
                         prevCloseSource=prev_close_source,
-                        prevCloseValue=round(prev_close, 4) if prev_close else None,
+                        prevCloseValue=r4n(prev_close),
                     )
                 )
 
@@ -285,7 +311,7 @@ async def get_portfolio(
         # Compute portfolio diversity for each position
         if total_equity > 0:
             for pos in positions:
-                pos.portfolioDiversity = round(pos.equity / total_equity * 100, 2)
+                pos.portfolioDiversity = r2(pos.equity / total_equity * 100)
 
         # Get cash and buying power
         raw_cash = 0.0
@@ -298,7 +324,7 @@ async def get_portfolio(
             raw_cash = float(bal_dict["total_cash"] or 0)
             bp = bal_dict.get("total_buying_power")
             if bp is not None:
-                raw_buying_power = round(float(bp), 2)
+                raw_buying_power = r2(bp)
 
         # For margin accounts, cash can be negative (debit balance).
         # Only add positive cash to total portfolio value; negative cash
@@ -342,14 +368,14 @@ async def get_portfolio(
                 last_update_str = str(last_dict["last_update"])
 
         summary = PortfolioSummary(
-            totalValue=round(total_portfolio_value, 2),
-            totalEquity=round(total_equity, 2),
-            totalCost=round(total_cost, 2),
-            unrealizedPL=round(total_gain_loss, 2),
-            unrealizedPLPercent=round(total_gain_loss_pct, 2),
-            dayChange=round(total_day_change, 2),
-            dayChangePercent=round(day_change_pct, 2),
-            cashBalance=round(cash_for_display, 2),
+            totalValue=r2(total_portfolio_value),
+            totalEquity=r2(total_equity),
+            totalCost=r2(total_cost),
+            unrealizedPL=r2(total_gain_loss),
+            unrealizedPLPercent=r2(total_gain_loss_pct),
+            dayChange=r2(total_day_change),
+            dayChangePercent=r2(day_change_pct),
+            cashBalance=r2(cash_for_display),
             positionsCount=len(positions),
             lastSync=last_update_str,
             source="snaptrade",
@@ -360,10 +386,10 @@ async def get_portfolio(
         if recon:
             recon_meta = ReconMeta(
                 positions=recon_positions,
-                cashRaw=round(raw_cash, 2),
-                cashForTotal=round(cash_for_total, 2),
-                totalEquityComputed=round(total_equity, 2),
-                totalCostComputed=round(total_cost, 2),
+                cashRaw=r2(raw_cash),
+                cashForTotal=r2(cash_for_total),
+                totalEquityComputed=r2(total_equity),
+                totalCostComputed=r2(total_cost),
                 priceSourceBreakdown=dict(source_counts),
             )
 
@@ -574,13 +600,13 @@ async def get_movers(
 
             items.append({
                 "symbol": symbol,
-                "currentPrice": round(current_price, 2),
-                "previousClose": round(prev_close, 2) if prev_close else None,
-                "dayChange": round(day_change, 2) if day_change is not None else None,
-                "dayChangePct": round(day_change_pct, 2) if day_change_pct is not None else None,
+                "currentPrice": r2(current_price),
+                "previousClose": r2n(prev_close),
+                "dayChange": r2n(day_change),
+                "dayChangePct": r2n(day_change_pct),
                 "quantity": qty,
-                "equity": round(equity, 2),
-                "openPnlPct": round(open_pnl_pct, 2),
+                "equity": r2(equity),
+                "openPnlPct": r2(open_pnl_pct),
             })
 
         # Check if any items have day change data

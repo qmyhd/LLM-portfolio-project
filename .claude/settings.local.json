@@ -40,7 +40,13 @@
       "Bash(python -m ruff check src/snaptrade_collector.py app/routes/portfolio.py tests/test_account_resolution.py)",
       "Bash(ruff check src/snaptrade_collector.py app/routes/portfolio.py tests/test_account_resolution.py)",
       "Bash(pip install --dry-run python-multipart)",
-      "Bash(xargs grep -l \"anime\\\\|useTimeRange\")"
+      "Bash(xargs grep -l \"anime\\\\|useTimeRange\")",
+      "Bash(python -m ruff check app/routes/portfolio.py app/routes/webhook.py)",
+      "Bash(ruff check app/routes/portfolio.py app/routes/webhook.py)",
+      "Bash(ruff check --fix app/routes/webhook.py)",
+      "Bash(python -m ruff check app/routes/webhook.py)",
+      "Bash(ruff check app/routes/webhook.py)",
+      "mcp__plugin_claude-mem_mcp-search__save_observation"
     ]
   }
 }
