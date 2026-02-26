@@ -180,22 +180,23 @@ async def get_portfolio(
             except Exception as exc:
                 logger.debug("yfinance batch quotes skipped: %s", exc)
 
-        # Batch fetch company names from stock_profile_current
+        # Batch fetch company names from symbols table (SnapTrade source)
         company_names: dict[str, str] = {}
-        if symbols_to_fetch:
+        tickers_deduped = sorted({s for s in symbols_to_fetch if s})
+        if tickers_deduped:
             name_rows = execute_sql(
                 """
-                SELECT symbol, "companyName"
-                FROM stock_profile_current
-                WHERE symbol = ANY(:symbols)
+                SELECT ticker, description
+                FROM symbols
+                WHERE ticker = ANY(:tickers)
                 """,
-                params={"symbols": symbols_to_fetch},
+                params={"tickers": tickers_deduped},
                 fetch_results=True,
             )
             for nr in name_rows or []:
                 nr_dict: dict[str, Any] = dict(nr._mapping) if hasattr(nr, "_mapping") else dict(nr)  # type: ignore[arg-type]
-                if nr_dict.get("companyName"):
-                    company_names[nr_dict["symbol"]] = nr_dict["companyName"]
+                if nr_dict.get("description"):
+                    company_names[nr_dict["ticker"]] = nr_dict["description"]
 
         positions = []
         total_value = 0.0
