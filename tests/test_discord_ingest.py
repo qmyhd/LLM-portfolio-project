@@ -208,7 +208,7 @@ _PATCH_GET_CHANNEL_TYPE = "src.bot.events.get_channel_type"
 
 
 class TestIngestChannel:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_dry_run_no_db_writes(self):
         """Dry run should count messages but not write to DB."""
         from src.discord_ingest import ingest_channel
@@ -232,7 +232,7 @@ class TestIngestChannel:
         mock_log.assert_not_called()
         mock_set.assert_not_called()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_permission_error_cursor_not_advanced(self):
         """Permission error should NOT advance cursor."""
         import discord as discord_lib
@@ -271,7 +271,7 @@ class TestIngestChannel:
         assert error_call[1] == "error"
         assert isinstance(error_call[2], str)
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_basic_flow_advances_cursor(self):
         """Normal flow should write messages and advance cursor."""
         from src.discord_ingest import ingest_channel
@@ -298,7 +298,7 @@ class TestIngestChannel:
         set_args = mock_set.call_args
         assert set_args[1]["last_message_id"] == "2002"
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_concurrent_run_skips(self):
         """If channel is already running, should skip."""
         from src.discord_ingest import ingest_channel
@@ -311,7 +311,7 @@ class TestIngestChannel:
         assert result.error is not None
         assert "Concurrent" in result.error
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_skips_self_messages(self):
         """Bot's own messages should be skipped."""
         from src.discord_ingest import ingest_channel
@@ -335,7 +335,7 @@ class TestIngestChannel:
         assert result.messages_new == 0
         mock_log.assert_not_called()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_channel_not_found(self):
         """If channel cannot be resolved, should return error."""
         import discord as discord_lib
@@ -360,7 +360,7 @@ class TestIngestChannel:
 
 
 class TestIngestAllChannels:
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_iterates_all_configured_channels(self):
         """Should call ingest_channel for each channel in config."""
         from src.discord_ingest import ingest_all_channels
@@ -381,7 +381,7 @@ class TestIngestAllChannels:
         assert len(results) == 2
         assert mock_ingest.call_count == 2
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_explicit_channel_ids(self):
         """Should use explicit channel_ids when provided."""
         from src.discord_ingest import ingest_all_channels
@@ -398,7 +398,7 @@ class TestIngestAllChannels:
         assert len(results) == 1
         mock_ingest.assert_called_once()
 
-    @pytest.mark.asyncio
+    @pytest.mark.anyio
     async def test_empty_channel_list(self):
         """Should return empty list when no channels configured."""
         from src.discord_ingest import ingest_all_channels

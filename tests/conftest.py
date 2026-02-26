@@ -17,6 +17,17 @@ from typing import Optional
 
 
 # =============================================================================
+# ANYIO BACKEND CONFIGURATION
+# =============================================================================
+
+
+@pytest.fixture
+def anyio_backend():
+    """Use asyncio backend only (trio is not installed)."""
+    return "asyncio"
+
+
+# =============================================================================
 # PYTEST MARKERS CONFIGURATION
 # =============================================================================
 
