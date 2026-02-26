@@ -46,7 +46,8 @@
       "Bash(ruff check --fix app/routes/webhook.py)",
       "Bash(python -m ruff check app/routes/webhook.py)",
       "Bash(ruff check app/routes/webhook.py)",
-      "mcp__plugin_claude-mem_mcp-search__save_observation"
+      "mcp__plugin_claude-mem_mcp-search__save_observation",
+      "Bash(python -m ruff check app/routes/portfolio.py)"
     ]
   }
 }
