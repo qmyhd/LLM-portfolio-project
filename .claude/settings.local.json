@@ -25,7 +25,22 @@
       "WebFetch(domain:gist.githubusercontent.com)",
       "Bash(curl -sL \"https://gist.githubusercontent.com/qmyhd/1e46dfbd8326fc2f5df337c84ac422cc/raw/script.js\")",
       "Bash(npm install three)",
-      "Bash(npm install --save-dev @types/three)"
+      "Bash(npm install --save-dev @types/three)",
+      "Bash(pip index versions python-multipart)",
+      "Bash(pip install python-multipart --dry-run)",
+      "Bash(pip index versions openbb-core)",
+      "Bash(pip index versions openbb-equity)",
+      "Bash(pip install openbb-core==1.6.0 --dry-run)",
+      "Bash(pip install openbb-core==1.6.0 openbb-equity==1.6.0 openbb-news==1.6.0 openbb-fmp==1.5.2 openbb-sec==1.5.1 --dry-run)",
+      "Bash(ruff check src/ app/ tests/)",
+      "Bash(ruff check src/snaptrade_collector.py app/routes/portfolio.py)",
+      "Bash(ruff check app/routes/portfolio.py)",
+      "Bash(ruff check src/snaptrade_collector.py)",
+      "Bash(npx tsc --noEmit)",
+      "Bash(python -m ruff check src/snaptrade_collector.py app/routes/portfolio.py tests/test_account_resolution.py)",
+      "Bash(ruff check src/snaptrade_collector.py app/routes/portfolio.py tests/test_account_resolution.py)",
+      "Bash(pip install --dry-run python-multipart)",
+      "Bash(xargs grep -l \"anime\\\\|useTimeRange\")"
     ]
   }
 }
