@@ -223,6 +223,85 @@ def database_retry(max_retries: int = 3, delay: float = 1.0):
     return decorator
 
 
+def snaptrade_retry(max_retries: int = 3, delay: float = 2.0):
+    """
+    Retry decorator for SnapTrade API calls with 429 rate-limit awareness.
+
+    SnapTrade rate limit: 250 req/min, returns HTTP 429.
+    On 429: waits for Retry-After header value (or 60s default).
+    On other transient errors: exponential backoff with jitter.
+
+    Args:
+        max_retries: Maximum number of retry attempts
+        delay: Initial delay between retries in seconds
+    """
+
+    def decorator(func: Callable) -> Callable:
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            retries = 0
+            current_delay = delay
+            last_exception = None
+
+            while retries <= max_retries:
+                try:
+                    return func(*args, **kwargs)
+
+                except NON_RETRYABLE_EXCEPTIONS as e:
+                    logger.error(
+                        "Non-retryable SnapTrade exception in %s: %s: %s",
+                        func.__name__, type(e).__name__, e,
+                    )
+                    raise
+
+                except Exception as e:
+                    last_exception = e
+                    retries += 1
+                    error_str = str(e).lower()
+
+                    # Detect 429 rate limiting
+                    is_rate_limited = "429" in error_str or "rate limit" in error_str
+
+                    if retries > max_retries:
+                        logger.error(
+                            "SnapTrade %s failed after %d retries: %s: %s",
+                            func.__name__, max_retries, type(e).__name__, e,
+                        )
+                        raise last_exception from e
+
+                    if is_rate_limited:
+                        # Parse Retry-After header or use 60s default
+                        wait = 60.0
+                        try:
+                            resp = getattr(e, "response", None)
+                            if resp and hasattr(resp, "headers"):
+                                retry_after = resp.headers.get("Retry-After")
+                                if retry_after:
+                                    wait = float(retry_after)
+                        except Exception:
+                            pass
+                        logger.warning(
+                            "SnapTrade 429 rate limit in %s, waiting %.0fs (retry %d/%d)",
+                            func.__name__, wait, retries, max_retries,
+                        )
+                        time.sleep(wait)
+                    else:
+                        logger.warning(
+                            "SnapTrade retry %d/%d for %s: %s. Waiting %.1fs...",
+                            retries, max_retries, func.__name__, e, current_delay,
+                        )
+                        time.sleep(current_delay)
+                        current_delay *= 2.0
+
+            if last_exception:
+                raise last_exception
+            raise RuntimeError(f"{func.__name__} failed without exception")
+
+        return wrapper
+
+    return decorator
+
+
 def csv_processing_retry(max_retries: int = 2, delay: float = 0.5):
     """
     Specialized retry decorator for CSV processing operations.

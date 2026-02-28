@@ -38,6 +38,7 @@ except Exception as e:
     logging.warning(f"SnapTrade SDK import failed: {e}")
 
 from src.config import settings
+from src.retry_utils import snaptrade_retry
 
 # Pipeline resiliency: when False (default), SnapTrade failures are non-fatal
 REQUIRE_SNAPTRADE = os.environ.get("REQUIRE_SNAPTRADE", "0") == "1"
@@ -107,6 +108,19 @@ class SnapTradeCollector:
             or getattr(self.config, "robinhood_account_id", "")
             or ""
         )
+
+    def _log_request_id(self, response: Any, operation: str) -> None:
+        """Extract and log x-request-id from SnapTrade API response headers."""
+        try:
+            headers = getattr(response, "headers", None)
+            if headers is None and hasattr(response, "response"):
+                headers = getattr(response.response, "headers", None)
+            if headers:
+                request_id = headers.get("x-request-id") or headers.get("X-Request-Id")
+                if request_id:
+                    logger.info("SnapTrade %s x-request-id: %s", operation, request_id)
+        except Exception:
+            pass  # Never fail on diagnostic logging
 
     def resolve_account_id(self, account_id: Optional[str] = None) -> str:
         """
@@ -265,10 +279,13 @@ class SnapTradeCollector:
 
         try:
             # Use list_user_accounts (lightest user-scoped call)
-            response = self.client.account_information.list_user_accounts(
-                user_id=user_id,
-                user_secret=user_secret,
-            )
+            @snaptrade_retry(max_retries=3, delay=2.0)
+            def _call():
+                return self.client.account_information.list_user_accounts(
+                    user_id=user_id, user_secret=user_secret,
+                )
+            response = _call()
+            self._log_request_id(response, "verify_user_auth")
 
             # If we get here without exception, auth is valid
             data, _ = self.safely_extract_response_data(response, "verify_user_auth")
@@ -459,9 +476,13 @@ class SnapTradeCollector:
 
         user_id, user_secret = self._get_user_credentials()
 
-        response = self.client.account_information.list_user_accounts(
-            user_id=user_id, user_secret=user_secret
-        )
+        @snaptrade_retry(max_retries=3, delay=2.0)
+        def _call():
+            return self.client.account_information.list_user_accounts(
+                user_id=user_id, user_secret=user_secret,
+            )
+        response = _call()
+        self._log_request_id(response, "list_user_accounts")
 
         data, is_list = self.safely_extract_response_data(
             response, "list_user_accounts"
@@ -541,9 +562,13 @@ class SnapTradeCollector:
         user_id, user_secret = self._get_user_credentials()
         account_id = self.resolve_account_id(account_id)
 
-        response = self.client.account_information.get_user_account_balance(
-            account_id=account_id, user_id=user_id, user_secret=user_secret
-        )
+        @snaptrade_retry(max_retries=3, delay=2.0)
+        def _call():
+            return self.client.account_information.get_user_account_balance(
+                account_id=account_id, user_id=user_id, user_secret=user_secret,
+            )
+        response = _call()
+        self._log_request_id(response, "get_user_account_balance")
 
         data, is_list = self.safely_extract_response_data(
             response, "get_user_account_balance"
@@ -600,9 +625,13 @@ class SnapTradeCollector:
         user_id, user_secret = self._get_user_credentials()
         account_id = self.resolve_account_id(account_id)
 
-        response = self.client.account_information.get_user_account_positions(
-            account_id=account_id, user_id=user_id, user_secret=user_secret
-        )
+        @snaptrade_retry(max_retries=3, delay=2.0)
+        def _call():
+            return self.client.account_information.get_user_account_positions(
+                account_id=account_id, user_id=user_id, user_secret=user_secret,
+            )
+        response = _call()
+        self._log_request_id(response, "get_user_account_positions")
 
         data, is_list = self.safely_extract_response_data(
             response, "get_user_account_positions"
@@ -653,13 +682,14 @@ class SnapTradeCollector:
         user_id, user_secret = self._get_user_credentials()
         account_id = self.resolve_account_id(account_id)
 
-        response = self.client.account_information.get_user_account_orders(
-            account_id=account_id,
-            user_id=user_id,
-            user_secret=user_secret,
-            state=state,
-            days=days,
-        )
+        @snaptrade_retry(max_retries=3, delay=2.0)
+        def _call():
+            return self.client.account_information.get_user_account_orders(
+                account_id=account_id, user_id=user_id, user_secret=user_secret,
+                state=state, days=days,
+            )
+        response = _call()
+        self._log_request_id(response, "get_user_account_orders")
 
         data, is_list = self.safely_extract_response_data(
             response, "get_user_account_orders"
@@ -881,9 +911,13 @@ class SnapTradeCollector:
                 kwargs["type"] = activity_type
 
             try:
-                response = self.client.account_information.get_account_activities(
-                    **kwargs
-                )
+                @snaptrade_retry(max_retries=3, delay=2.0)
+                def _call(_kw=kwargs):
+                    return self.client.account_information.get_account_activities(
+                        **_kw
+                    )
+                response = _call()
+                self._log_request_id(response, f"get_account_activities(offset={offset})")
             except Exception as e:
                 logger.error(f"SnapTrade get_account_activities API error: {e}")
                 break
@@ -1039,6 +1073,20 @@ class SnapTradeCollector:
             f"✅ Processed {len(df)} activities across {offset // page_size + 1} page(s)"
         )
         return df
+
+    def backfill_all_activities(self, account_id: Optional[str] = None) -> pd.DataFrame:
+        """
+        Fetch ALL historical activities from account inception.
+
+        Uses a wide date range (2020-01-01 to today) to capture everything.
+        Intended for one-time backfill, not regular sync.
+        """
+        return self.get_activities(
+            account_id=account_id,
+            start_date="2020-01-01",
+            end_date=datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            page_size=1000,
+        )
 
     def upsert_symbols_table(self, symbols_data: List[Dict]) -> bool:
         """
@@ -1329,6 +1377,9 @@ class SnapTradeCollector:
                         self.write_parquet_snapshot(positions_df, "positions")
                     results["positions"] = len(positions_df)
 
+                    # Reconcile: zero out positions in DB that SnapTrade no longer returns
+                    self._reconcile_stale_positions(positions_df, resolved_id)
+
                 # Extract symbols from positions
                 symbols_data = self._extract_symbols_from_positions(positions_df)
                 if symbols_data:
@@ -1391,6 +1442,109 @@ class SnapTradeCollector:
 
         logger.info(f"✅ Collection complete: {results}")
         return results
+
+    # Maximum fraction of DB positions that can be reconciled (zeroed) in one
+    # sync.  If more than this fraction would be removed, the fresh response
+    # probably represents a partial/failed fetch and we skip reconciliation.
+    _RECONCILE_MAX_DROP_RATIO = 0.50
+
+    def _reconcile_stale_positions(
+        self, fresh_positions: pd.DataFrame, account_id: str
+    ) -> None:
+        """Zero out DB positions not present in the latest SnapTrade API response.
+
+        Safety guards (all must pass before any rows are zeroed):
+          1. Account connection is healthy (status = 'connected' or column absent).
+          2. Fresh position count is not wildly smaller than DB count
+             (>50% drop indicates partial API response, not real liquidation).
+          3. Last successful sync is within 7 days (stale auth → skip).
+        """
+        from src.db import execute_sql
+
+        try:
+            # --- Guard 1: connection health ---
+            try:
+                conn_rows = execute_sql(
+                    "SELECT connection_status FROM accounts WHERE id = :acct",
+                    {"acct": account_id},
+                    fetch_results=True,
+                )
+                if conn_rows:
+                    status = str(conn_rows[0][0] or "connected")
+                    if status != "connected":
+                        logger.info(
+                            f"⏭️ Skipping reconciliation: account {account_id[:8]}... "
+                            f"connection_status={status}"
+                        )
+                        return
+            except Exception:
+                pass  # Column may not exist pre-migration-066; proceed
+
+            # --- Guard 2: position count sanity ---
+            fresh_symbols = set(fresh_positions["symbol"].str.strip())
+            db_rows = execute_sql(
+                "SELECT symbol FROM positions WHERE account_id = :acct AND quantity > 0",
+                {"acct": account_id},
+                fetch_results=True,
+            )
+            db_symbols = {str(r[0]).strip() for r in (db_rows or [])}
+
+            stale = db_symbols - fresh_symbols
+            if not stale:
+                return
+
+            db_count = len(db_symbols)
+            drop_ratio = len(stale) / db_count if db_count > 0 else 0
+            if drop_ratio > self._RECONCILE_MAX_DROP_RATIO:
+                logger.warning(
+                    f"⏭️ Skipping reconciliation: {len(stale)}/{db_count} positions "
+                    f"({drop_ratio:.0%}) would be zeroed — likely partial API response "
+                    f"(threshold={self._RECONCILE_MAX_DROP_RATIO:.0%})"
+                )
+                return
+
+            # --- Guard 3: recent sync ---
+            try:
+                sync_rows = execute_sql(
+                    "SELECT last_successful_sync FROM accounts WHERE id = :acct",
+                    {"acct": account_id},
+                    fetch_results=True,
+                )
+                if sync_rows and sync_rows[0][0]:
+                    from datetime import datetime, timezone, timedelta
+
+                    last_sync = sync_rows[0][0]
+                    if hasattr(last_sync, "tzinfo") and last_sync.tzinfo is None:
+                        last_sync = last_sync.replace(tzinfo=timezone.utc)
+                    age = datetime.now(timezone.utc) - last_sync
+                    if age > timedelta(days=7):
+                        logger.info(
+                            f"⏭️ Skipping reconciliation: last_successful_sync "
+                            f"is {age.days}d old for account {account_id[:8]}..."
+                        )
+                        return
+            except Exception:
+                pass  # Column missing or parse error; proceed
+
+            # --- All guards passed: reconcile ---
+            logger.info(
+                f"🧹 Reconciling {len(stale)} stale position(s) for account "
+                f"{account_id[:8]}... ({len(stale)}/{db_count} = {drop_ratio:.0%}): "
+                f"{sorted(stale)}"
+            )
+            for sym in stale:
+                execute_sql(
+                    """
+                    UPDATE positions
+                    SET quantity = 0, equity = 0, open_pnl = 0,
+                        sync_timestamp = NOW()
+                    WHERE symbol = :sym AND account_id = :acct
+                    """,
+                    {"sym": sym, "acct": account_id},
+                )
+            logger.info(f"✅ Zeroed {len(stale)} stale position(s)")
+        except Exception as e:
+            logger.warning(f"⚠️ Position reconciliation failed (non-fatal): {e}")
 
     def _extract_symbols_from_positions(self, positions_df: pd.DataFrame) -> List[Dict]:
         """Extract symbol metadata from positions DataFrame with complete field mapping."""

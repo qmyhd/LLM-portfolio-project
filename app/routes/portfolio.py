@@ -63,6 +63,7 @@ class Position(BaseModel):
     # Robinhood-style fields (optional, non-breaking)
     portfolioDiversity: float | None = None  # equity / totalEquity * 100
     companyName: str | None = None
+    assetType: str | None = None  # 'equity' | 'etf' | 'crypto' | 'option'
 
 
 class PortfolioSummary(BaseModel):
@@ -80,6 +81,10 @@ class PortfolioSummary(BaseModel):
     lastSync: str  # ISO timestamp
     source: str  # Data source: 'snaptrade' | 'cache'
     buyingPower: float | None = None  # From account_balances.buying_power
+    assetBreakdown: dict[str, float] | None = None  # {assetType: totalEquity}
+    cryptoValue: float | None = None  # Total crypto equity
+    cryptoPnl: float | None = None  # Total crypto unrealized P/L
+    connectionStatus: str | None = None  # 'connected' | 'disconnected' | 'error' | 'deleted'
 
 
 class ReconPositionMeta(BaseModel):
@@ -117,14 +122,19 @@ class PortfolioResponse(BaseModel):
 @router.get("", response_model=PortfolioResponse)
 async def get_portfolio(
     recon: bool = Query(False, description="Include debug metadata for reconciliation"),
+    asset_class: str | None = Query(
+        None,
+        description="Filter by asset class: 'equity' (stocks+ETFs), 'crypto', or omit for all",
+    ),
 ):
     """
     Get portfolio summary and all positions.
 
     Pass ?recon=1 to include per-position debug metadata (price sources, raw values).
+    Pass ?asset_class=equity for stocks/ETFs only, or ?asset_class=crypto for crypto only.
     """
     try:
-        # Get positions from database
+        # Get positions from database (join symbols for asset_type + company name)
         positions_data = execute_sql(
             """
             SELECT
@@ -133,32 +143,62 @@ async def get_portfolio(
                 p.average_buy_price as average_cost,
                 p.price as snaptrade_price,
                 p.raw_symbol,
-                p.account_id
+                p.account_id,
+                COALESCE(s.asset_type, 'equity') as asset_type,
+                s.description as company_name
             FROM positions p
+            LEFT JOIN symbols s ON s.ticker = p.symbol
             WHERE p.quantity > 0
             ORDER BY p.symbol
             """,
             fetch_results=True,
         )
 
-        # Get account balances
+        # Get account balances (DISTINCT ON prevents double-counting from
+        # multiple snapshots for the same account+currency)
         balances_data = execute_sql(
             """
             SELECT
                 SUM(cash) as total_cash,
                 SUM(buying_power) as total_buying_power
-            FROM account_balances
+            FROM (
+                SELECT DISTINCT ON (account_id, currency_code)
+                    cash, buying_power
+                FROM account_balances
+                ORDER BY account_id, currency_code, sync_timestamp DESC
+            ) latest
             """,
             fetch_results=True,
         )
 
+        # Known crypto symbols for asset_type override
+        from src.market_data_service import _CRYPTO_SYMBOLS
+
         # Extract all symbols and batch fetch prices (single query instead of N queries)
         position_rows = []
         symbols_to_fetch = []
+        company_names: dict[str, str] = {}
         for row in positions_data or []:
             row_dict: dict[str, Any] = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)  # type: ignore[arg-type]
+            # Normalize asset_type to frontend-friendly short names
+            sym = row_dict["symbol"]
+            if sym in _CRYPTO_SYMBOLS:
+                row_dict["asset_type"] = "crypto"
+            else:
+                raw_at = (row_dict.get("asset_type") or "equity").lower()
+                # Map verbose DB values to concise frontend tokens
+                _AT_MAP = {
+                    "cryptocurrency": "crypto",
+                    "common stock": "equity",
+                    "american depositary receipt": "adr",
+                    "structured product": "structured",
+                }
+                row_dict["asset_type"] = _AT_MAP.get(raw_at, raw_at)
+            # Company name from the joined symbols.description
+            if row_dict.get("company_name"):
+                company_names[sym] = row_dict["company_name"]
             position_rows.append(row_dict)
-            symbols_to_fetch.append(row_dict["symbol"])
+            symbols_to_fetch.append(sym)
 
         # Batch fetch all prices in ONE database query
         prices_map = (
@@ -179,24 +219,6 @@ async def get_portfolio(
                 yf_quotes = get_realtime_quotes_batch(databento_missing)
             except Exception as exc:
                 logger.debug("yfinance batch quotes skipped: %s", exc)
-
-        # Batch fetch company names from symbols table (SnapTrade source)
-        company_names: dict[str, str] = {}
-        tickers_deduped = sorted({s for s in symbols_to_fetch if s})
-        if tickers_deduped:
-            name_rows = execute_sql(
-                """
-                SELECT ticker, description
-                FROM symbols
-                WHERE ticker = ANY(:tickers)
-                """,
-                params={"tickers": tickers_deduped},
-                fetch_results=True,
-            )
-            for nr in name_rows or []:
-                nr_dict: dict[str, Any] = dict(nr._mapping) if hasattr(nr, "_mapping") else dict(nr)  # type: ignore[arg-type]
-                if nr_dict.get("description"):
-                    company_names[nr_dict["ticker"]] = nr_dict["description"]
 
         positions = []
         total_value = 0.0
@@ -285,6 +307,7 @@ async def get_portfolio(
                     dayChangePercent=r2n(day_change_pct),
                     rawSymbol=row_dict.get("raw_symbol"),
                     companyName=company_names.get(symbol),
+                    assetType=row_dict.get("asset_type", "equity"),
                 )
             )
 
@@ -306,8 +329,74 @@ async def get_portfolio(
                     )
                 )
 
+        # ---- Phase 1C: Group positions by (symbol, assetType) ----
+        # If same ticker held in multiple accounts, merge into one row
+        grouped: dict[tuple[str, str | None], list[Position]] = defaultdict(list)
+        for pos in positions:
+            grouped[(pos.symbol, pos.assetType)].append(pos)
+
+        merged_positions: list[Position] = []
+        for (_sym, _at), group in grouped.items():
+            if len(group) == 1:
+                merged_positions.append(group[0])
+            else:
+                # Merge: sum quantities, equities, P/L; weighted avg cost
+                total_qty = sum(p.quantity for p in group)
+                total_eq = sum(p.equity for p in group)
+                total_pnl = sum(p.openPnl for p in group)
+                total_dc = sum(p.dayChange or 0 for p in group)
+                total_cost_basis = sum(p.quantity * p.averageBuyPrice for p in group)
+                w_avg_cost = (total_cost_basis / total_qty) if total_qty > 0 else 0
+                pnl_pct = (total_pnl / total_cost_basis * 100) if total_cost_basis > 0 else 0
+                first = group[0]
+                dc_pct = first.dayChangePercent  # same % for same ticker
+                merged_positions.append(
+                    Position(
+                        symbol=first.symbol,
+                        accountId=",".join(p.accountId for p in group if p.accountId),
+                        quantity=total_qty,
+                        averageBuyPrice=r2(w_avg_cost),
+                        currentPrice=first.currentPrice,
+                        equity=r2(total_eq),
+                        openPnl=r2(total_pnl),
+                        openPnlPercent=r2(pnl_pct),
+                        dayChange=r2n(total_dc) if any(p.dayChange is not None for p in group) else None,
+                        dayChangePercent=dc_pct,
+                        rawSymbol=first.rawSymbol,
+                        companyName=first.companyName,
+                        assetType=first.assetType,
+                    )
+                )
+        positions = merged_positions
+
+        # ---- Phase 1C-filter: Apply asset_class filter if requested ----
+        if asset_class:
+            ac = asset_class.lower()
+            # Match both "crypto" (post-override) and "cryptocurrency" (raw DB value)
+            _crypto_types = {"crypto", "cryptocurrency"}
+            if ac == "equity":
+                positions = [p for p in positions if (p.assetType or "").lower() not in _crypto_types]
+            elif ac == "crypto":
+                positions = [p for p in positions if (p.assetType or "").lower() in _crypto_types]
+
+        # Recompute totals from merged positions
+        total_value = sum(p.equity for p in positions)
+        total_cost = sum(p.quantity * p.averageBuyPrice for p in positions)
+        total_day_change = sum(p.dayChange or 0 for p in positions)
+
         # total_value here is equity-only (sum of positions market values)
         total_equity = total_value
+
+        # ---- Phase 1D: Asset breakdown ----
+        asset_breakdown: dict[str, float] = defaultdict(float)
+        crypto_value = 0.0
+        crypto_pnl = 0.0
+        for pos in positions:
+            at = pos.assetType or "equity"
+            asset_breakdown[at] += pos.equity
+            if at.lower() in ("crypto", "cryptocurrency"):
+                crypto_value += pos.equity
+                crypto_pnl += pos.openPnl
 
         # Compute portfolio diversity for each position
         if total_equity > 0:
@@ -368,6 +457,24 @@ async def get_portfolio(
             if last_dict.get("last_update"):
                 last_update_str = str(last_dict["last_update"])
 
+        # Get connection status (worst status across all accounts)
+        connection_status = None
+        try:
+            conn_rows = execute_sql(
+                "SELECT COALESCE(connection_status, 'connected') as status FROM accounts",
+                fetch_results=True,
+            )
+            if conn_rows:
+                statuses = [
+                    (dict(r._mapping) if hasattr(r, "_mapping") else dict(r)).get("status", "connected")
+                    for r in conn_rows
+                ]
+                # Priority: error > disconnected > deleted > connected
+                priority = {"error": 0, "disconnected": 1, "deleted": 2, "connected": 3}
+                connection_status = min(statuses, key=lambda s: priority.get(s, 3))
+        except Exception:
+            pass  # Column may not exist yet if migration hasn't run
+
         summary = PortfolioSummary(
             totalValue=r2(total_portfolio_value),
             totalEquity=r2(total_equity),
@@ -381,6 +488,10 @@ async def get_portfolio(
             lastSync=last_update_str,
             source="snaptrade",
             buyingPower=raw_buying_power,
+            assetBreakdown={k: r2(v) for k, v in asset_breakdown.items()} if asset_breakdown else None,
+            cryptoValue=r2(crypto_value) if crypto_value > 0 else None,
+            cryptoPnl=r2(crypto_pnl) if crypto_value > 0 else None,
+            connectionStatus=connection_status,
         )
 
         recon_meta = None
@@ -609,6 +720,19 @@ async def get_movers(
                 "equity": r2(equity),
                 "openPnlPct": r2(open_pnl_pct),
             })
+
+        # Deduplicate by symbol (keep entry with highest absolute change)
+        seen: dict[str, dict] = {}
+        for i in items:
+            sym = i["symbol"]
+            if sym not in seen:
+                seen[sym] = i
+            else:
+                existing_abs = abs(seen[sym].get("dayChangePct") or seen[sym]["openPnlPct"])
+                new_abs = abs(i.get("dayChangePct") or i["openPnlPct"])
+                if new_abs > existing_abs:
+                    seen[sym] = i
+        items = list(seen.values())
 
         # Check if any items have day change data
         has_day_change = any(i["dayChangePct"] is not None for i in items)

@@ -46,6 +46,12 @@ python scripts/nlp/parse_messages.py
 
 # Nightly pipeline (EC2 production)
 python scripts/nightly_pipeline.py
+
+# Validate Robinhood positions against DB
+python scripts/validate_robinhood.py --positions data/Robinhood_official_Reports/Jun2023–Feb2026.csv
+
+# Backfill SnapTrade activities
+python scripts/backfill_activities.py --start 2020-01-01
 ```
 
 ## Architecture
@@ -70,9 +76,9 @@ OpenBB (FMP+SEC)─┘→ Cached fundamentals/filings/news → FastAPI → Next.
   - `schemas.py` — Pydantic models: `ParsedIdea`, `MessageParseResult`, `TradingLabels` enum (13 label types)
   - `preclean.py` — Deterministic pre-LLM ticker extraction. `RESERVED_SIGNAL_WORDS` (80+ terms) prevents false positives like "target" → $TGT. `ALIAS_MAP` resolves company names to tickers.
   - `soft_splitter.py` — Deterministic message splitting for long content
-- **`src/snaptrade_collector.py`** — SnapTrade ETL (accounts, positions, orders, balances)
+- **`src/snaptrade_collector.py`** — SnapTrade ETL (accounts, positions, orders, balances) with stale position reconciliation (safety-guarded: connection health, count sanity, sync recency)
 - **`src/databento_collector.py`** — Databento OHLCV → Supabase upsert + optional S3 archive
-- **`src/retry_utils.py`** — `@hardened_retry()` for API calls, `@database_retry()` for DB operations
+- **`src/retry_utils.py`** — `@hardened_retry()` for API calls, `@database_retry()` for DB operations, `@snaptrade_retry()` for SnapTrade SDK calls (429 rate-limit aware)
 - **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes, company info, return metrics, and search fallback
 - **`src/message_cleaner.py`** — Ticker extraction (`$AAPL`, `$BRK.B`), sentiment scoring via vaderSentiment
 - **`src/openbb_service.py`** — OpenBB Platform SDK wrapper. Thread-safe TTL caches (transcripts 24h, fundamentals 1h, news 15m). FMP provider for fundamentals/transcripts/management/news, SEC provider for filings (free). Never raises — returns `None`/`[]` on failure. Requires `FMP_API_KEY` for FMP data.
@@ -83,7 +89,7 @@ Modular command pattern. Each command file in `src/bot/commands/` exports a `reg
 
 ### Database Schema
 
-Consolidated schema in `schema/` (060_baseline_current.sql + 061_cleanup, older files archived). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `twitter_data`, `stock_profile_current`, `stock_notes`. All tables have RLS enabled — service role key required in DATABASE_URL.
+Consolidated schema in `schema/` (060_baseline_current.sql + 061_cleanup, older files archived). Recent migrations: 065 (account_balances PK), 066 (accounts connection_status columns). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `twitter_data`, `stock_profile_current`, `stock_notes`. All tables have RLS enabled — service role key required in DATABASE_URL.
 
 ### Deployment
 
@@ -106,9 +112,11 @@ execute_sql("SELECT pg_advisory_xact_lock(:lock_key)", params={"lock_key": lock_
 
 **Retry decorators required for all external API calls:**
 ```python
-from src.retry_utils import hardened_retry, database_retry
+from src.retry_utils import hardened_retry, database_retry, snaptrade_retry
 @hardened_retry(max_retries=3, delay=2)
 def call_external_api(): ...
+@snaptrade_retry()  # SnapTrade SDK calls (handles 429 rate limits)
+def call_snaptrade(): ...
 ```
 
 **File paths — always use pathlib.Path, never string concatenation.**

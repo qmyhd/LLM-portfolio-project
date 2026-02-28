@@ -47,7 +47,23 @@
       "Bash(python -m ruff check app/routes/webhook.py)",
       "Bash(ruff check app/routes/webhook.py)",
       "mcp__plugin_claude-mem_mcp-search__save_observation",
-      "Bash(python -m ruff check app/routes/portfolio.py)"
+      "Bash(python -m ruff check app/routes/portfolio.py)",
+      "WebFetch(domain:docs.snaptrade.com)",
+      "Read(//c/Users/qaism/.claude/projects/c--Users-qaism-OneDrive-Documents-Github-LLM-portfolio-project/0dc3db05-3b16-4680-b80b-4f06731a307b/tool-results/**)",
+      "WebFetch(domain:www.npmjs.com)",
+      "Bash(python -m ruff check src/ app/ scripts/)",
+      "Bash(ruff check src/ app/ scripts/)",
+      "Bash(ruff check app/routes/webhook.py app/routes/connections.py app/routes/portfolio.py app/main.py src/config.py src/retry_utils.py scripts/validate_robinhood.py)",
+      "Bash(ruff check src/snaptrade_collector.py --select B023)",
+      "Bash(ruff check app/routes/webhook.py app/routes/connections.py app/routes/portfolio.py app/main.py src/config.py src/retry_utils.py src/snaptrade_collector.py scripts/validate_robinhood.py)",
+      "Bash(head -50 \"c:/Users/qaism/OneDrive/Documents/Github/LLM-portfolio-project/data/Robinhood_official_Reports/\"*.csv)",
+      "Bash(source .venv/Scripts/activate)",
+      "Bash(python scripts/validate_robinhood.py --positions \"data/Robinhood_official_Reports/Jun2023–Feb2026.csv\")",
+      "Bash(python scripts/validate_robinhood.py --transactions \"data/Robinhood_official_Reports/Jun2023–Feb2026.csv\")",
+      "Bash(ruff check src/snaptrade_collector.py app/routes/portfolio.py scripts/validate_robinhood.py)",
+      "Bash(ruff check scripts/validate_robinhood.py app/routes/portfolio.py)",
+      "Bash(ruff check src/snaptrade_collector.py app/routes/portfolio.py scripts/validate_robinhood.py src/market_data_service.py)",
+      "Bash(npx next lint)"
     ]
   }
 }
