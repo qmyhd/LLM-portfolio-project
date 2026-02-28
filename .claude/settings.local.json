@@ -63,7 +63,12 @@
       "Bash(ruff check src/snaptrade_collector.py app/routes/portfolio.py scripts/validate_robinhood.py)",
       "Bash(ruff check scripts/validate_robinhood.py app/routes/portfolio.py)",
       "Bash(ruff check src/snaptrade_collector.py app/routes/portfolio.py scripts/validate_robinhood.py src/market_data_service.py)",
-      "Bash(npx next lint)"
+      "Bash(npx next lint)",
+      "Bash(ruff check scripts/env_doctor.py scripts/investigate_symbol.py src/snaptrade_collector.py app/routes/portfolio.py)",
+      "Bash(ruff check scripts/env_doctor.py scripts/investigate_symbol.py app/routes/portfolio.py)",
+      "Bash(python scripts/_audit_data.py)",
+      "Bash(python scripts/fix_orphaned_accounts.py)",
+      "Bash(python scripts/fix_orphaned_accounts.py --apply)"
     ]
   }
 }

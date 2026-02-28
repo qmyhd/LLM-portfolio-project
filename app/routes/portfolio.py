@@ -124,7 +124,11 @@ async def get_portfolio(
     recon: bool = Query(False, description="Include debug metadata for reconciliation"),
     asset_class: str | None = Query(
         None,
-        description="Filter by asset class: 'equity' (stocks+ETFs), 'crypto', or omit for all",
+        description="Filter: 'equity' (stocks+ETFs), 'crypto', 'all', or omit for all",
+    ),
+    account_id: str | None = Query(
+        None,
+        description="Filter by account ID, or 'all' for all accounts",
     ),
 ):
     """
@@ -132,11 +136,34 @@ async def get_portfolio(
 
     Pass ?recon=1 to include per-position debug metadata (price sources, raw values).
     Pass ?asset_class=equity for stocks/ETFs only, or ?asset_class=crypto for crypto only.
+    Pass ?account_id=<id> to filter to a single account.
     """
     try:
-        # Get positions from database (join symbols for asset_type + company name)
+        # Normalize 'all' to None for simpler logic
+        if asset_class and asset_class.lower() == "all":
+            asset_class = None
+        if account_id and account_id.lower() == "all":
+            account_id = None
+
+        # Get positions from database (join symbols for asset_type + company name).
+        # Exclude positions from accounts marked as 'deleted' (orphaned re-links)
+        # unless a specific account_id is requested.
+        pos_where = "p.quantity > 0"
+        pos_params: dict[str, Any] = {}
+        if account_id:
+            pos_where += " AND p.account_id = :account_id"
+            pos_params["account_id"] = account_id
+        else:
+            pos_where += (
+                " AND NOT EXISTS ("
+                "   SELECT 1 FROM accounts a"
+                "   WHERE a.id = p.account_id"
+                "   AND a.connection_status = 'deleted'"
+                " )"
+            )
+
         positions_data = execute_sql(
-            """
+            f"""
             SELECT
                 p.symbol,
                 p.quantity,
@@ -148,16 +175,30 @@ async def get_portfolio(
                 s.description as company_name
             FROM positions p
             LEFT JOIN symbols s ON s.ticker = p.symbol
-            WHERE p.quantity > 0
+            WHERE {pos_where}
             ORDER BY p.symbol
             """,
+            params=pos_params if pos_params else None,
             fetch_results=True,
         )
 
         # Get account balances (DISTINCT ON prevents double-counting from
         # multiple snapshots for the same account+currency)
+        bal_where = ""
+        bal_params: dict[str, Any] = {}
+        if account_id:
+            bal_where = "WHERE account_id = :account_id"
+            bal_params["account_id"] = account_id
+        else:
+            # Exclude balances from deleted (orphaned) accounts
+            bal_where = (
+                "WHERE account_id NOT IN ("
+                "  SELECT id FROM accounts WHERE connection_status = 'deleted'"
+                ")"
+            )
+
         balances_data = execute_sql(
-            """
+            f"""
             SELECT
                 SUM(cash) as total_cash,
                 SUM(buying_power) as total_buying_power
@@ -165,9 +206,11 @@ async def get_portfolio(
                 SELECT DISTINCT ON (account_id, currency_code)
                     cash, buying_power
                 FROM account_balances
+                {bal_where}
                 ORDER BY account_id, currency_code, sync_timestamp DESC
             ) latest
             """,
+            params=bal_params if bal_params else None,
             fetch_results=True,
         )
 
@@ -457,11 +500,12 @@ async def get_portfolio(
             if last_dict.get("last_update"):
                 last_update_str = str(last_dict["last_update"])
 
-        # Get connection status (worst status across all accounts)
+        # Get connection status (worst status across non-deleted accounts)
         connection_status = None
         try:
             conn_rows = execute_sql(
-                "SELECT COALESCE(connection_status, 'connected') as status FROM accounts",
+                "SELECT COALESCE(connection_status, 'connected') as status "
+                "FROM accounts WHERE connection_status != 'deleted'",
                 fetch_results=True,
             )
             if conn_rows:
@@ -469,9 +513,9 @@ async def get_portfolio(
                     (dict(r._mapping) if hasattr(r, "_mapping") else dict(r)).get("status", "connected")
                     for r in conn_rows
                 ]
-                # Priority: error > disconnected > deleted > connected
-                priority = {"error": 0, "disconnected": 1, "deleted": 2, "connected": 3}
-                connection_status = min(statuses, key=lambda s: priority.get(s, 3))
+                # Priority: error > disconnected > connected
+                priority = {"error": 0, "disconnected": 1, "connected": 2}
+                connection_status = min(statuses, key=lambda s: priority.get(s, 2))
         except Exception:
             pass  # Column may not exist yet if migration hasn't run
 
@@ -530,7 +574,7 @@ class SyncResult(BaseModel):
     activities: int
     errorCount: int
     errors: list[str]
-    accountIdUsed: str | None
+    accountIdUsed: str | list[str] | None
     authError: bool
 
 
@@ -642,6 +686,10 @@ async def get_movers(
                    p.price as snaptrade_price
             FROM positions p
             WHERE p.quantity > 0
+            AND NOT EXISTS (
+                SELECT 1 FROM accounts a
+                WHERE a.id = p.account_id AND a.connection_status = 'deleted'
+            )
             ORDER BY p.symbol
             """,
             fetch_results=True,
