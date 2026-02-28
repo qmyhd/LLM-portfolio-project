@@ -16,6 +16,10 @@ SnapTrade event types handled:
 - ACCOUNT_TRANSACTIONS_UPDATED — Incremental transaction update
 - ACCOUNT_UPDATED — Account sync triggered
 - ORDER_PLACED / ORDER_FILLED / ORDER_CANCELLED — Order lifecycle
+- CONNECTION_CONNECTED — Brokerage connection established
+- CONNECTION_DISCONNECTED — Brokerage connection lost
+- CONNECTION_ERROR — Brokerage connection error
+- CONNECTION_DELETED — Brokerage connection removed
 """
 
 import base64
@@ -23,13 +27,13 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
+from src.config import settings
 from src.db import execute_sql
 from src.snaptrade_collector import SnapTradeCollector
 
@@ -71,7 +75,7 @@ def verify_webhook_signature(raw_body: bytes, signature_header: str | None) -> b
         logger.warning("Webhook missing Signature header")
         return False
 
-    secret = os.getenv("SNAPTRADE_CLIENT_SECRET")
+    secret = settings().SNAPTRADE_CLIENT_SECRET
     if not secret:
         logger.error("SNAPTRADE_CLIENT_SECRET not configured — cannot verify webhook")
         return False
@@ -343,6 +347,79 @@ def _handle_event(event_type: str, account_id: str | None, payload: dict) -> str
             params={"order_id": order_id},
         )
         return f"Order {order_id} marked as cancelled"
+
+    # --- Connection lifecycle events ---
+
+    elif event_type == "CONNECTION_CONNECTED":
+        auth_id = payload.get("brokerageAuthorizationId")
+        logger.info("Connection established: auth=%s", auth_id)
+        if auth_id:
+            execute_sql(
+                """
+                UPDATE accounts
+                SET connection_status = 'connected',
+                    connection_disabled_at = NULL,
+                    connection_error_message = NULL
+                WHERE brokerage_authorization = :auth_id
+                   OR brokerage_authorization_id = :auth_id
+                """,
+                params={"auth_id": auth_id},
+            )
+        return f"Connection {auth_id} marked as connected"
+
+    elif event_type == "CONNECTION_DISCONNECTED":
+        auth_id = payload.get("brokerageAuthorizationId")
+        logger.warning("Connection disconnected: auth=%s", auth_id)
+        if auth_id:
+            execute_sql(
+                """
+                UPDATE accounts
+                SET connection_status = 'disconnected',
+                    connection_disabled_at = :now
+                WHERE brokerage_authorization = :auth_id
+                   OR brokerage_authorization_id = :auth_id
+                """,
+                params={"auth_id": auth_id, "now": datetime.now(UTC).isoformat()},
+            )
+        return f"Connection {auth_id} marked as disconnected"
+
+    elif event_type == "CONNECTION_ERROR":
+        auth_id = payload.get("brokerageAuthorizationId")
+        error_msg = payload.get("data", {}).get("errorMessage", "Unknown error")
+        logger.error("Connection error: auth=%s error=%s", auth_id, error_msg)
+        if auth_id:
+            execute_sql(
+                """
+                UPDATE accounts
+                SET connection_status = 'error',
+                    connection_error_message = :error_msg,
+                    connection_disabled_at = :now
+                WHERE brokerage_authorization = :auth_id
+                   OR brokerage_authorization_id = :auth_id
+                """,
+                params={
+                    "auth_id": auth_id,
+                    "error_msg": error_msg,
+                    "now": datetime.now(UTC).isoformat(),
+                },
+            )
+        return f"Connection {auth_id} error recorded"
+
+    elif event_type == "CONNECTION_DELETED":
+        auth_id = payload.get("brokerageAuthorizationId")
+        logger.warning("Connection deleted: auth=%s", auth_id)
+        if auth_id:
+            execute_sql(
+                """
+                UPDATE accounts
+                SET connection_status = 'deleted',
+                    connection_disabled_at = :now
+                WHERE brokerage_authorization = :auth_id
+                   OR brokerage_authorization_id = :auth_id
+                """,
+                params={"auth_id": auth_id, "now": datetime.now(UTC).isoformat()},
+            )
+        return f"Connection {auth_id} marked as deleted"
 
     else:
         logger.warning("Unknown webhook event: %s", event_type)

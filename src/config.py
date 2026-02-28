@@ -35,6 +35,7 @@ class _Settings(BaseSettings):
     SNAPTRADE_CONSUMER_KEY: str = ""
     SNAPTRADE_USER_ID: str = ""
     SNAPTRADE_USER_SECRET: str = ""
+    SNAPTRADE_CLIENT_SECRET: str = ""  # Webhook HMAC verification only
     ROBINHOOD_ACCOUNT_ID: str = ""
 
     # === LLM API Keys ================================================

@@ -30,17 +30,18 @@ from fastapi.responses import JSONResponse
 
 from app.auth import require_api_key
 from app.routes import (
-    sentiment,
-    portfolio,
-    orders,
-    stocks,
-    search,
-    watchlist,
-    chat,
-    webhook,
     activities,
-    openbb as openbb_routes,
+    chat,
+    connections,
     ideas,
+    openbb as openbb_routes,
+    orders,
+    portfolio,
+    search,
+    sentiment,
+    stocks,
+    watchlist,
+    webhook,
 )
 
 # Configure logging
@@ -183,6 +184,12 @@ app.include_router(
     ideas.router,
     prefix="/ideas",
     tags=["Ideas"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    connections.router,
+    prefix="/connections",
+    tags=["Connections"],
     dependencies=[Depends(require_api_key)],
 )
 

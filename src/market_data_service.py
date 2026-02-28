@@ -36,7 +36,8 @@ _search_lock = threading.Lock()
 
 # Known crypto tickers that need -USD suffix for yfinance
 _CRYPTO_SYMBOLS = frozenset(
-    {"XRP", "BTC", "ETH", "SOL", "ADA", "DOGE", "AVAX", "LINK", "DOT", "MATIC", "SHIB"}
+    {"XRP", "BTC", "ETH", "SOL", "ADA", "DOGE", "AVAX", "LINK", "DOT", "MATIC", "SHIB",
+     "PEPE", "TRUMP"}
 )
 
 
