@@ -17,7 +17,7 @@ Environment Variables:
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -709,10 +709,16 @@ class SnapTradeCollector:
                 brokerage_order_id = order.get("brokerage_order_id")
                 status = order.get("status")
 
-                # Map invalid status values to valid ones
-                # SnapTrade sometimes returns "NONE" for pending orders
-                if status == "NONE" or not status:
-                    status = "PENDING"
+                # Map invalid status values to valid DB constraint values.
+                # DB allows: PENDING, EXECUTED, CANCELED, REJECTED, EXPIRED, FILLED, PARTIAL
+                _STATUS_MAP = {
+                    "NONE": "PENDING",
+                    "ACCEPTED": "PENDING",
+                    "NEW": "PENDING",
+                    "PARTIALLY_FILLED": "PARTIAL",
+                    "PART_CANCELED": "CANCELED",
+                }
+                status = _STATUS_MAP.get(status, status) if status else "PENDING"
 
                 action = order.get("action")
 
@@ -1284,11 +1290,16 @@ class SnapTradeCollector:
         self, write_parquet: bool = True, account_id: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Collect all SnapTrade data types.
+        Collect all SnapTrade data types for all connected accounts.
+
+        When ``account_id`` is provided, only that account is synced (legacy
+        behaviour).  Otherwise **every** account returned by the API that is
+        not marked ``deleted`` in the local DB is synced, so IRA and other
+        sub-accounts are no longer silently skipped.
 
         Args:
             write_parquet: Whether to write Parquet snapshots
-            account_id: Optional account ID filter
+            account_id: Optional single account ID to sync (default: all)
 
         Returns:
             Dictionary with collection results
@@ -1308,7 +1319,7 @@ class SnapTradeCollector:
 
         try:
             # Collect accounts first (needed for account resolution)
-            logger.info("🔄 Collecting accounts...")
+            logger.info("Collecting accounts...")
             accounts_df = self.get_accounts()
             if not accounts_df.empty:
                 self.write_to_database(accounts_df, "accounts", conflict_columns=["id"])
@@ -1316,118 +1327,45 @@ class SnapTradeCollector:
                     self.write_parquet_snapshot(accounts_df, "accounts")
                 results["accounts"] = len(accounts_df)
 
-            # Resolve account ID once, reuse for all subsequent calls
-            try:
-                resolved_id = self.resolve_account_id(account_id)
-                results["accountIdUsed"] = resolved_id
-                logger.info(f"Using account ID: {resolved_id}")
-            except ConnectionError as e:
-                # Auth failure (401) — surface clearly so UI can show "relink required"
-                results["success"] = False
-                results["authError"] = True
-                results["errors"].append(str(e))
-                return results
-            except ValueError as e:
-                results["success"] = False
-                results["errors"].append(f"Account resolution failed: {e}")
-                return results
+            # Determine which account(s) to sync
+            if account_id:
+                # Legacy: caller explicitly asked for one account
+                sync_ids = [account_id]
+            elif not accounts_df.empty:
+                # Sync all accounts returned by the API that aren't deleted locally
+                from src.db import execute_sql as _exec_sql
 
-            # Collect balances
-            logger.info("🔄 Collecting balances...")
-            balances_df = self.get_balances(resolved_id)
-            if not balances_df.empty:
-                # CRITICAL: PK order is (currency_code, snapshot_date, account_id) in live DB
-                self.write_to_database(
-                    balances_df,
-                    "account_balances",
-                    conflict_columns=["currency_code", "snapshot_date", "account_id"],
+                deleted_rows = _exec_sql(
+                    "SELECT id FROM accounts WHERE connection_status = 'deleted'",
+                    fetch_results=True,
                 )
-                if write_parquet:
-                    self.write_parquet_snapshot(balances_df, "balances")
-                results["balances"] = len(balances_df)
+                deleted_ids = {str(r[0]) for r in (deleted_rows or [])}
+                api_ids = accounts_df["id"].astype(str).tolist()
+                sync_ids = [aid for aid in api_ids if aid not in deleted_ids]
+                if not sync_ids:
+                    results["success"] = False
+                    results["errors"].append("All accounts are marked deleted")
+                    return results
+            else:
+                # Fallback: try the configured account
+                try:
+                    resolved_id = self.resolve_account_id(account_id)
+                    sync_ids = [resolved_id]
+                except ConnectionError as e:
+                    results["success"] = False
+                    results["authError"] = True
+                    results["errors"].append(str(e))
+                    return results
+                except ValueError as e:
+                    results["success"] = False
+                    results["errors"].append(f"Account resolution failed: {e}")
+                    return results
 
-            # Collect positions
-            logger.info("🔄 Collecting positions...")
-            positions_df = self.get_positions(resolved_id)
-            if not positions_df.empty:
-                # Validate positions have account_id before database write
-                missing_account = positions_df["account_id"].isna().sum()
-                if missing_account > 0:
-                    logger.warning(
-                        f"⚠️ {missing_account} positions missing account_id - skipping database write"
-                    )
-                    results["positions"] = 0
-                    results["errors"].append(
-                        f"Positions missing account_id: {missing_account}"
-                    )
-                else:
-                    # Drop symbol metadata columns that belong in symbols table
-                    # Positions table only stores symbol (ticker) and account_id as composite PK
-                    positions_for_db = positions_df.drop(
-                        columns=["raw_symbol", "type_code"], errors="ignore"
-                    )
+            results["accountIdUsed"] = sync_ids[0] if len(sync_ids) == 1 else sync_ids
+            logger.info("Syncing %d account(s): %s", len(sync_ids), sync_ids)
 
-                    # FIXED: PK order is (symbol, account_id) in live DB - must match exactly
-                    self.write_to_database(
-                        positions_for_db,
-                        "positions",
-                        conflict_columns=["symbol", "account_id"],
-                    )
-                    if write_parquet:
-                        self.write_parquet_snapshot(positions_df, "positions")
-                    results["positions"] = len(positions_df)
-
-                    # Reconcile: zero out positions in DB that SnapTrade no longer returns
-                    self._reconcile_stale_positions(positions_df, resolved_id)
-
-                # Extract symbols from positions
-                symbols_data = self._extract_symbols_from_positions(positions_df)
-                if symbols_data:
-                    self.upsert_symbols_table(symbols_data)
-                    results["symbols"] += len(symbols_data)
-
-            # Collect orders
-            logger.info("🔄 Collecting orders...")
-            orders_df = self.get_orders(resolved_id)
-            if not orders_df.empty:
-                # Validate orders have account_id before database write
-                missing_account = orders_df["account_id"].isna().sum()
-                if missing_account > 0:
-                    logger.warning(
-                        f"⚠️ {missing_account} orders missing account_id - skipping database write"
-                    )
-                    results["orders"] = 0
-                    results["errors"].append(
-                        f"Orders missing account_id: {missing_account}"
-                    )
-                else:
-                    self.write_to_database(
-                        orders_df, "orders", conflict_columns=["brokerage_order_id"]
-                    )
-                    if write_parquet:
-                        self.write_parquet_snapshot(orders_df, "orders")
-                    results["orders"] = len(orders_df)
-
-                # Extract symbols from orders
-                symbols_data = self._extract_symbols_from_orders(orders_df)
-                if symbols_data:
-                    self.upsert_symbols_table(symbols_data)
-                    results["symbols"] += len(symbols_data)
-
-            # Collect activities
-            logger.info("🔄 Collecting activities...")
-            try:
-                activities_df = self.get_activities(resolved_id)
-                if not activities_df.empty:
-                    self.write_to_database(
-                        activities_df, "activities", conflict_columns=["id"]
-                    )
-                    if write_parquet:
-                        self.write_parquet_snapshot(activities_df, "activities")
-                    results["activities"] = len(activities_df)
-            except Exception as act_err:
-                logger.warning(f"⚠️ Activities collection failed (non-fatal): {act_err}")
-                results["errors"].append(f"Activities: {act_err}")
+            for acct_id in sync_ids:
+                self._collect_for_account(acct_id, results, write_parquet)
 
         except Exception as e:
             logger.error(f"Error in collect_all_data: {e}")
@@ -1440,26 +1378,139 @@ class SnapTradeCollector:
                 f"SnapTrade collection failed and REQUIRE_SNAPTRADE=1: {results['errors']}"
             )
 
-        logger.info(f"✅ Collection complete: {results}")
+        logger.info(f"Collection complete: {results}")
         return results
 
-    # Maximum fraction of DB positions that can be reconciled (zeroed) in one
-    # sync.  If more than this fraction would be removed, the fresh response
-    # probably represents a partial/failed fetch and we skip reconciliation.
-    _RECONCILE_MAX_DROP_RATIO = 0.50
+    def _collect_for_account(
+        self,
+        account_id: str,
+        results: Dict[str, Any],
+        write_parquet: bool,
+    ) -> None:
+        """Collect balances, positions, orders, activities for one account."""
+        acct_short = account_id[:12]
+        logger.info("--- Syncing account %s... ---", acct_short)
+
+        # Collect balances
+        try:
+            balances_df = self.get_balances(account_id)
+            if not balances_df.empty:
+                self.write_to_database(
+                    balances_df,
+                    "account_balances",
+                    conflict_columns=["currency_code", "snapshot_date", "account_id"],
+                )
+                if write_parquet:
+                    self.write_parquet_snapshot(balances_df, f"balances_{acct_short}")
+                results["balances"] += len(balances_df)
+        except Exception as e:
+            logger.warning("Balances failed for %s (non-fatal): %s", acct_short, e)
+            results["errors"].append(f"Balances[{acct_short}]: {e}")
+
+        # Collect positions
+        try:
+            positions_df = self.get_positions(account_id)
+            if not positions_df.empty:
+                missing_account = positions_df["account_id"].isna().sum()
+                if missing_account > 0:
+                    logger.warning(
+                        "%d positions missing account_id for %s - skipping",
+                        missing_account, acct_short,
+                    )
+                    results["errors"].append(
+                        f"Positions missing account_id[{acct_short}]: {missing_account}"
+                    )
+                else:
+                    positions_for_db = positions_df.drop(
+                        columns=["raw_symbol", "type_code"], errors="ignore"
+                    )
+                    self.write_to_database(
+                        positions_for_db,
+                        "positions",
+                        conflict_columns=["symbol", "account_id"],
+                    )
+                    if write_parquet:
+                        self.write_parquet_snapshot(positions_df, f"positions_{acct_short}")
+                    results["positions"] += len(positions_df)
+
+                    self._reconcile_stale_positions(positions_df, account_id)
+
+                symbols_data = self._extract_symbols_from_positions(positions_df)
+                if symbols_data:
+                    self.upsert_symbols_table(symbols_data)
+                    results["symbols"] += len(symbols_data)
+        except Exception as e:
+            logger.warning("Positions failed for %s (non-fatal): %s", acct_short, e)
+            results["errors"].append(f"Positions[{acct_short}]: {e}")
+
+        # Collect orders
+        try:
+            orders_df = self.get_orders(account_id)
+            if not orders_df.empty:
+                missing_account = orders_df["account_id"].isna().sum()
+                if missing_account > 0:
+                    logger.warning(
+                        "%d orders missing account_id for %s - skipping",
+                        missing_account, acct_short,
+                    )
+                    results["errors"].append(
+                        f"Orders missing account_id[{acct_short}]: {missing_account}"
+                    )
+                else:
+                    self.write_to_database(
+                        orders_df, "orders", conflict_columns=["brokerage_order_id"]
+                    )
+                    if write_parquet:
+                        self.write_parquet_snapshot(orders_df, f"orders_{acct_short}")
+                    results["orders"] += len(orders_df)
+
+                symbols_data = self._extract_symbols_from_orders(orders_df)
+                if symbols_data:
+                    self.upsert_symbols_table(symbols_data)
+                    results["symbols"] += len(symbols_data)
+        except Exception as e:
+            logger.warning("Orders failed for %s (non-fatal): %s", acct_short, e)
+            results["errors"].append(f"Orders[{acct_short}]: {e}")
+
+        # Collect activities
+        try:
+            activities_df = self.get_activities(account_id)
+            if not activities_df.empty:
+                self.write_to_database(
+                    activities_df, "activities", conflict_columns=["id"]
+                )
+                if write_parquet:
+                    self.write_parquet_snapshot(activities_df, f"activities_{acct_short}")
+                results["activities"] += len(activities_df)
+        except Exception as act_err:
+            logger.warning("Activities failed for %s (non-fatal): %s", acct_short, act_err)
+            results["errors"].append(f"Activities[{acct_short}]: {act_err}")
+
+    # Maximum fraction of DB positions that can disappear before we abort
+    # reconciliation.  If more than 30% of DB positions are missing from the
+    # fresh API response, assume partial/failed fetch and skip.
+    _RECONCILE_MAX_DROP_RATIO = 0.30
+
+    # Env flag: set RECONCILE_POSITIONS=1 to enable actual writes.
+    # Default 0 → dry-run mode (logs what *would* be zeroed but doesn't write).
+    _RECONCILE_ENABLED = os.environ.get("RECONCILE_POSITIONS", "0") == "1"
 
     def _reconcile_stale_positions(
         self, fresh_positions: pd.DataFrame, account_id: str
     ) -> None:
         """Zero out DB positions not present in the latest SnapTrade API response.
 
-        Safety guards (all must pass before any rows are zeroed):
-          1. Account connection is healthy (status = 'connected' or column absent).
-          2. Fresh position count is not wildly smaller than DB count
-             (>50% drop indicates partial API response, not real liquidation).
-          3. Last successful sync is within 7 days (stale auth → skip).
+        Safety guards (ALL must pass before any rows are zeroed):
+          1. RECONCILE_POSITIONS=1 env flag is set (default: dry-run).
+          2. Account connection is healthy (status = 'connected').
+          3. Fresh position count is >= 70% of DB count (prevents partial-response damage).
+          4. Last successful sync is within 7 days.
+
+        Always logs a structured summary regardless of dry-run mode.
         """
         from src.db import execute_sql
+
+        acct_short = account_id[:8]
 
         try:
             # --- Guard 1: connection health ---
@@ -1473,8 +1524,9 @@ class SnapTradeCollector:
                     status = str(conn_rows[0][0] or "connected")
                     if status != "connected":
                         logger.info(
-                            f"⏭️ Skipping reconciliation: account {account_id[:8]}... "
-                            f"connection_status={status}"
+                            "reconcile skip | account=%s reason=connection_unhealthy "
+                            "status=%s",
+                            acct_short, status,
                         )
                         return
             except Exception:
@@ -1494,12 +1546,17 @@ class SnapTradeCollector:
                 return
 
             db_count = len(db_symbols)
+            api_count = len(fresh_symbols)
             drop_ratio = len(stale) / db_count if db_count > 0 else 0
+
             if drop_ratio > self._RECONCILE_MAX_DROP_RATIO:
                 logger.warning(
-                    f"⏭️ Skipping reconciliation: {len(stale)}/{db_count} positions "
-                    f"({drop_ratio:.0%}) would be zeroed — likely partial API response "
-                    f"(threshold={self._RECONCILE_MAX_DROP_RATIO:.0%})"
+                    "reconcile ABORT | account=%s api_symbols=%d db_symbols=%d "
+                    "would_zero=%d drop_ratio=%.0f%% threshold=%.0f%% "
+                    "reason=exceeds_threshold sample=%s",
+                    acct_short, api_count, db_count, len(stale),
+                    drop_ratio * 100, self._RECONCILE_MAX_DROP_RATIO * 100,
+                    sorted(stale)[:5],
                 )
                 return
 
@@ -1511,27 +1568,39 @@ class SnapTradeCollector:
                     fetch_results=True,
                 )
                 if sync_rows and sync_rows[0][0]:
-                    from datetime import datetime, timezone, timedelta
-
                     last_sync = sync_rows[0][0]
                     if hasattr(last_sync, "tzinfo") and last_sync.tzinfo is None:
                         last_sync = last_sync.replace(tzinfo=timezone.utc)
                     age = datetime.now(timezone.utc) - last_sync
                     if age > timedelta(days=7):
                         logger.info(
-                            f"⏭️ Skipping reconciliation: last_successful_sync "
-                            f"is {age.days}d old for account {account_id[:8]}..."
+                            "reconcile skip | account=%s reason=stale_sync "
+                            "age_days=%d",
+                            acct_short, age.days,
                         )
                         return
             except Exception:
                 pass  # Column missing or parse error; proceed
 
-            # --- All guards passed: reconcile ---
+            # --- Structured summary (always logged) ---
             logger.info(
-                f"🧹 Reconciling {len(stale)} stale position(s) for account "
-                f"{account_id[:8]}... ({len(stale)}/{db_count} = {drop_ratio:.0%}): "
-                f"{sorted(stale)}"
+                "reconcile summary | account=%s api_symbols=%d db_symbols=%d "
+                "stale=%d drop_ratio=%.0f%% dry_run=%s sample=%s",
+                acct_short, api_count, db_count, len(stale),
+                drop_ratio * 100, not self._RECONCILE_ENABLED,
+                sorted(stale)[:5],
             )
+
+            # --- Dry-run gate ---
+            if not self._RECONCILE_ENABLED:
+                logger.info(
+                    "reconcile DRY-RUN | Set RECONCILE_POSITIONS=1 to enable writes. "
+                    "Would zero: %s",
+                    sorted(stale),
+                )
+                return
+
+            # --- All guards passed + enabled: reconcile ---
             for sym in stale:
                 execute_sql(
                     """
@@ -1542,9 +1611,14 @@ class SnapTradeCollector:
                     """,
                     {"sym": sym, "acct": account_id},
                 )
-            logger.info(f"✅ Zeroed {len(stale)} stale position(s)")
+            logger.info(
+                "reconcile DONE | account=%s zeroed=%d symbols=%s",
+                acct_short, len(stale), sorted(stale),
+            )
         except Exception as e:
-            logger.warning(f"⚠️ Position reconciliation failed (non-fatal): {e}")
+            logger.warning(
+                "reconcile ERROR | account=%s error=%s", acct_short, e
+            )
 
     def _extract_symbols_from_positions(self, positions_df: pd.DataFrame) -> List[Dict]:
         """Extract symbol metadata from positions DataFrame with complete field mapping."""

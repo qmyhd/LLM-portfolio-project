@@ -263,6 +263,7 @@ class TestCollectAllDataIntegration:
 
         with patch.object(collector, "get_accounts", return_value=accounts_df), \
              patch.object(collector, "write_to_database"), \
+             patch("src.db.execute_sql", return_value=[]), \
              patch.object(collector, "get_balances", return_value=pd.DataFrame()), \
              patch.object(collector, "get_positions", return_value=pd.DataFrame()), \
              patch.object(collector, "get_orders", return_value=pd.DataFrame()), \
