@@ -24,7 +24,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 # ---- Bootstrap (mirrors production path) ------------------------------------
 from src.env_bootstrap import bootstrap_env, is_bootstrapped  # noqa: E402
 
-aws_count = bootstrap_env()
+# Run bootstrap but discard the return value to avoid CodeQL taint tracking
+# (bootstrap_env returns count from load_secrets_to_env which CodeQL treats as sensitive)
+bootstrap_env()
 
 # NOW safe to import config
 from src.config import settings  # noqa: E402
@@ -55,7 +57,7 @@ def main() -> None:
     use_aws_enabled = os.environ.get("USE_AWS_SECRETS", "").lower() in ("1", "true", "yes")
 
     if use_aws_enabled and is_bootstrapped():
-        loader_source = f"AWS Secrets Manager ({aws_count} secrets loaded)"
+        loader_source = "AWS Secrets Manager"
     elif central_env.exists():
         loader_source = "Central env file (/etc/llm-portfolio/llm.env)"
     else:
