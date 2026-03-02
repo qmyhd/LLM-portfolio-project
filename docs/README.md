@@ -1,6 +1,6 @@
 # LLM Portfolio Journal - Documentation Hub
 
-**Last Updated:** February 6, 2026
+**Last Updated:** March 1, 2026
 
 ## Active Documentation
 
@@ -14,9 +14,10 @@
 | [legacy-migrations.md](legacy-migrations.md) | Historical migrations and configuration evolution |
 | [LLM_MODELS.md](LLM_MODELS.md) | LLM model routing strategy and cost optimization |
 | [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md) | EC2 production deployment guide |
-| [EC2_README.md](EC2_README.md) | EC2 documentation hub |
 | [EC2_SETUP_QUICK_REFERENCE.md](EC2_SETUP_QUICK_REFERENCE.md) | Copy-paste EC2 setup commands |
-| [EC2_JOURNALD_MIGRATION.md](EC2_JOURNALD_MIGRATION.md) | Migrating EC2 logging to journald |
+| [recon_checklist.md](recon_checklist.md) | Portfolio reconciliation QA checklist |
+| [robinhood_metric_map.md](robinhood_metric_map.md) | Robinhood UI → API field mapping |
+| [ops/NGINX_HARDENING.md](ops/NGINX_HARDENING.md) | Nginx security hardening configuration |
 
 ## Directory Structure
 
@@ -29,10 +30,14 @@ docs/
 ├── schema-report.md              # Database schema documentation
 ├── legacy-migrations.md          # Historical reference
 ├── LLM_MODELS.md                 # LLM model routing strategy
+├── FULL_CODEBASE_AUDIT.md        # Point-in-time audit (Feb 2026 snapshot)
 ├── EC2_DEPLOYMENT.md             # EC2 production deployment
-├── EC2_README.md                 # EC2 documentation hub
 ├── EC2_SETUP_QUICK_REFERENCE.md  # EC2 quick commands
-└── EC2_JOURNALD_MIGRATION.md     # Journald migration guide
+├── recon_checklist.md            # Portfolio QA checklist
+├── robinhood_metric_map.md       # Robinhood metric mapping
+├── ops/
+│   └── NGINX_HARDENING.md        # Nginx hardening snippet
+└── plans/                        # Design & implementation plans
 ```
 
 ## Essential Commands
@@ -43,12 +48,13 @@ python tests/validate_deployment.py
 python scripts/bootstrap.py
 
 # Schema management
-python scripts/schema_parser.py --output expected
+python scripts/deploy_database.py
 python scripts/verify_database.py --mode comprehensive
 
 # Core operations
 python -m src.bot.bot
 python scripts/backfill_ohlcv.py --daily
+python scripts/nightly_pipeline.py
 ```
 
 ## For AI Agents
@@ -56,7 +62,7 @@ python scripts/backfill_ohlcv.py --daily
 **Reading Order:**
 1. [AGENTS.md](../AGENTS.md) - Start here for setup and critical patterns
 2. [ARCHITECTURE.md](ARCHITECTURE.md) - Deep technical implementation
-3. [api-reference.md](api-reference.md) - Module reference
+3. [api-reference.md](api-reference.md) - Endpoint reference
 
 **Critical Setup Requirements:**
 - Supabase service role key (`sb_secret_`) in DATABASE_URL
@@ -64,11 +70,11 @@ python scripts/backfill_ohlcv.py --daily
 - Run `verify_database.py` before schema changes
 
 **Current System Status:**
-- 17 operational tables
+- 20 operational tables (migrations 060-066)
 - PostgreSQL-only (Supabase)
-- RLS policies on ohlcv_daily (authenticated read, service role full)
+- RLS policies on all tables
 - Production ready
 
 ---
 
-**Documentation Status:** Consolidated and validated (February 2026)
+**Documentation Status:** Consolidated and validated (March 2026)

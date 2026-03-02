@@ -18,11 +18,30 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.db import execute_sql
+from src.market_data_service import CRYPTO_IDENTITY, _CRYPTO_SYMBOLS, get_realtime_quotes_batch
 from src.price_service import get_latest_closes_batch, get_previous_closes_batch
 from src.snaptrade_collector import SnapTradeCollector
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _resolve_tv_symbol(symbol: str, exchange_code: str | None = None) -> str:
+    """Resolve a TradingView-compatible symbol string."""
+    # Crypto: use canonical tv_symbol from identity dict
+    identity = CRYPTO_IDENTITY.get(symbol)
+    if identity:
+        return identity["tv_symbol"]
+    # Equity: use exchange_code if available
+    if exchange_code:
+        ex = exchange_code.upper()
+        if ex in ("XNAS", "NASDAQ"):
+            return f"NASDAQ:{symbol}"
+        if ex in ("XNYS", "NYSE"):
+            return f"NYSE:{symbol}"
+        if ex in ("ARCX", "ARCA", "NYSEARCA"):
+            return f"AMEX:{symbol}"
+    return symbol
 
 
 def r2(x: Any) -> float:
@@ -64,6 +83,7 @@ class Position(BaseModel):
     portfolioDiversity: float | None = None  # equity / totalEquity * 100
     companyName: str | None = None
     assetType: str | None = None  # 'equity' | 'etf' | 'crypto' | 'option'
+    tvSymbol: str | None = None  # TradingView widget symbol (e.g. "COINBASE:BTCUSD", "NASDAQ:AAPL")
 
 
 class PortfolioSummary(BaseModel):
@@ -171,6 +191,7 @@ async def get_portfolio(
                 p.price as snaptrade_price,
                 p.raw_symbol,
                 p.account_id,
+                p.exchange_code,
                 COALESCE(s.asset_type, 'equity') as asset_type,
                 s.description as company_name
             FROM positions p
@@ -214,9 +235,6 @@ async def get_portfolio(
             fetch_results=True,
         )
 
-        # Known crypto symbols for asset_type override
-        from src.market_data_service import _CRYPTO_SYMBOLS
-
         # Extract all symbols and batch fetch prices (single query instead of N queries)
         position_rows = []
         symbols_to_fetch = []
@@ -243,23 +261,23 @@ async def get_portfolio(
             position_rows.append(row_dict)
             symbols_to_fetch.append(sym)
 
-        # Batch fetch all prices in ONE database query
-        prices_map = (
-            get_latest_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
-        )
-        # Batch fetch previous closes for day-change calculation
-        prev_closes_map = (
-            get_previous_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
-        )
+        # ---- Phase 1B: Batch fetch prices ----
+        # CRITICAL: Split by asset type to avoid crypto/equity ticker collisions.
+        # Databento ohlcv_daily has equity tickers (BTC=Grayscale, ETH=Ethan Allen)
+        # that collide with crypto symbols. Never send crypto to Databento.
+        crypto_syms = [s for s in symbols_to_fetch if s in _CRYPTO_SYMBOLS]
+        equity_syms = [s for s in symbols_to_fetch if s not in _CRYPTO_SYMBOLS]
 
-        # yfinance fallback for symbols Databento doesn't cover (e.g. crypto)
+        # Databento ONLY for equities
+        prices_map = get_latest_closes_batch(equity_syms) if equity_syms else {}
+        prev_closes_map = get_previous_closes_batch(equity_syms) if equity_syms else {}
+
+        # yfinance for ALL crypto + equity symbols Databento doesn't cover
         yf_quotes: dict[str, dict] = {}
-        databento_missing = [s for s in symbols_to_fetch if s not in prices_map]
-        if databento_missing:
+        yf_needed = crypto_syms + [s for s in equity_syms if s not in prices_map]
+        if yf_needed:
             try:
-                from src.market_data_service import get_realtime_quotes_batch
-
-                yf_quotes = get_realtime_quotes_batch(databento_missing)
+                yf_quotes = get_realtime_quotes_batch(yf_needed)
             except Exception as exc:
                 logger.debug("yfinance batch quotes skipped: %s", exc)
 
@@ -322,19 +340,42 @@ async def get_portfolio(
                 (total_gain_loss / cost_basis * 100) if cost_basis > 0 else 0
             )
 
-            # Day change from previous close (Databento → yfinance fallback)
-            prev_close = prev_closes_map.get(symbol)
-            prev_close_source = "databento" if prev_close else None
-            if not prev_close and yf_quote:
-                prev_close = yf_quote.get("previousClose")
-                if prev_close:
-                    prev_close_source = "yfinance"
-            if prev_close and prev_close > 0:
-                day_change = (current_price - prev_close) * quantity
-                day_change_pct = ((current_price - prev_close) / prev_close) * 100
+            # Day change calculation — separate logic for crypto vs equity
+            is_crypto = symbol in _CRYPTO_SYMBOLS
+
+            if is_crypto:
+                # Crypto: ALWAYS use provider's 24h change (never compute from prev_close)
+                if yf_quote and yf_quote.get("dayChangePct") is not None:
+                    day_change_pct = yf_quote["dayChangePct"]
+                    day_change = quantity * current_price * (day_change_pct / 100)
+                else:
+                    day_change_pct = None
+                    day_change = None
+                prev_close = yf_quote.get("previousClose") if yf_quote else None
+                prev_close_source = "yfinance" if prev_close else None
             else:
-                day_change = None
-                day_change_pct = None
+                # Equity: compute from prev_close with guardrails
+                prev_close = prev_closes_map.get(symbol)
+                prev_close_source = "databento" if prev_close else None
+                if not prev_close and yf_quote:
+                    prev_close = yf_quote.get("previousClose")
+                    if prev_close:
+                        prev_close_source = "yfinance"
+
+                if prev_close and prev_close > 0:
+                    day_change_pct = ((current_price - prev_close) / prev_close) * 100
+                    day_change = (current_price - prev_close) * quantity
+                    # Guard: cap at 300% — treat as data error
+                    if abs(day_change_pct) > 300:
+                        logger.warning(
+                            f"⚠️ {symbol}: day_change_pct={day_change_pct:.1f}% exceeds 300%% cap, "
+                            f"nulling (current={current_price}, prev={prev_close})"
+                        )
+                        day_change_pct = None
+                        day_change = None
+                else:
+                    day_change_pct = None
+                    day_change = None
 
             positions.append(
                 Position(
@@ -351,6 +392,7 @@ async def get_portfolio(
                     rawSymbol=row_dict.get("raw_symbol"),
                     companyName=company_names.get(symbol),
                     assetType=row_dict.get("asset_type", "equity"),
+                    tvSymbol=_resolve_tv_symbol(symbol, row_dict.get("exchange_code")),
                 )
             )
 
@@ -408,6 +450,7 @@ async def get_portfolio(
                         rawSymbol=first.rawSymbol,
                         companyName=first.companyName,
                         assetType=first.assetType,
+                        tvSymbol=first.tvSymbol,
                     )
                 )
         positions = merged_positions
@@ -706,31 +749,33 @@ async def get_movers(
             position_rows.append(rd)
             symbols.append(rd["symbol"])
 
-        prices_map = get_latest_closes_batch(symbols) if symbols else {}
-        prev_closes_map = get_previous_closes_batch(symbols) if symbols else {}
+        # Crypto-safe price routing (same pattern as GET /portfolio)
+        crypto_syms = [s for s in symbols if s in _CRYPTO_SYMBOLS]
+        equity_syms = [s for s in symbols if s not in _CRYPTO_SYMBOLS]
 
-        # yfinance fallback for missing symbols
+        prices_map = get_latest_closes_batch(equity_syms) if equity_syms else {}
+        prev_closes_map = get_previous_closes_batch(equity_syms) if equity_syms else {}
+
         yf_quotes: dict = {}
-        missing = [s for s in symbols if s not in prices_map]
-        if missing:
+        yf_needed = crypto_syms + [s for s in equity_syms if s not in prices_map]
+        if yf_needed:
             try:
-                from src.market_data_service import get_realtime_quotes_batch
-
-                yf_quotes = get_realtime_quotes_batch(missing)
+                yf_quotes = get_realtime_quotes_batch(yf_needed)
             except Exception as exc:
                 logger.debug("yfinance batch quotes skipped: %s", exc)
 
-        # Build mover items
+        # Build mover items with crypto-aware day change
         items: list[dict] = []
 
         for rd in position_rows:
             symbol = rd["symbol"]
             qty = float(rd["quantity"] or 0)
             avg_cost = float(rd["average_cost"] or 0)
+            is_crypto = symbol in _CRYPTO_SYMBOLS
 
-            # Price cascade
+            # Price cascade (crypto never uses Databento)
             snaptrade_price = float(rd.get("snaptrade_price") or 0)
-            databento_price = prices_map.get(symbol)
+            databento_price = prices_map.get(symbol) if not is_crypto else None
             yf_quote = yf_quotes.get(symbol)
 
             if databento_price:
@@ -744,24 +789,31 @@ async def get_movers(
 
             equity = qty * current_price
 
-            # Day change
-            prev_close = prev_closes_map.get(symbol)
-            if not prev_close and yf_quote:
-                prev_close = yf_quote.get("previousClose")
-
+            # Day change — crypto vs equity (same guards as GET /portfolio)
             day_change = None
             day_change_pct = None
-            if prev_close and prev_close > 0:
-                day_change = (current_price - prev_close) * qty
-                day_change_pct = ((current_price - prev_close) / prev_close) * 100
 
-            # Unrealized P/L as fallback
+            if is_crypto:
+                if yf_quote and yf_quote.get("dayChangePct") is not None:
+                    day_change_pct = yf_quote["dayChangePct"]
+                    day_change = qty * current_price * (day_change_pct / 100)
+            else:
+                prev_close = prev_closes_map.get(symbol)
+                if not prev_close and yf_quote:
+                    prev_close = yf_quote.get("previousClose")
+                if prev_close and prev_close > 0:
+                    day_change_pct = ((current_price - prev_close) / prev_close) * 100
+                    day_change = (current_price - prev_close) * qty
+                    if abs(day_change_pct) > 300:
+                        day_change_pct = None
+                        day_change = None
+
             open_pnl_pct = ((current_price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0.0
 
             items.append({
                 "symbol": symbol,
                 "currentPrice": r2(current_price),
-                "previousClose": r2n(prev_close),
+                "previousClose": r2n(prev_closes_map.get(symbol) or (yf_quote.get("previousClose") if yf_quote else None)),
                 "dayChange": r2n(day_change),
                 "dayChangePct": r2n(day_change_pct),
                 "quantity": qty,
@@ -872,7 +924,12 @@ async def get_sparklines(
         if not symbols:
             return SparklineResponse(sparklines=[], period=period.upper())
 
-        # Single query for all symbols' close prices
+        # Exclude crypto symbols — Databento ohlcv_daily is equity-only
+        equity_symbols = [s for s in symbols if s not in _CRYPTO_SYMBOLS]
+        if not equity_symbols:
+            return SparklineResponse(sparklines=[], period=period.upper())
+
+        # Single query for equity symbols' close prices
         rows = execute_sql(
             """
             SELECT symbol, date, close
@@ -882,7 +939,7 @@ async def get_sparklines(
               AND date <= :end_date
             ORDER BY symbol, date ASC
             """,
-            params={"symbols": symbols, "start_date": str(start_date), "end_date": str(end_date)},
+            params={"symbols": equity_symbols, "start_date": str(start_date), "end_date": str(end_date)},
             fetch_results=True,
         )
 
@@ -893,7 +950,7 @@ async def get_sparklines(
             grouped[rd["symbol"]].append((str(rd["date"]), float(rd["close"])))
 
         sparklines = []
-        for sym in symbols:
+        for sym in equity_symbols:
             entries = grouped.get(sym, [])
             sparklines.append(
                 SparklineData(

@@ -2,11 +2,12 @@
 Ideas API routes — unified ideas store (Discord + manual + transcribe).
 
 Endpoints:
-- GET    /ideas             — Paginated list with filters
-- POST   /ideas             — Create a new idea
-- PUT    /ideas/{id}        — Update an existing idea
-- DELETE /ideas/{id}        — Delete an idea
-- POST   /ideas/{id}/refine — AI auto-refine an idea
+- GET    /ideas              — Paginated list with filters
+- POST   /ideas              — Create a new idea
+- PUT    /ideas/{id}         — Update an existing idea
+- DELETE /ideas/{id}         — Delete an idea
+- POST   /ideas/{id}/refine  — AI auto-refine an idea
+- GET    /ideas/{id}/context — Idea with parent Discord message + surrounding context
 """
 
 import json
@@ -81,6 +82,25 @@ class RefineResponse(BaseModel):
     extractedSymbols: list[str]
     suggestedTags: list[str]
     changesSummary: str
+
+
+class ContextMessage(BaseModel):
+    """Single Discord message in context window."""
+
+    messageId: str
+    content: str
+    author: str
+    sentAt: str
+    channel: str
+    isParent: bool = False
+
+
+class IdeaContextResponse(BaseModel):
+    """Idea with parent Discord message and surrounding context."""
+
+    idea: IdeaOut
+    parentMessage: Optional[ContextMessage] = None
+    contextMessages: list[ContextMessage] = []
 
 
 # ---------------------------------------------------------------------------
@@ -420,3 +440,82 @@ async def refine_idea(
     except Exception as e:
         logger.error("Error refining idea %s: %s", idea_id, e)
         raise HTTPException(status_code=500, detail="Failed to refine idea") from None
+
+
+@router.get("/{idea_id}/context", response_model=IdeaContextResponse)
+async def get_idea_context(
+    idea_id: str = Path(..., description="Idea UUID"),
+    context_window: int = Query(5, ge=1, le=20, description="Messages before/after parent"),
+):
+    """Get idea with parent Discord message and surrounding context."""
+    # 1. Fetch the idea
+    idea_rows = execute_sql(
+        "SELECT * FROM user_ideas WHERE id = :id",
+        params={"id": idea_id}, fetch_results=True,
+    )
+    if not idea_rows:
+        raise HTTPException(status_code=404, detail="Idea not found")
+
+    idea = _row_to_idea(idea_rows[0])
+
+    # 2. Fetch parent message
+    parent_msg = None
+    context_msgs: list[ContextMessage] = []
+
+    if idea.originMessageId:
+        msg_rows = execute_sql(
+            "SELECT message_id, content, author, timestamp, channel "
+            "FROM discord_messages WHERE message_id = :msg_id",
+            params={"msg_id": idea.originMessageId}, fetch_results=True,
+        )
+        if msg_rows:
+            mr = dict(msg_rows[0]._mapping)
+            parent_msg = ContextMessage(
+                messageId=mr["message_id"],
+                content=mr["content"],
+                author=mr["author"],
+                sentAt=str(mr["timestamp"]),
+                channel=mr["channel"],
+                isParent=True,
+            )
+
+            # 3. Fetch surrounding messages from same channel
+            ctx_rows = execute_sql(
+                """
+                (SELECT message_id, content, author, timestamp, channel
+                 FROM discord_messages
+                 WHERE channel = :channel AND timestamp <= :ts
+                 ORDER BY timestamp DESC
+                 LIMIT :before)
+                UNION ALL
+                (SELECT message_id, content, author, timestamp, channel
+                 FROM discord_messages
+                 WHERE channel = :channel AND timestamp > :ts
+                 ORDER BY timestamp ASC
+                 LIMIT :after)
+                ORDER BY timestamp ASC
+                """,
+                params={
+                    "channel": mr["channel"],
+                    "ts": mr["timestamp"],
+                    "before": context_window + 1,  # +1 to include parent
+                    "after": context_window,
+                },
+                fetch_results=True,
+            )
+            for cr in (ctx_rows or []):
+                cd = dict(cr._mapping)
+                context_msgs.append(ContextMessage(
+                    messageId=cd["message_id"],
+                    content=cd["content"],
+                    author=cd["author"],
+                    sentAt=str(cd["timestamp"]),
+                    channel=cd["channel"],
+                    isParent=cd["message_id"] == idea.originMessageId,
+                ))
+
+    return IdeaContextResponse(
+        idea=idea,
+        parentMessage=parent_msg,
+        contextMessages=context_msgs,
+    )

@@ -13,6 +13,7 @@ from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
 from src.db import execute_sql
+from src.market_data_service import _CRYPTO_SYMBOLS
 from src.price_service import (
     get_latest_close,
     get_latest_closes_batch,
@@ -134,6 +135,10 @@ def _batch_fetch_volume_and_date(symbols: list[str]) -> dict[str, dict]:
     """Fetch latest volume and date for *symbols* in a single query."""
     if not symbols:
         return {}
+    # Exclude crypto symbols — Databento ohlcv_daily is equity-only
+    equity_symbols = [s for s in symbols if s.upper().strip() not in _CRYPTO_SYMBOLS]
+    if not equity_symbols:
+        return {}
     try:
         rows = execute_sql(
             """
@@ -145,7 +150,7 @@ def _batch_fetch_volume_and_date(symbols: list[str]) -> dict[str, dict]:
             WHERE symbol = ANY(:symbols)
             ORDER BY symbol, date DESC
             """,
-            params={"symbols": symbols},
+            params={"symbols": equity_symbols},
             fetch_results=True,
         )
         result: dict[str, dict] = {}

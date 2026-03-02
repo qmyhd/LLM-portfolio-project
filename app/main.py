@@ -21,6 +21,7 @@ from src.env_bootstrap import bootstrap_env
 bootstrap_env()
 
 import logging
+import os
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
@@ -43,6 +44,11 @@ from app.routes import (
     watchlist,
     webhook,
 )
+
+# Conditionally import debug routes
+_debug_enabled = os.getenv("DEBUG_ENDPOINTS") == "1"
+if _debug_enabled:
+    from app.routes import debug as debug_routes
 
 # Configure logging
 logging.basicConfig(
@@ -195,6 +201,16 @@ app.include_router(
 
 # Webhook routes - protected by signature verification, NOT API key
 app.include_router(webhook.router, prefix="/webhook", tags=["Webhooks"])
+
+# Debug routes -- disabled by default, require DEBUG_ENDPOINTS=1
+if _debug_enabled:
+    app.include_router(
+        debug_routes.router,
+        prefix="/debug",
+        tags=["Debug"],
+        dependencies=[Depends(require_api_key)],
+    )
+    logger.warning("Debug endpoints are ENABLED -- disable in production")
 
 
 @app.get("/", include_in_schema=False)

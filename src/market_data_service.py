@@ -40,11 +40,31 @@ _CRYPTO_SYMBOLS = frozenset(
      "PEPE", "TRUMP"}
 )
 
+# Canonical identity for each crypto asset — single source of truth
+# quote_symbol: yfinance-compatible symbol for price fetching
+# tv_symbol: TradingView widget symbol (EXCHANGE:PAIR format)
+CRYPTO_IDENTITY: dict[str, dict[str, str]] = {
+    "BTC":   {"quote_symbol": "BTC-USD",   "tv_symbol": "COINBASE:BTCUSD"},
+    "ETH":   {"quote_symbol": "ETH-USD",   "tv_symbol": "COINBASE:ETHUSD"},
+    "SOL":   {"quote_symbol": "SOL-USD",   "tv_symbol": "COINBASE:SOLUSD"},
+    "XRP":   {"quote_symbol": "XRP-USD",   "tv_symbol": "COINBASE:XRPUSD"},
+    "ADA":   {"quote_symbol": "ADA-USD",   "tv_symbol": "COINBASE:ADAUSD"},
+    "DOGE":  {"quote_symbol": "DOGE-USD",  "tv_symbol": "COINBASE:DOGEUSD"},
+    "AVAX":  {"quote_symbol": "AVAX-USD",  "tv_symbol": "COINBASE:AVAXUSD"},
+    "LINK":  {"quote_symbol": "LINK-USD",  "tv_symbol": "COINBASE:LINKUSD"},
+    "DOT":   {"quote_symbol": "DOT-USD",   "tv_symbol": "COINBASE:DOTUSD"},
+    "MATIC": {"quote_symbol": "MATIC-USD", "tv_symbol": "COINBASE:MATICUSD"},
+    "SHIB":  {"quote_symbol": "SHIB-USD",  "tv_symbol": "COINBASE:SHIBUSD"},
+    "PEPE":  {"quote_symbol": "PEPE-USD",  "tv_symbol": "CRYPTO:PEPEUSD"},
+    "TRUMP": {"quote_symbol": "TRUMP-USD", "tv_symbol": "CRYPTO:TRUMPUSD"},
+}
+
 
 def _yf_symbol(symbol: str) -> str:
     """Normalise a portfolio symbol into a yfinance-compatible symbol."""
-    if symbol in _CRYPTO_SYMBOLS:
-        return f"{symbol}-USD"
+    identity = CRYPTO_IDENTITY.get(symbol)
+    if identity:
+        return identity["quote_symbol"]
     return symbol
 
 

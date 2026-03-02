@@ -1,7 +1,7 @@
 # LLM Portfolio Journal - Architecture Documentation
 
-> **Last Updated:** February 24, 2026
-> **Database:** PostgreSQL (Supabase) - 20 core tables, RLS 100% compliant
+> **Last Updated:** March 1, 2026
+> **Database:** PostgreSQL (Supabase) - 20 core tables, migrations 060-066, RLS 100% compliant
 
 ## Overview
 
@@ -35,7 +35,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 - **RLS Enabled**: All tables have Row Level Security enabled
 
 **Key Tables (20 Core in Supabase):**
-- **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`
+- **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`, `activities`
 - **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`, `discord_parsed_ideas`
 - **Ideas Journal**: `user_ideas` (unified ideas from Discord, manual entry, and transcription)
 - **Discord Ingestion**: `discord_ingest_cursors` (incremental ingestion high-water marks)
@@ -63,6 +63,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 - **`message_cleaner.py`**: Discord message cleaning with ticker extraction, sentiment analysis, alias upsert
 - **`channel_processor.py`**: Production wrapper that fetches → cleans → writes to discord tables
 - **`twitter_analysis.py`**: Twitter/X sentiment analysis and data extraction
+- **`market_data_service.py`**: yfinance wrapper with TTL caching for real-time quotes, crypto identity mapping (`CRYPTO_IDENTITY`, `_CRYPTO_SYMBOLS`), and TradingView symbol resolution
 - **`discord_ingest.py`**: Incremental Discord message ingestion with cursor-based tracking and content hash deduplication
 
 #### OpenBB Fundamentals (`src/`)
@@ -166,7 +167,7 @@ SQL DDL (schema/*.sql) → schema_parser.py → expected_schemas.py → verify_d
 
 **Source Files**: 
 - `schema/060_baseline_current.sql` - Complete baseline schema (fresh installs)
-- `schema/061_*.sql` through `schema/064_*.sql` - Incremental migrations
+- `schema/061_*.sql` through `schema/066_*.sql` - Incremental migrations
 - `schema/archive/` - Retired migrations (000-059), kept for reference
 
 ### Migration Workflow

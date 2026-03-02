@@ -1,24 +1,27 @@
 # Legacy Migrations & Historical Changes
 
 > **Historical migration documentation for reference**
+> **Note**: This file covers migrations through January 2026. For current schema state (20 tables, migrations 060-066), see [schema-report.md](schema-report.md).
 
-## 📊 Schema Audit Summary (January 2026)
+## Schema Audit Summary
 
-### Current Status: ✅ Production-Ready
-- **Total Migrations:** 57 files (all properly versioned)
-- **Active Tables:** 15 (verified in use)
-- **Dropped Tables:** 10+ (safely cleaned up)
-- **Deployment:** Ready with baseline auto-detection
+### Status as of January 2026 (when this audit was performed)
 
-### The 15 Active Production Tables
+- **Migration files at that time:** 57 (000-058, with gaps)
+- **Active tables at that time:** 15
+- **Current state (March 2026):** 20 active tables, migrations consolidated into baseline 060 + incremental 061-066
+
+### The 15 Tables Active in January 2026
 
 | Category | Tables |
 |----------|--------|
 | **SnapTrade** | accounts, account_balances, positions, orders, symbols |
-| **Discord/NLP** | discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas ⭐ |
+| **Discord/NLP** | discord_messages, discord_market_clean, discord_trading_clean, discord_parsed_ideas |
 | **Twitter** | twitter_data |
 | **Market Data** | ohlcv_daily (Databento) |
 | **System** | processing_status, schema_migrations, symbol_aliases, institutional_holdings |
+
+**Tables added since (Feb-Mar 2026):** `stock_notes`, `discord_ingest_cursors`, `user_ideas`, `activities`, `stock_profile_current`, `stock_profile_history`
 
 ### Safely Dropped Tables (No Action Needed)
 - **NLP Legacy:** discord_message_chunks, discord_idea_units, stock_mentions → Replaced by discord_parsed_ideas
@@ -164,21 +167,24 @@ python scripts/deploy_database.py
 
 ## Schema Evolution
 
-### Current Schema
-- **16 Operational Tables**: Validated with proper relationships
-- **RLS Policies**: Row Level Security implementation
+### Current Schema (March 2026)
+
+- **20 Operational Tables**: Validated with proper relationships
+- **RLS Policies**: Row Level Security on all tables
 - **Primary Keys**: Aligned with live database
 - **Foreign Keys**: Validated relationships
 
 ### Key Schema Files
-- `schema/000_baseline.sql` - Complete 16-table schema definition
-- `schema/016_complete_rls_policies.sql` - Row Level Security policies
-- `schema/017_timestamp_field_migration.sql` - Modern timestamp type migration
+
+- `schema/060_baseline_current.sql` - Complete 20-table schema (fresh installs)
+- `schema/061_cleanup_migration_ledger.sql` through `schema/066_accounts_connection_status.sql` - Incremental migrations
+- `schema/archive/` - Retired migrations (000-059)
 
 ### Migration Pattern
-1. **Baseline**: `000_baseline.sql` establishes core structure
-2. **Incremental Updates**: Numbered migration files (015-020)
-3. **Validation**: Post-migration integrity checks
+
+1. **Baseline**: `060_baseline_current.sql` establishes core structure
+2. **Incremental Updates**: Numbered migration files (061-066)
+3. **Validation**: `python scripts/verify_database.py --mode comprehensive`
 
 ## Configuration Evolution
 
@@ -237,11 +243,12 @@ ARCHIVED:
 3. **Transaction Safety**: Use explicit transactions for multi-step operations
 
 ### Documentation Standards
+
 - **AGENTS.md**: Primary development guide with troubleshooting
 - **ARCHITECTURE.md**: Technical implementation details
-- **LEGACY_MIGRATIONS.md**: Historical reference (this file)
+- **legacy-migrations.md**: Historical reference (this file)
 
 ---
 
-**Last Updated: October 9, 2025**  
-**Status: All migrations completed**
+**Last Updated: March 1, 2026**
+**Status: Historical reference — see [schema-report.md](schema-report.md) for current state**
