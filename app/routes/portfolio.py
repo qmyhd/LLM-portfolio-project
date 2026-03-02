@@ -320,19 +320,42 @@ async def get_portfolio(
                 (total_gain_loss / cost_basis * 100) if cost_basis > 0 else 0
             )
 
-            # Day change from previous close (Databento → yfinance fallback)
-            prev_close = prev_closes_map.get(symbol)
-            prev_close_source = "databento" if prev_close else None
-            if not prev_close and yf_quote:
-                prev_close = yf_quote.get("previousClose")
-                if prev_close:
-                    prev_close_source = "yfinance"
-            if prev_close and prev_close > 0:
-                day_change = (current_price - prev_close) * quantity
-                day_change_pct = ((current_price - prev_close) / prev_close) * 100
+            # Day change calculation — separate logic for crypto vs equity
+            is_crypto = symbol in _CRYPTO_SYMBOLS
+
+            if is_crypto:
+                # Crypto: ALWAYS use provider's 24h change (never compute from prev_close)
+                if yf_quote and yf_quote.get("dayChangePct") is not None:
+                    day_change_pct = yf_quote["dayChangePct"]
+                    day_change = quantity * current_price * (day_change_pct / 100)
+                else:
+                    day_change_pct = None
+                    day_change = None
+                prev_close = yf_quote.get("previousClose") if yf_quote else None
+                prev_close_source = "yfinance" if prev_close else None
             else:
-                day_change = None
-                day_change_pct = None
+                # Equity: compute from prev_close with guardrails
+                prev_close = prev_closes_map.get(symbol)
+                prev_close_source = "databento" if prev_close else None
+                if not prev_close and yf_quote:
+                    prev_close = yf_quote.get("previousClose")
+                    if prev_close:
+                        prev_close_source = "yfinance"
+
+                if prev_close and prev_close > 0:
+                    day_change_pct = ((current_price - prev_close) / prev_close) * 100
+                    day_change = (current_price - prev_close) * quantity
+                    # Guard: cap at 300% — treat as data error
+                    if abs(day_change_pct) > 300:
+                        logger.warning(
+                            f"⚠️ {symbol}: day_change_pct={day_change_pct:.1f}% exceeds 300%% cap, "
+                            f"nulling (current={current_price}, prev={prev_close})"
+                        )
+                        day_change_pct = None
+                        day_change = None
+                else:
+                    day_change_pct = None
+                    day_change = None
 
             positions.append(
                 Position(

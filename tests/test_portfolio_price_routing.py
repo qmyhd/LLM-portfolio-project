@@ -25,6 +25,98 @@ def _mock_row(data: dict):
     return row
 
 
+class TestDayChangeGuardrails:
+    """Day change % must use provider 24h for crypto, cap at 300% for equity."""
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_crypto_uses_provider_24h_change(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        """Crypto day change should come from yfinance provider, not computed."""
+        mock_sql.side_effect = [
+            [_mock_row({
+                "symbol": "TRUMP", "quantity": 15, "average_cost": 5.0,
+                "snaptrade_price": 3.43, "raw_symbol": "TRUMP",
+                "account_id": "acc1", "asset_type": "Cryptocurrency",
+                "company_name": "TRUMP",
+            })],
+            [_mock_row({"total_cash": 0, "total_buying_power": 0})],
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {}
+        mock_prev.return_value = {}
+        mock_yf.return_value = {
+            "TRUMP": {"price": 3.43, "previousClose": 3.50, "dayChange": -0.07, "dayChangePct": -2.0},
+        }
+
+        response = client.get("/portfolio")
+        data = response.json()
+        trump = next(p for p in data["positions"] if p["symbol"] == "TRUMP")
+        # Should use provider's -2.0%, not compute from some random prev_close
+        assert trump["dayChangePercent"] == -2.0
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_equity_absurd_pct_nulled(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        """Equity day change > 300% should be set to null."""
+        mock_sql.side_effect = [
+            [_mock_row({
+                "symbol": "AAPL", "quantity": 10, "average_cost": 150,
+                "snaptrade_price": 178, "raw_symbol": "AAPL",
+                "account_id": "acc1", "asset_type": "Common Stock",
+                "company_name": "Apple Inc.",
+            })],
+            [_mock_row({"total_cash": 0, "total_buying_power": 0})],
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {"AAPL": 178.0}
+        mock_prev.return_value = {"AAPL": 0.50}  # Absurd → 35500% change
+        mock_yf.return_value = {}
+
+        response = client.get("/portfolio")
+        data = response.json()
+        aapl = next(p for p in data["positions"] if p["symbol"] == "AAPL")
+        assert aapl["dayChangePercent"] is None
+        assert aapl["dayChange"] is None
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_equity_missing_prev_close_nulled(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        """Equity with no prev_close should have null day change."""
+        mock_sql.side_effect = [
+            [_mock_row({
+                "symbol": "AAPL", "quantity": 10, "average_cost": 150,
+                "snaptrade_price": 178, "raw_symbol": "AAPL",
+                "account_id": "acc1", "asset_type": "Common Stock",
+                "company_name": "Apple Inc.",
+            })],
+            [_mock_row({"total_cash": 0, "total_buying_power": 0})],
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {"AAPL": 178.0}
+        mock_prev.return_value = {}
+        mock_yf.return_value = {}
+
+        response = client.get("/portfolio")
+        data = response.json()
+        aapl = next(p for p in data["positions"] if p["symbol"] == "AAPL")
+        assert aapl["dayChangePercent"] is None
+
+
 class TestCryptoPriceRouting:
     """Crypto symbols must never hit Databento; always use yfinance."""
 
