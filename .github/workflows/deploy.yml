@@ -1,0 +1,32 @@
+name: Deploy to EC2
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # Allow manual trigger from GitHub UI
+
+concurrency:
+  group: deploy-ec2
+  cancel-in-progress: false # Never cancel a running deploy
+
+jobs:
+  deploy:
+    name: Deploy to EC2
+    runs-on: ubuntu-latest
+    # Only deploy after CI tests pass
+    needs: []
+    timeout-minutes: 10
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ubuntu
+          key: ${{ secrets.EC2_SSH_KEY }}
+          port: 22
+          script_stop: true
+          script: |
+            cd /home/ubuntu/llm-portfolio
+            sudo bash scripts/deploy_ec2.sh
