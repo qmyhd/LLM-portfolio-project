@@ -263,3 +263,90 @@ class TestMoversEndpoint:
             for item in items:
                 if item["symbol"] == "BAD":
                     assert item["dayChangePct"] is None
+
+
+class TestTvSymbol:
+    """Position response must include tvSymbol for TradingView."""
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_crypto_has_canonical_tv_symbol(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        mock_sql.side_effect = [
+            [_mock_row({
+                "symbol": "BTC", "quantity": 0.001, "average_cost": 50000,
+                "snaptrade_price": 65000, "raw_symbol": "BTC",
+                "account_id": "acc1", "asset_type": "Cryptocurrency",
+                "company_name": "Bitcoin", "exchange_code": None,
+            })],
+            [_mock_row({"total_cash": 0, "total_buying_power": 0})],
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {}
+        mock_prev.return_value = {}
+        mock_yf.return_value = {
+            "BTC": {"price": 65842.71, "previousClose": 65000.0, "dayChange": 842.71, "dayChangePct": 1.30},
+        }
+
+        response = client.get("/portfolio")
+        data = response.json()
+        btc = next(p for p in data["positions"] if p["symbol"] == "BTC")
+        assert btc["tvSymbol"] == "COINBASE:BTCUSD"
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_equity_with_exchange_has_tv_symbol(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        mock_sql.side_effect = [
+            [_mock_row({
+                "symbol": "AAPL", "quantity": 10, "average_cost": 150,
+                "snaptrade_price": 178, "raw_symbol": "AAPL",
+                "account_id": "acc1", "asset_type": "Common Stock",
+                "company_name": "Apple Inc.", "exchange_code": "XNAS",
+            })],
+            [_mock_row({"total_cash": 0, "total_buying_power": 0})],
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {"AAPL": 178.0}
+        mock_prev.return_value = {"AAPL": 176.0}
+        mock_yf.return_value = {}
+
+        response = client.get("/portfolio")
+        data = response.json()
+        aapl = next(p for p in data["positions"] if p["symbol"] == "AAPL")
+        assert aapl["tvSymbol"] == "NASDAQ:AAPL"
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_equity_without_exchange_gets_bare_symbol(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        mock_sql.side_effect = [
+            [_mock_row({
+                "symbol": "RARE", "quantity": 5, "average_cost": 10,
+                "snaptrade_price": 12, "raw_symbol": "RARE",
+                "account_id": "acc1", "asset_type": "Common Stock",
+                "company_name": "Rare Stock", "exchange_code": None,
+            })],
+            [_mock_row({"total_cash": 0, "total_buying_power": 0})],
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {"RARE": 12.0}
+        mock_prev.return_value = {"RARE": 11.5}
+        mock_yf.return_value = {}
+
+        response = client.get("/portfolio")
+        data = response.json()
+        rare = next(p for p in data["positions"] if p["symbol"] == "RARE")
+        assert rare["tvSymbol"] == "RARE"  # bare symbol when no exchange

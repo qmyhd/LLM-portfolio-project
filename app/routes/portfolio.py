@@ -18,12 +18,30 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.db import execute_sql
-from src.market_data_service import _CRYPTO_SYMBOLS, get_realtime_quotes_batch
+from src.market_data_service import CRYPTO_IDENTITY, _CRYPTO_SYMBOLS, get_realtime_quotes_batch
 from src.price_service import get_latest_closes_batch, get_previous_closes_batch
 from src.snaptrade_collector import SnapTradeCollector
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _resolve_tv_symbol(symbol: str, exchange_code: str | None = None) -> str:
+    """Resolve a TradingView-compatible symbol string."""
+    # Crypto: use canonical tv_symbol from identity dict
+    identity = CRYPTO_IDENTITY.get(symbol)
+    if identity:
+        return identity["tv_symbol"]
+    # Equity: use exchange_code if available
+    if exchange_code:
+        ex = exchange_code.upper()
+        if ex in ("XNAS", "NASDAQ"):
+            return f"NASDAQ:{symbol}"
+        if ex in ("XNYS", "NYSE"):
+            return f"NYSE:{symbol}"
+        if ex in ("ARCX", "ARCA", "NYSEARCA"):
+            return f"AMEX:{symbol}"
+    return symbol
 
 
 def r2(x: Any) -> float:
@@ -65,6 +83,7 @@ class Position(BaseModel):
     portfolioDiversity: float | None = None  # equity / totalEquity * 100
     companyName: str | None = None
     assetType: str | None = None  # 'equity' | 'etf' | 'crypto' | 'option'
+    tvSymbol: str | None = None  # TradingView widget symbol (e.g. "COINBASE:BTCUSD", "NASDAQ:AAPL")
 
 
 class PortfolioSummary(BaseModel):
@@ -172,6 +191,7 @@ async def get_portfolio(
                 p.price as snaptrade_price,
                 p.raw_symbol,
                 p.account_id,
+                p.exchange_code,
                 COALESCE(s.asset_type, 'equity') as asset_type,
                 s.description as company_name
             FROM positions p
@@ -372,6 +392,7 @@ async def get_portfolio(
                     rawSymbol=row_dict.get("raw_symbol"),
                     companyName=company_names.get(symbol),
                     assetType=row_dict.get("asset_type", "equity"),
+                    tvSymbol=_resolve_tv_symbol(symbol, row_dict.get("exchange_code")),
                 )
             )
 
@@ -429,6 +450,7 @@ async def get_portfolio(
                         rawSymbol=first.rawSymbol,
                         companyName=first.companyName,
                         assetType=first.assetType,
+                        tvSymbol=first.tvSymbol,
                     )
                 )
         positions = merged_positions
