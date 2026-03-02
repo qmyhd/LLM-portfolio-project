@@ -10,9 +10,10 @@ Response models match frontend TypeScript interfaces in types/api.ts.
 """
 
 import logging
+import math
 import re
 from datetime import date, datetime, timedelta
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import JSONResponse
@@ -20,10 +21,34 @@ from pydantic import BaseModel, Field
 
 from src.db import execute_sql
 from src.market_data_service import _CRYPTO_SYMBOLS
-from src.price_service import get_ohlcv, get_latest_close, get_previous_close
+from src.price_service import get_latest_close, get_ohlcv, get_previous_close
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Safe float helpers
+# ---------------------------------------------------------------------------
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    try:
+        f = float(value)
+        return default if math.isnan(f) or math.isinf(f) else f
+    except (ValueError, TypeError):
+        return default
+
+
+def _safe_float_optional(value: Any) -> float | None:
+    if value is None:
+        return None
+    try:
+        f = float(value)
+        return None if math.isnan(f) or math.isinf(f) else f
+    except (ValueError, TypeError):
+        return None
+
 
 # ---------------------------------------------------------------------------
 # Ticker validation helper
@@ -50,45 +75,45 @@ class StockProfileCurrent(BaseModel):
     """
 
     ticker: str
-    lastUpdated: Optional[str] = None
+    lastUpdated: str | None = None
 
     # Price metrics (from ohlcv_daily)
-    latestClosePrice: Optional[float] = None
-    previousClosePrice: Optional[float] = None
-    dailyChangePct: Optional[float] = None
-    return1wPct: Optional[float] = None
-    return1mPct: Optional[float] = None
-    return3mPct: Optional[float] = None
-    return1yPct: Optional[float] = None
-    volatility30d: Optional[float] = None
-    volatility90d: Optional[float] = None
-    yearHigh: Optional[float] = None
-    yearLow: Optional[float] = None
-    avgVolume30d: Optional[int] = None
+    latestClosePrice: float | None = None
+    previousClosePrice: float | None = None
+    dailyChangePct: float | None = None
+    return1wPct: float | None = None
+    return1mPct: float | None = None
+    return3mPct: float | None = None
+    return1yPct: float | None = None
+    volatility30d: float | None = None
+    volatility90d: float | None = None
+    yearHigh: float | None = None
+    yearLow: float | None = None
+    avgVolume30d: int | None = None
 
     # Position metrics
-    currentPositionQty: Optional[float] = None
-    currentPositionValue: Optional[float] = None
-    avgBuyPrice: Optional[float] = None
-    unrealizedPnl: Optional[float] = None
-    unrealizedPnlPct: Optional[float] = None
+    currentPositionQty: float | None = None
+    currentPositionValue: float | None = None
+    avgBuyPrice: float | None = None
+    unrealizedPnl: float | None = None
+    unrealizedPnlPct: float | None = None
     totalOrdersCount: int = 0
     buyOrdersCount: int = 0
     sellOrdersCount: int = 0
-    avgOrderSize: Optional[float] = None
-    firstTradeDate: Optional[str] = None
-    lastTradeDate: Optional[str] = None
+    avgOrderSize: float | None = None
+    firstTradeDate: str | None = None
+    lastTradeDate: str | None = None
 
     # Sentiment metrics
     totalMentionCount: int = 0
     mentionCount30d: int = 0
     mentionCount7d: int = 0
-    avgSentimentScore: Optional[float] = None
-    bullishMentionPct: Optional[float] = None
-    bearishMentionPct: Optional[float] = None
-    neutralMentionPct: Optional[float] = None
-    firstMentionedAt: Optional[str] = None
-    lastMentionedAt: Optional[str] = None
+    avgSentimentScore: float | None = None
+    bullishMentionPct: float | None = None
+    bearishMentionPct: float | None = None
+    neutralMentionPct: float | None = None
+    firstMentionedAt: str | None = None
+    lastMentionedAt: str | None = None
 
     # Label counts
     labelTradeExecutionCount: int = 0
@@ -98,10 +123,10 @@ class StockProfileCurrent(BaseModel):
     labelCatalystNewsCount: int = 0
 
     # Company metadata (from yfinance)
-    companyName: Optional[str] = None
-    sector: Optional[str] = None
-    industry: Optional[str] = None
-    marketCap: Optional[int] = None
+    companyName: str | None = None
+    sector: str | None = None
+    industry: str | None = None
+    marketCap: int | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -111,8 +136,8 @@ class PriceLevel(BaseModel):
     """Price level from parsed idea (matches api.ts PriceLevel)."""
 
     kind: str  # entry, target, stop, support, resistance
-    value: Optional[float] = None
-    qualifier: Optional[str] = None
+    value: float | None = None
+    qualifier: str | None = None
 
 
 class StockIdea(BaseModel):
@@ -123,12 +148,12 @@ class StockIdea(BaseModel):
     primarySymbol: str
     symbols: list[str] = Field(default_factory=list)
     direction: str  # bullish, bearish, neutral, mixed
-    action: Optional[str] = None
+    action: str | None = None
     confidence: float
     labels: list[str]  # TradingLabel enum values
     levels: list[PriceLevel] = Field(default_factory=list)
     ideaText: str
-    ideaSummary: Optional[str] = None
+    ideaSummary: str | None = None
     author: str
     sourceChannel: str
     sourceCreatedAt: str  # ISO timestamp
@@ -173,6 +198,30 @@ class OHLCVSeries(BaseModel):
     period: str
     data: list[OHLCVBar]
     orders: list[ChartOrder]
+
+
+# ---------------------------------------------------------------------------
+# Stock activity models  (matches api.ts StockActivity)
+# ---------------------------------------------------------------------------
+class StockActivity(BaseModel):
+    """Activity record for a specific stock."""
+
+    id: str
+    activityType: str | None = None
+    tradeDate: str | None = None
+    price: float | None = None
+    units: float | None = None
+    amount: float = 0.0
+    fee: float = 0.0
+    description: str | None = None
+
+
+class StockActivitiesResponse(BaseModel):
+    """Activities for a specific stock."""
+
+    ticker: str
+    activities: list[StockActivity]
+    total: int
 
 
 @router.get("/{ticker}", response_model=StockProfileCurrent)
@@ -305,7 +354,7 @@ async def get_stock_profile(
         )
         total_ment = int(sd.get("total_mentions") or 0)
 
-        def _pct(n: int) -> Optional[float]:
+        def _pct(n: int) -> float | None:
             return round(n / total_ment * 100, 1) if total_ment else None
 
         # ---- 6. Label counts -----------------------------------------------
@@ -332,10 +381,10 @@ async def get_stock_profile(
         now_str = datetime.utcnow().isoformat() + "Z"
 
         # ---- 7. yfinance enrichment (return metrics + company info) --------
-        yf_returns: Optional[dict] = None
-        yf_company: Optional[dict] = None
+        yf_returns: dict | None = None
+        yf_company: dict | None = None
         try:
-            from src.market_data_service import get_return_metrics, get_company_info
+            from src.market_data_service import get_company_info, get_return_metrics
 
             yf_returns = get_return_metrics(symbol)
             yf_company = get_company_info(symbol)
@@ -413,7 +462,7 @@ async def get_stock_profile(
 @router.get("/{ticker}/ideas", response_model=IdeasResponse)
 async def get_stock_ideas(
     ticker: str = Path(..., description="Stock ticker symbol"),
-    direction: Optional[str] = Query(
+    direction: str | None = Query(
         None, description="Filter by direction (bullish, bearish, neutral)"
     ),
     limit: int = Query(50, ge=1, le=100, description="Number of ideas to return"),
@@ -426,8 +475,8 @@ async def get_stock_ideas(
     symbol = _validate_ticker(ticker)
 
     try:
-        # Build query
-        conditions = ["UPPER(dpi.primary_symbol) = :symbol"]
+        # Build query — search both primary_symbol and symbols[] array
+        conditions = ["(UPPER(dpi.primary_symbol) = :symbol OR :symbol = ANY(dpi.symbols))"]
         params: dict = {"symbol": symbol, "limit": limit}
 
         if direction:
@@ -510,10 +559,20 @@ async def get_stock_ideas(
                 )
             )
 
+        # Get total count (may be more than returned due to limit)
+        count_q = """
+            SELECT COUNT(*) as cnt FROM discord_parsed_ideas dpi
+            WHERE (UPPER(dpi.primary_symbol) = :symbol OR :symbol = ANY(dpi.symbols))
+        """
+        if direction:
+            count_q += " AND dpi.direction = :direction"
+        count_rows = execute_sql(count_q, params=params, fetch_results=True)
+        total = int(count_rows[0]["cnt"]) if count_rows else len(ideas)
+
         return IdeasResponse(
             ticker=symbol,
             ideas=ideas,
-            total=len(ideas),
+            total=total,
         )
 
     except Exception as e:
@@ -643,3 +702,55 @@ async def get_stock_ohlcv(
         raise HTTPException(
             status_code=500, detail=f"Failed to fetch OHLCV for {symbol}"
         )
+
+
+@router.get("/{ticker}/activities", response_model=StockActivitiesResponse)
+async def get_stock_activities(
+    ticker: str = Path(..., description="Stock ticker symbol"),
+    limit: int = Query(50, ge=1, le=200, description="Number of activities"),
+    offset: int = Query(0, ge=0, description="Offset for pagination"),
+):
+    """Get trade and dividend activity history for a specific stock."""
+    clean = _validate_ticker(ticker)
+
+    try:
+        count_q = """
+            SELECT COUNT(*) as cnt
+            FROM activities
+            WHERE UPPER(symbol) = UPPER(:ticker)
+        """
+        count_rows = execute_sql(count_q, params={"ticker": clean}, fetch_results=True)
+        total = int(count_rows[0]["cnt"]) if count_rows else 0
+
+        query = """
+            SELECT id, activity_type, trade_date, price, units, amount, fee, description
+            FROM activities
+            WHERE UPPER(symbol) = UPPER(:ticker)
+            ORDER BY trade_date DESC, created_at DESC
+            LIMIT :limit OFFSET :offset
+        """
+        rows = execute_sql(
+            query, params={"ticker": clean, "limit": limit, "offset": offset}, fetch_results=True
+        ) or []
+
+        activities = []
+        for r in rows:
+            row = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)
+            activities.append(
+                StockActivity(
+                    id=str(row.get("id", "")),
+                    activityType=row.get("activity_type"),
+                    tradeDate=str(row["trade_date"]) if row.get("trade_date") else None,
+                    price=_safe_float_optional(row.get("price")),
+                    units=_safe_float_optional(row.get("units")),
+                    amount=_safe_float(row.get("amount")),
+                    fee=_safe_float(row.get("fee")),
+                    description=row.get("description"),
+                )
+            )
+
+        return StockActivitiesResponse(ticker=clean, activities=activities, total=total)
+
+    except Exception as e:
+        logger.error(f"Error fetching activities for {clean}: {e}", exc_info=True)
+        return StockActivitiesResponse(ticker=clean, activities=[], total=0)
