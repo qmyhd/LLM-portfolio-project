@@ -7,6 +7,7 @@ Endpoints:
 
 import logging
 import math
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -17,6 +18,12 @@ from src.db import execute_sql
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# UUID pattern to detect symbols that are actually UUIDs (bad data from brokerage)
+_UUID_SYMBOL_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-", re.IGNORECASE)
+
+# Trade-relevant actions (excludes DRIP, DIVIDEND, etc.)
+TRADE_ACTIONS = ("BUY", "SELL", "BUY_OPEN", "SELL_CLOSE", "BUY_TO_COVER", "SELL_SHORT")
 
 
 def safe_float(value: Any, default: float = 0.0) -> float:
@@ -74,6 +81,7 @@ async def get_orders(
         None, description="Filter by status (filled, pending, cancelled)"
     ),
     ticker: Optional[str] = Query(None, description="Filter by ticker symbol"),
+    include_drip: bool = Query(False, description="Include DRIP/dividend reinvestment orders"),
 ):
     """
     Get order history with optional filters.
@@ -83,6 +91,7 @@ async def get_orders(
         offset: Pagination offset
         status: Filter by order status
         ticker: Filter by ticker symbol
+        include_drip: If False (default), only show trade-relevant actions (BUY/SELL/etc.)
 
     Returns:
         List of orders with metadata
@@ -102,6 +111,11 @@ async def get_orders(
         if ticker:
             conditions.append("UPPER(o.symbol) = UPPER(:ticker)")
             params["ticker"] = ticker
+
+        if not include_drip:
+            conditions.append("UPPER(o.action) IN (:act_0, :act_1, :act_2, :act_3, :act_4, :act_5)")
+            for i, action in enumerate(TRADE_ACTIONS):
+                params[f"act_{i}"] = action
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -135,10 +149,13 @@ async def get_orders(
         orders = []
         for row in orders_list:
             row_dict: dict[str, Any] = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)  # type: ignore[arg-type]
+            # Guard: replace UUID-like symbols with "Unknown"
+            raw_symbol = row_dict["symbol"] or "UNKNOWN"
+            symbol = "Unknown" if _UUID_SYMBOL_RE.match(raw_symbol) else raw_symbol
             orders.append(
                 Order(
                     brokerageOrderId=str(row_dict["id"]),
-                    symbol=row_dict["symbol"] or "UNKNOWN",
+                    symbol=symbol,
                     action=(row_dict["side"] or "BUY").upper(),
                     orderType=row_dict["type"] or "market",
                     status=row_dict["status"] or "unknown",
