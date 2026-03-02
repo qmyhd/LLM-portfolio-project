@@ -18,7 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.db import execute_sql
-from src.market_data_service import CRYPTO_IDENTITY, _CRYPTO_SYMBOLS, get_realtime_quotes_batch
+from src.market_data_service import _CRYPTO_SYMBOLS, CRYPTO_IDENTITY, get_realtime_quotes_batch, get_return_metrics
 from src.price_service import get_latest_closes_batch, get_previous_closes_batch
 from src.snaptrade_collector import SnapTradeCollector
 
@@ -84,6 +84,7 @@ class Position(BaseModel):
     companyName: str | None = None
     assetType: str | None = None  # 'equity' | 'etf' | 'crypto' | 'option'
     tvSymbol: str | None = None  # TradingView widget symbol (e.g. "COINBASE:BTCUSD", "NASDAQ:AAPL")
+    weekChangePct: float | None = None  # 1-week return % from yfinance
 
 
 class PortfolioSummary(BaseModel):
@@ -377,6 +378,15 @@ async def get_portfolio(
                     day_change_pct = None
                     day_change = None
 
+            # Week change from yfinance return metrics (cached, no extra API call)
+            week_change_pct = None
+            try:
+                rm = get_return_metrics(symbol)
+                if rm:
+                    week_change_pct = r2n(rm.get("return1w"))
+            except Exception:
+                pass
+
             positions.append(
                 Position(
                     symbol=symbol,
@@ -393,6 +403,7 @@ async def get_portfolio(
                     companyName=company_names.get(symbol),
                     assetType=row_dict.get("asset_type", "equity"),
                     tvSymbol=_resolve_tv_symbol(symbol, row_dict.get("exchange_code")),
+                    weekChangePct=week_change_pct,
                 )
             )
 
@@ -451,6 +462,7 @@ async def get_portfolio(
                         companyName=first.companyName,
                         assetType=first.assetType,
                         tvSymbol=first.tvSymbol,
+                        weekChangePct=first.weekChangePct,
                     )
                 )
         positions = merged_positions
