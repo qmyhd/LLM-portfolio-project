@@ -99,7 +99,11 @@ Consolidated schema in `schema/` (060_baseline_current.sql + 061-066 incremental
 
 ### Deployment
 
-EC2 systemd services: `discord-bot.service` (long-running), `api.service` (FastAPI), `nightly-pipeline.service` + `.timer` (1 AM ET cron). Secrets via AWS Secrets Manager (`USE_AWS_SECRETS=1`). No Docker.
+**Auto-deploy**: Every push to `main` triggers `.github/workflows/deploy.yml` → SSH into EC2 → `scripts/deploy_ec2.sh` (pull, pip install, doctor checks, restart services, health check). Monitor at GitHub Actions tab.
+
+**EC2 services**: `api.service` (FastAPI), `discord-bot.service` (long-running), `nightly-pipeline.service` + `.timer` (1 AM ET cron). Secrets via AWS Secrets Manager (`USE_AWS_SECRETS=1`). No Docker.
+
+**Scripts**: `scripts/deploy_ec2.sh` (canonical deploy), `scripts/doctor_ec2.sh` (environment health check).
 
 ## Critical Patterns
 

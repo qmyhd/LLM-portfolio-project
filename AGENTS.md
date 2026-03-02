@@ -47,6 +47,9 @@ Sophisticated data-driven portfolio analytics system:
 
 ```bash
 src/bot/bot.py                        # Discord bot entry point with Twitter integration
+app/main.py                           # FastAPI backend entry point
+scripts/deploy_ec2.sh                 # EC2 deploy (called by GitHub Actions on push to main)
+scripts/doctor_ec2.sh                 # EC2 environment health check
 scripts/backfill_ohlcv.py             # Databento OHLCV backfill CLI for EC2
 scripts/nlp/parse_messages.py         # NLP parsing pipeline entry point
 ```
@@ -110,6 +113,8 @@ schema/
     └── README.md
 
 scripts/
+├── deploy_ec2.sh                     # Canonical deploy: pull, install, doctor, restart, health check
+├── doctor_ec2.sh                     # Environment health check (venv, DB, API, systemd, nginx)
 ├── bootstrap.py                      # Comprehensive database setup and validation
 ├── deploy_database.py                # Unified database deployment system
 ├── schema_parser.py                  # Schema parsing and dataclass generation

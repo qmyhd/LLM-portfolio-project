@@ -3,10 +3,23 @@
 > **Canonical guide:** [EC2_DEPLOYMENT.md](EC2_DEPLOYMENT.md) (kept current).
 > This file is a compact checklist only.
 
-## Quick Redeploy (existing EC2)
+## Auto-Deploy (primary method)
+
+Every push to `main` triggers GitHub Actions → SSH → `scripts/deploy_ec2.sh`.
+Monitor at: `github.com/qmyhd/LLM-portfolio-project/actions`
+
+## Manual Deploy (fallback)
 
 ```bash
-ssh -i /path/to/keypair.pem ubuntu@YOUR_EC2_IP
+ssh -i ~/.ssh/backfillkey.pem ubuntu@18.210.90.214
+cd /home/ubuntu/llm-portfolio
+sudo bash scripts/deploy_ec2.sh
+```
+
+## Full Manual Redeploy (schema migrations, systemd changes)
+
+```bash
+ssh -i ~/.ssh/backfillkey.pem ubuntu@18.210.90.214
 cd /home/ubuntu/llm-portfolio
 git pull origin main
 source .venv/bin/activate

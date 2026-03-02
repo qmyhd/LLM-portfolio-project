@@ -1,9 +1,10 @@
 # EC2 Deployment Guide
 
-> **Last Updated:** February 8, 2026
+> **Last Updated:** March 2, 2026
 > **Target:** Ubuntu 22.04 LTS (or 24.04 LTS)
 
 This guide covers deploying the LLM Portfolio Journal to EC2 with:
+- **Automatic deploys** via GitHub Actions on every push to `main`
 - AWS Secrets Manager for secure credential storage
 - Discord bot and FastAPI server running continuously via systemd
 - Reliable daily data pipeline via systemd timers
@@ -14,9 +15,47 @@ This guide covers deploying the LLM Portfolio Journal to EC2 with:
 
 ---
 
-## Updating an Existing EC2 (Quick Redeploy)
+## Automatic Deployment (GitHub Actions)
 
-If you already have an EC2 running and want to deploy the latest code changes:
+Every push to `main` triggers a GitHub Actions workflow (`.github/workflows/deploy.yml`) that SSHes into EC2 and runs `scripts/deploy_ec2.sh`. This is the primary deploy method.
+
+**What the workflow does:**
+1. Connects to EC2 via SSH using `appleboy/ssh-action`
+2. Runs `sudo bash scripts/deploy_ec2.sh` which handles everything:
+   - Switches to `main` and pulls latest (`--ff-only`)
+   - Installs/updates Python dependencies
+   - Pre-builds OpenBB (avoids first-import latency in systemd)
+   - Runs `doctor_ec2.sh` environment health checks
+   - Validates nginx config
+   - Restarts `api.service` and `discord-bot.service`
+   - Waits for API and runs health check (up to 15s)
+
+**Required GitHub Secrets:**
+
+| Secret | Value |
+|--------|-------|
+| `EC2_HOST` | Elastic IP (e.g., `18.210.90.214`) |
+| `EC2_SSH_KEY` | Contents of the SSH private key (PEM format) |
+
+**Required Security Group Rules:**
+- Port 22 (SSH) must be open to `0.0.0.0/0` to allow GitHub Actions runners (which use dynamic IPs)
+- Port 80/443 open to `0.0.0.0/0` for HTTP/HTTPS traffic
+
+**Monitor deploys:** Check the Actions tab at `github.com/qmyhd/LLM-portfolio-project/actions`
+
+### Manual Deploy (fallback)
+
+If auto-deploy fails or you need to deploy manually:
+
+```bash
+ssh -i ~/.ssh/backfillkey.pem ubuntu@18.210.90.214
+cd /home/ubuntu/llm-portfolio
+sudo bash scripts/deploy_ec2.sh
+```
+
+## Updating an Existing EC2 (Full Manual Redeploy)
+
+If you need to do a more involved update (schema migrations, systemd changes, etc.):
 
 ```bash
 ssh ubuntu@your-ec2-ip
@@ -107,31 +146,16 @@ for r in rows: print(dict(r._mapping))
 "
 ```
 
-### Session 8 Post-Push (Feb 8, 2026) — Copy-Paste Block
+### Environment Health Check
 
-This session's backend changes: webhook signature hardening (single canonical `Signature` header, removed deprecated `X-SnapTrade-Signature` fallback) and nginx security hardening (scanner blocking, method filtering, docs hiding). No new schema migrations. No backend Python dependency changes.
-
-> **Frontend:** The new UI components (CursorTrail, StarfieldBackground, SigninIntro, scroll-snap CSS) deploy automatically via Vercel on push to `LLM-portfolio-frontend/main`. No EC2 action required for frontend.
+Run `doctor_ec2.sh` to validate the full EC2 environment:
 
 ```bash
-ssh -i "~/.ssh/backfillkey.pem" ubuntu@ec2-3-80-44-55.compute-1.amazonaws.com
 cd /home/ubuntu/llm-portfolio
-
-# Pull + redeploy (no new deps or migrations)
-git pull origin main
-source .venv/bin/activate
-
-# Nginx: hardening snippet is edited in place (see docs/ops/NGINX_HARDENING.md)
-sudo nginx -t && sudo systemctl reload nginx
-
-# Restart API (webhook hardening: canonical Signature header only)
-sudo systemctl restart api.service
-
-# Quick smoke test
-curl -s http://127.0.0.1:8000/health | python3 -m json.tool
-sudo systemctl status api.service discord-bot.service --no-pager
-sudo journalctl -u api.service -n 10 --no-pager
+bash scripts/doctor_ec2.sh
 ```
+
+This checks: venv, env file, Python imports, DB connectivity, API health, systemd services, and nginx config.
 
 ---
 
@@ -140,7 +164,7 @@ sudo journalctl -u api.service -n 10 --no-pager
 | Component | Configuration |
 |-----------|--------------|
 | OS | Ubuntu 22.04/24.04 LTS |
-| Instance | t3.micro or t3.small (x86_64) |
+| Instance | t3.small (x86_64), 2GB RAM + 2GB swap |
 | Python | 3.11+ |
 | Process Manager | systemd |
 | Reverse Proxy | Nginx with Certbot SSL |
@@ -210,7 +234,8 @@ Never edit an already-applied file—always create a new one.
 ### AWS Resources
 - **EC2 Instance**: t3.micro or t3.small (~$8-15/month)
 - **IAM Role**: Attached to EC2 with `secretsmanager:GetSecretValue`
-- **Security Group**: Allow inbound 22 (SSH), 80 (HTTP), 443 (HTTPS); outbound all
+- **Elastic IP**: Static IP assigned (survives stop/start)
+- **Security Group**: Allow inbound 22 (SSH, 0.0.0.0/0 for GitHub Actions), 80 (HTTP), 443 (HTTPS); outbound all
 - **Secrets Manager Secret**: `qqqAppsecrets`
 
 ### Secrets Manager Setup
@@ -725,9 +750,13 @@ sudo systemctl restart api.service discord-bot.service
 | `systemd/nightly-pipeline.service` | Nightly pipeline service |
 | `systemd/nightly-pipeline.timer` | Nightly pipeline timer (1 AM ET) |
 | `nginx/snippets/api_hardening.conf` | Nginx hardening snippet (paste into server{}) |
+| `scripts/deploy_ec2.sh` | Canonical deploy script (pull, install, doctor, restart, health check) |
+| `scripts/doctor_ec2.sh` | Environment health check (venv, DB, API, systemd, nginx) |
 | `scripts/bootstrap.sh` | Automated EC2 setup |
 | `scripts/check_secrets.py` | AWS Secrets Manager validation |
 | `scripts/preflight_ec2.sh` | EC2 readiness check |
+| `.github/workflows/deploy.yml` | GitHub Actions auto-deploy on push to main |
+| `.github/workflows/ci.yml` | CI tests (Python 3.11/3.12, import validation) |
 | `scripts/start_bot_with_secrets.py` | Bot startup with secrets |
 | `scripts/nightly_pipeline.py` | Canonical nightly pipeline orchestrator |
 | `src/aws_secrets.py` | AWS Secrets Manager helper |
