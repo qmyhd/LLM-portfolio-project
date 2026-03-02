@@ -82,24 +82,30 @@ async def symbol_trace(
     )
     symbols_row = _serialize_row(dict(sym_data[0]._mapping)) if sym_data else None
 
-    # 3. Recent activities
-    act_data = execute_sql(
+    # 3. Recent activities (respect account_id filter)
+    act_query = (
         "SELECT id, activity_type, trade_date, amount, price, units, symbol "
         "FROM activities WHERE UPPER(symbol) = UPPER(:symbol) "
-        "ORDER BY trade_date DESC LIMIT 5",
-        params={"symbol": symbol},
-        fetch_results=True,
     )
+    act_params: dict = {"symbol": symbol}
+    if account_id:
+        act_query += "AND account_id = :account_id "
+        act_params["account_id"] = account_id
+    act_query += "ORDER BY trade_date DESC LIMIT 5"
+    act_data = execute_sql(act_query, params=act_params, fetch_results=True)
     activities = [_serialize_row(dict(r._mapping)) for r in (act_data or [])]
 
-    # 4. Recent orders
-    ord_data = execute_sql(
+    # 4. Recent orders (respect account_id filter)
+    ord_query = (
         "SELECT brokerage_order_id, symbol, action, status, execution_price "
         "FROM orders WHERE UPPER(symbol) = UPPER(:symbol) "
-        "ORDER BY time_placed DESC LIMIT 5",
-        params={"symbol": symbol},
-        fetch_results=True,
     )
+    ord_params: dict = {"symbol": symbol}
+    if account_id:
+        ord_query += "AND account_id = :account_id "
+        ord_params["account_id"] = account_id
+    ord_query += "ORDER BY time_placed DESC LIMIT 5"
+    ord_data = execute_sql(ord_query, params=ord_params, fetch_results=True)
     orders = [_serialize_row(dict(r._mapping)) for r in (ord_data or [])]
 
     # 5. Price resolution trace

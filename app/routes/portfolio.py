@@ -924,7 +924,12 @@ async def get_sparklines(
         if not symbols:
             return SparklineResponse(sparklines=[], period=period.upper())
 
-        # Single query for all symbols' close prices
+        # Exclude crypto symbols — Databento ohlcv_daily is equity-only
+        equity_symbols = [s for s in symbols if s not in _CRYPTO_SYMBOLS]
+        if not equity_symbols:
+            return SparklineResponse(sparklines=[], period=period.upper())
+
+        # Single query for equity symbols' close prices
         rows = execute_sql(
             """
             SELECT symbol, date, close
@@ -934,7 +939,7 @@ async def get_sparklines(
               AND date <= :end_date
             ORDER BY symbol, date ASC
             """,
-            params={"symbols": symbols, "start_date": str(start_date), "end_date": str(end_date)},
+            params={"symbols": equity_symbols, "start_date": str(start_date), "end_date": str(end_date)},
             fetch_results=True,
         )
 
@@ -945,7 +950,7 @@ async def get_sparklines(
             grouped[rd["symbol"]].append((str(rd["date"]), float(rd["close"])))
 
         sparklines = []
-        for sym in symbols:
+        for sym in equity_symbols:
             entries = grouped.get(sym, [])
             sparklines.append(
                 SparklineData(

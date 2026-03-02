@@ -30,6 +30,7 @@ from typing import Optional
 import pandas as pd
 
 from src.db import execute_sql, healthcheck
+from src.market_data_service import _CRYPTO_SYMBOLS
 from src.retry_utils import hardened_retry
 
 logger = logging.getLogger(__name__)
@@ -65,6 +66,10 @@ def get_ohlcv(
         2024-01-02  185.12  186.45  184.80  185.50  45000000
     """
     symbol = symbol.upper().strip()
+
+    # Databento ohlcv_daily is equity-only; crypto tickers collide with equity names
+    if symbol in _CRYPTO_SYMBOLS:
+        return pd.DataFrame()
 
     try:
         rows = execute_sql(
@@ -142,8 +147,11 @@ def get_latest_closes_batch(symbols: list[str]) -> dict[str, float]:
     if not symbols:
         return {}
 
-    # Normalize symbols
-    symbols = [s.upper().strip() for s in symbols]
+    # Normalize symbols and strip crypto (Databento has equity-only OHLCV data;
+    # crypto tickers like BTC/ETH/SOL collide with equity names in ohlcv_daily)
+    symbols = [s.upper().strip() for s in symbols if s.upper().strip() not in _CRYPTO_SYMBOLS]
+    if not symbols:
+        return {}
 
     try:
         # Use a subquery to get the latest date for each symbol, then join to get prices
@@ -209,7 +217,11 @@ def get_previous_closes_batch(
     if not symbols:
         return {}
 
-    symbols = [s.upper().strip() for s in symbols]
+    # Strip crypto symbols — Databento ohlcv_daily is equity-only
+    symbols = [s.upper().strip() for s in symbols if s.upper().strip() not in _CRYPTO_SYMBOLS]
+    if not symbols:
+        return {}
+
     if before_date is None:
         before_date = date.today()
 
@@ -273,6 +285,10 @@ def get_latest_close(symbol: str) -> Optional[float]:
     """
     symbol = symbol.upper().strip()
 
+    # Databento ohlcv_daily is equity-only; crypto tickers collide with equity names
+    if symbol in _CRYPTO_SYMBOLS:
+        return None
+
     try:
         rows = execute_sql(
             """
@@ -319,6 +335,10 @@ def get_previous_close(
         >>> print(f"AAPL previous close: ${prev:.2f}")
     """
     symbol = symbol.upper().strip()
+
+    if symbol in _CRYPTO_SYMBOLS:
+        return None
+
     if before_date is None:
         before_date = date.today()
 
@@ -392,8 +412,10 @@ def get_latest_close_batch(symbols: list[str]) -> dict[str, float]:
     if not symbols:
         return {}
 
-    # Clean symbols
-    clean_symbols = [s.upper().strip() for s in symbols]
+    # Clean symbols and strip crypto (Databento ohlcv_daily is equity-only)
+    clean_symbols = [s.upper().strip() for s in symbols if s.upper().strip() not in _CRYPTO_SYMBOLS]
+    if not clean_symbols:
+        return {}
 
     try:
         # Use a more efficient batch query with DISTINCT ON

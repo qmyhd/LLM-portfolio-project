@@ -19,6 +19,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
 from src.db import execute_sql
+from src.market_data_service import _CRYPTO_SYMBOLS
 from src.price_service import get_ohlcv, get_latest_close, get_previous_close
 
 logger = logging.getLogger(__name__)
@@ -207,25 +208,35 @@ async def get_stock_profile(
         latest = current_price or 0.0
         prev = previous_close or latest
         daily_chg_pct = round(((latest - prev) / prev) * 100, 2) if prev else None
+        # Guard: cap at 300% — treat as data error (same as portfolio endpoint)
+        if daily_chg_pct is not None and abs(daily_chg_pct) > 300:
+            logger.warning(
+                f"⚠️ {symbol}: daily_chg_pct={daily_chg_pct:.1f}% exceeds 300%% cap, nulling"
+            )
+            daily_chg_pct = None
 
         # ---- 2. 52-week high/low & avg volume (30d) from ohlcv_daily -------
-        stats = execute_sql(
-            """
-            SELECT
-                MAX(high)  AS year_high,
-                MIN(low)   AS year_low,
-                AVG(volume) FILTER (WHERE date >= CURRENT_DATE - 30)  AS avg_vol_30d
-            FROM ohlcv_daily
-            WHERE symbol = :s AND date >= CURRENT_DATE - 365
-            """,
-            params={"s": symbol},
-            fetch_results=True,
-        )
-        stats_dict = (
-            dict(stats[0]._mapping)  # type: ignore[arg-type]
-            if stats and hasattr(stats[0], "_mapping")
-            else {}
-        )
+        # Databento ohlcv_daily is equity-only; skip for crypto symbols
+        if symbol in _CRYPTO_SYMBOLS:
+            stats_dict = {}
+        else:
+            stats = execute_sql(
+                """
+                SELECT
+                    MAX(high)  AS year_high,
+                    MIN(low)   AS year_low,
+                    AVG(volume) FILTER (WHERE date >= CURRENT_DATE - 30)  AS avg_vol_30d
+                FROM ohlcv_daily
+                WHERE symbol = :s AND date >= CURRENT_DATE - 365
+                """,
+                params={"s": symbol},
+                fetch_results=True,
+            )
+            stats_dict = (
+                dict(stats[0]._mapping)  # type: ignore[arg-type]
+                if stats and hasattr(stats[0], "_mapping")
+                else {}
+            )
 
         # ---- 3. Position metrics -------------------------------------------
         pos = execute_sql(

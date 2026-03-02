@@ -1,8 +1,9 @@
 # Full Codebase Audit Report
 
-> **Generated**: July 2026  
-> **Scope**: `LLM-portfolio-project` (backend) + `LLM-portfolio-frontend` (Next.js)  
+> **Generated**: February 2026 (point-in-time snapshot — may not reflect current state)
+> **Scope**: `LLM-portfolio-project` (backend) + `LLM-portfolio-frontend` (Next.js)
 > **Purpose**: File-by-file documentation, overlap/redundancy tracking, issue inventory
+> **Note**: This is a historical audit. Schema has since grown from 17 to 20 tables (migrations 060-066). See [CODEBASE_MAP.md](CODEBASE_MAP.md) for current state.
 
 ---
 

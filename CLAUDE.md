@@ -80,8 +80,10 @@ OpenBB (FMP+SEC)─┘→ Cached fundamentals/filings/news → FastAPI → Next.
 - **`src/databento_collector.py`** — Databento OHLCV → Supabase upsert + optional S3 archive
 - **`src/retry_utils.py`** — `@hardened_retry()` for API calls, `@database_retry()` for DB operations, `@snaptrade_retry()` for SnapTrade SDK calls (429 rate-limit aware)
 - **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes, company info, return metrics, and search fallback
+- **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes. Defines `CRYPTO_IDENTITY` dict (TradingView symbol mapping) and `_CRYPTO_SYMBOLS` frozenset (13 crypto tickers) used as guards against Databento ticker collisions.
 - **`src/message_cleaner.py`** — Ticker extraction (`$AAPL`, `$BRK.B`), sentiment scoring via vaderSentiment
 - **`src/openbb_service.py`** — OpenBB Platform SDK wrapper. Thread-safe TTL caches (transcripts 24h, fundamentals 1h, news 15m). FMP provider for fundamentals/transcripts/management/news, SEC provider for filings (free). Never raises — returns `None`/`[]` on failure. Requires `FMP_API_KEY` for FMP data.
+- **`src/discord_ingest.py`** — Incremental Discord message ingestion with cursor-based tracking and content hash deduplication
 
 ### Discord Bot (`src/bot/`)
 
@@ -89,7 +91,11 @@ Modular command pattern. Each command file in `src/bot/commands/` exports a `reg
 
 ### Database Schema
 
-Consolidated schema in `schema/` (060_baseline_current.sql + 061_cleanup, older files archived). Recent migrations: 065 (account_balances PK), 066 (accounts connection_status columns). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `twitter_data`, `stock_profile_current`, `stock_notes`. All tables have RLS enabled — service role key required in DATABASE_URL.
+Consolidated schema in `schema/` (060_baseline_current.sql + 061-066 incremental, older files archived). 20 active tables. Recent migrations: 062 (stock_notes), 063 (discord_ingest_cursors), 064 (user_ideas), 065 (account_balances PK), 066 (accounts connection_status). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `activities`, `user_ideas`, `twitter_data`, `stock_profile_current`, `stock_notes`, `discord_ingest_cursors`. All tables have RLS enabled — service role key required in DATABASE_URL.
+
+### FastAPI Routes (`app/routes/`)
+
+14 route files: `portfolio.py` (positions, sync, movers, sparklines), `orders.py`, `stocks.py` (profile, ideas, OHLCV), `openbb.py` (transcripts, fundamentals, filings, news, notes), `chat.py`, `search.py`, `watchlist.py`, `ideas.py` (CRUD, refine, context), `activities.py`, `connections.py`, `sentiment.py`, `webhook.py`, `debug.py` (opt-in via `DEBUG_ENDPOINTS=1`).
 
 ### Deployment
 

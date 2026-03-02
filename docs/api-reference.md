@@ -1,5 +1,7 @@
 # API Reference Documentation
 
+> **Last Updated:** March 1, 2026
+
 ## REST API (FastAPI)
 
 The FastAPI application provides REST endpoints for the LLM Portfolio Journal frontend and integrations.
@@ -58,6 +60,13 @@ Health check endpoint for monitoring and load balancers.
 
 Get portfolio summary and all positions with current prices.
 
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `asset_class` | string | null | Filter: `equity`, `crypto`, `all`, or omit for all |
+| `account_id` | string | null | Filter by account ID, or `all` for all accounts |
+| `recon` | bool | false | Include per-position debug metadata (price sources, raw values) |
+
 **Response Model:** `PortfolioResponse`
 
 ```json
@@ -110,6 +119,7 @@ Get order history with optional filters.
 | `status` | string | null | Filter: `filled`, `pending`, `cancelled` |
 | `ticker` | string | null | Filter by ticker symbol |
 | `notified` | bool | null | Filter by Discord notification status |
+| `include_drip` | bool | false | Include DRIP/dividend reinvestment orders |
 
 **Response Model:** `OrdersResponse`
 
@@ -166,6 +176,30 @@ Get top portfolio gainers and losers by day change percentage.
 ```
 
 **Price Cascade:** Databento → SnapTrade → yfinance → average cost fallback. `source` is `"intraday"` when day-change data available, `"unrealized"` when falling back to open P/L%.
+
+#### `GET /portfolio/sparklines`
+
+Get close-price arrays for all held symbols, suitable for sparkline charts. Uses `ohlcv_daily` data (equity-only; crypto symbols excluded).
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `period` | string | `1M` | Period: `1W`, `1M`, `3M` |
+
+**Response Model:** `SparklineResponse`
+
+```json
+{
+  "sparklines": [
+    {
+      "symbol": "AAPL",
+      "closes": [180.5, 181.2, 182.0, 183.5],
+      "dates": ["2026-02-01", "2026-02-02", "2026-02-03", "2026-02-04"]
+    }
+  ],
+  "period": "1M"
+}
+```
 
 ---
 
@@ -269,6 +303,17 @@ AI auto-refine an idea using OpenAI (gpt-4o-mini). Returns structured suggestion
   "changesSummary": "Added price level and improved clarity."
 }
 ```
+
+#### `GET /ideas/{id}/context`
+
+Get idea with parent Discord message and surrounding conversation context.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `context_window` | int | 5 | Messages before/after parent (1-20) |
+
+**Response:** The idea object plus parent message and surrounding Discord messages from the same channel.
 
 ---
 
@@ -702,6 +747,12 @@ Handle incoming SnapTrade webhook events.
 | `ORDER_PLACED` | New order placed |
 | `ORDER_FILLED` | Order executed |
 | `ORDER_CANCELLED` | Order cancelled |
+| `CONNECTION_CONNECTED` | Brokerage connection established |
+| `CONNECTION_DISCONNECTED` | Brokerage connection lost |
+| `CONNECTION_ERROR` | Brokerage connection error |
+| `CONNECTION_DELETED` | Brokerage connection removed |
+| `BROKERAGE_AUTHORIZATION_REVOKED` | OAuth authorization revoked |
+| `BROKERAGE_AUTHORIZATION_DISABLED` | Brokerage disabled the connection |
 
 **Request Body:**
 
@@ -725,6 +776,168 @@ Handle incoming SnapTrade webhook events.
   "message": null
 }
 ```
+
+---
+
+### Activities (`/activities`)
+
+#### `GET /activities`
+
+Get account activity history (dividends, trades, fees) from SnapTrade sync.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `limit` | int | 50 | Number of activities (1-500) |
+| `offset` | int | 0 | Pagination offset |
+| `activityType` | string | null | Filter: `BUY`, `SELL`, `DIVIDEND`, `FEE`, etc. |
+| `symbol` | string | null | Filter by ticker symbol |
+| `startDate` | string | null | Start date (YYYY-MM-DD). Default: 90 days ago |
+| `endDate` | string | null | End date (YYYY-MM-DD). Default: today |
+
+**Response Model:** `ActivitiesResponse`
+
+```json
+{
+  "activities": [
+    {
+      "id": "act-123",
+      "accountId": "account-456",
+      "activityType": "DIVIDEND",
+      "tradeDate": "2026-02-15",
+      "amount": 25.50,
+      "price": null,
+      "units": null,
+      "symbol": "AAPL",
+      "description": "Cash Dividend",
+      "currency": "USD",
+      "fee": 0.0
+    }
+  ],
+  "total": 415,
+  "startDate": "2025-12-01",
+  "endDate": "2026-03-01"
+}
+```
+
+---
+
+### Connections (`/connections`)
+
+#### `GET /connections`
+
+List all brokerage connections with their status.
+
+**Response Model:** `ConnectionsResponse`
+
+```json
+{
+  "connections": [
+    {
+      "accountId": "c4caf1cc-...",
+      "name": "Individual",
+      "institutionName": "Robinhood",
+      "connectionStatus": "connected",
+      "disabledAt": null,
+      "errorMessage": null,
+      "lastSync": "2026-03-01T12:00:00Z"
+    }
+  ]
+}
+```
+
+#### `POST /connections/portal`
+
+Generate a SnapTrade Connect redirect URL for linking a new brokerage.
+
+**Response Model:** `PortalUrlResponse`
+
+```json
+{
+  "redirectUri": "https://app.snaptrade.com/connect/..."
+}
+```
+
+---
+
+### Sentiment (`/sentiment`)
+
+#### `GET /sentiment/summary`
+
+Get aggregated sentiment summary for a ticker from NLP-parsed Discord ideas.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ticker` | string | required | Stock ticker symbol |
+| `window` | string | `30d` | Time window: `7d`, `30d`, `90d`, `1y` |
+
+**Response Model:** `SentimentSummary`
+
+```json
+{
+  "ticker": "NVDA",
+  "window": "30d",
+  "totalMentions": 42,
+  "bullishPct": 55.0,
+  "bearishPct": 25.0,
+  "neutralPct": 20.0,
+  "firstMentionedAt": "2026-02-01T10:00:00Z",
+  "lastMentionedAt": "2026-02-28T15:30:00Z"
+}
+```
+
+#### `GET /sentiment/messages`
+
+Get paginated Discord messages mentioning a ticker with NLP direction labels.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `ticker` | string | required | Stock ticker symbol |
+| `limit` | int | 20 | Max messages (1-100) |
+| `cursor` | int | 0 | Pagination offset |
+
+**Response Model:** `MessagesResponse`
+
+```json
+{
+  "ticker": "NVDA",
+  "messages": [
+    {
+      "id": 123,
+      "messageId": "1234567890",
+      "ticker": "NVDA",
+      "direction": "bullish",
+      "ideaText": "NVDA looking strong above 140...",
+      "author": "trader123",
+      "channel": "trading",
+      "createdAt": "2026-02-28T15:30:00Z",
+      "labels": ["entry_idea", "price_target"]
+    }
+  ],
+  "total": 42,
+  "nextCursor": 20
+}
+```
+
+---
+
+### Debug (`/debug`)
+
+> Only available when `DEBUG_ENDPOINTS=1` is set. Protected by Bearer token auth.
+
+#### `GET /debug/symbol-trace`
+
+Trace a symbol through the entire data pipeline for debugging price resolution, positions, activities, and orders.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `symbol` | string | required | Ticker symbol to trace |
+| `account_id` | string | null | Filter to specific account |
+
+**Response:** Comprehensive trace including positions, symbols table data, recent activities, recent orders, and full price resolution details (Databento, yfinance, SnapTrade fallbacks).
 
 ---
 

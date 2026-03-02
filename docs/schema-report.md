@@ -1,38 +1,41 @@
 # LLM Portfolio Journal - Schema Report
 
-> **Generated on:** January 2, 2026 (header updated July 2026)  
-> **Database System:** PostgreSQL (Supabase)  
-> **Status:** Verified - 17 Active Tables, RLS 100% Compliant  
-> **Latest Migration:** 058_security_and_indexes.sql
+> **Generated on:** January 2, 2026 (header updated March 2026)
+> **Database System:** PostgreSQL (Supabase)
+> **Status:** Verified - 20 Active Tables, RLS 100% Compliant
+> **Latest Migration:** 066_accounts_connection_status.sql
 
 ## 1. Schema Overview
 
-The database consists of **17 active tables** organized into functional groups. All tables are in the `public` schema and have Row Level Security (RLS) enabled.
+The database consists of **20 active tables** organized into functional groups. All tables are in the `public` schema and have Row Level Security (RLS) enabled.
 
 **Note:** Legacy tables dropped in migrations 049-054:
 - `discord_message_chunks`, `discord_idea_units`, `stock_mentions`, `discord_processing_log`, `chart_metadata` (migration 049/054)
 - `daily_prices`, `realtime_prices`, `stock_metrics` (migration 051 - replaced by `ohlcv_daily`)
 - `trade_history`, `event_contract_trades`, `event_contract_positions` (migration 052)
 
-**Tables added post-baseline:**
-- `ohlcv_daily` - Databento OHLCV daily bars (PK: symbol, date)
-- `stock_profile_current` - Derived metrics per ticker (migration 055)
-- `stock_profile_history` - Time-series profile metrics (migration 055)
+**Tables added post-baseline (060):**
+- `stock_notes` - User annotations per ticker (migration 062)
+- `discord_ingest_cursors` - Incremental Discord ingestion high-water marks (migration 063)
+- `user_ideas` - Unified ideas journal from Discord, manual, transcription (migration 064)
+- `activities` - SnapTrade activity/transaction history (migration 065 added PK to account_balances)
+- Migration 066 added `connection_status`, `error_message`, `disabled_at` to `accounts`
 
 ### Database Statistics
 | Metric | Count |
 |--------|-------|
-| Tables | 17 |
-| Primary Keys | 17 |
+| Tables | 20 |
+| Primary Keys | 20 |
 | Foreign Keys | 1 |
-| Unique Constraints | 4 |
-| RLS Policies | ~50 |
+| Unique Constraints | 6+ |
+| RLS Policies | ~60 |
 
-### Active Tables (17)
+### Active Tables (20)
 | Table | Primary Key |
 |-------|-------------|
 | accounts | `id` |
-| account_balances | `currency_code, snapshot_date, account_id` |
+| account_balances | `account_id, currency_code, snapshot_date` |
+| activities | `id` |
 | positions | `symbol, account_id` |
 | orders | `brokerage_order_id` |
 | symbols | `id` |
@@ -41,11 +44,14 @@ The database consists of **17 active tables** organized into functional groups. 
 | discord_market_clean | `message_id` |
 | discord_trading_clean | `message_id` |
 | discord_parsed_ideas | `id` |
+| discord_ingest_cursors | `channel_id` |
+| user_ideas | `id` (UUID) |
 | twitter_data | `tweet_id` |
 | institutional_holdings | `id` |
 | symbol_aliases | `id` |
 | stock_profile_current | `ticker` |
 | stock_profile_history | `ticker, as_of_date` |
+| stock_notes | `id` |
 | schema_migrations | `version` |
 | processing_status | `message_id, channel` |
 
@@ -153,22 +159,12 @@ This section documents which files and functions access each table.
 |-----------|------|-----------------|
 | **INSERT/UPSERT** | `src/snaptrade_collector.py` | `upsert_symbols_table()` |
 
-#### `trade_history` (Individual Trade P/L Records)
+#### `activities` (SnapTrade Activity/Transaction History)
 | Operation | File | Function/Method |
 |-----------|------|-----------------|
-| **INSERT** | `src/data_collector.py` | `save_trade_to_history()` |
-| **SELECT** | `src/data_collector.py` | `get_realized_pnl()` |
-
----
-
-### C. Market Data Tables
-
-#### `realtime_prices` / `daily_prices` / `stock_metrics`
-| Operation | File | Function/Method |
-|-----------|------|-----------------|
-| **INSERT** | `src/data_collector.py` | Various price collection functions |
-| **SELECT** | `src/data_collector.py` | `get_current_price()` (fallback chain) |
-| **SELECT** | `src/position_analysis.py` | `get_current_price()` |
+| **INSERT/UPSERT** | `src/snaptrade_collector.py` | `write_to_database()` with ON CONFLICT |
+| **SELECT** | `app/routes/activities.py` | Activity history API endpoint |
+| **SELECT** | `app/routes/debug.py` | Symbol trace debugging |
 
 ---
 
@@ -478,22 +474,43 @@ Most tables have 2 policies (anon + authenticated). The `service_role` bypasses 
 
 ---
 
-## 8. Recent Schema Changes (January 2026)
+## 8. Recent Schema Changes
 
-### Migration 047: Document trade_history
-- Added documentation comment to trade_history table
+### February–March 2026 (migrations 060-066)
 
-### Migration 048: Drop Unused NLP Indexes
-- Dropped 5 unused indexes from discord_message_chunks
-- Dropped 3 unused indexes from discord_idea_units
-- Indexes retained for discord_parsed_ideas (message_id, symbol, labels)
+#### Migration 060: Baseline Current
+- Fresh consolidated baseline capturing all 17 original active tables
+- Archived migrations 000-059 in `schema/archive/`
 
-### Migration 049: Drop Legacy NLP Tables
-- Dropped `discord_message_chunks` (replaced by discord_parsed_ideas)
-- Dropped `discord_idea_units` (replaced by discord_parsed_ideas)
-- Dropped `stock_mentions` (replaced by structured parsing)
-- Dropped `discord_processing_log` (replaced by processing_status)
-- Dropped `chart_metadata` (never actively used)
+#### Migration 062: Stock Notes
+- Created `stock_notes` table for user annotations per ticker
+
+#### Migration 063: Discord Ingestion
+- Created `discord_ingest_cursors` table for incremental ingestion
+
+#### Migration 064: User Ideas
+- Created `user_ideas` table (UUID PK, content_hash dedup, GIN indexes on tags/symbols)
+
+#### Migration 065: Account Balances PK
+- Added composite primary key to `account_balances` (dedup + constraint)
+
+#### Migration 066: Accounts Connection Status
+- Added `connection_status`, `error_message`, `disabled_at` columns to `accounts`
+
+### January 2026 (migrations 047-059)
+
+#### Migrations 047-049: NLP Table Cleanup
+- Dropped legacy tables: `discord_message_chunks`, `discord_idea_units`, `stock_mentions`, `discord_processing_log`, `chart_metadata`
+
+#### Migrations 051-054: Price & Event Table Cleanup
+- Dropped: `daily_prices`, `realtime_prices`, `stock_metrics` (replaced by `ohlcv_daily`)
+- Dropped: `event_contract_trades`, `event_contract_positions`, `trade_history`
+
+#### Migration 055: Stock Profiles
+- Created `stock_profile_current` and `stock_profile_history`
+
+#### Migration 058: Security & Indexes
+- Auth indexes and security hardening
 
 ---
 
