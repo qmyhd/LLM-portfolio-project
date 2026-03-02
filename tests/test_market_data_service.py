@@ -272,3 +272,33 @@ class TestIsAvailable:
         from src.market_data_service import is_available
 
         assert is_available() is True
+
+
+# ---------------------------------------------------------------------------
+# CRYPTO_IDENTITY
+# ---------------------------------------------------------------------------
+
+class TestCryptoIdentity:
+    def test_crypto_identity_has_all_crypto_symbols(self):
+        from src.market_data_service import _CRYPTO_SYMBOLS, CRYPTO_IDENTITY
+        for sym in _CRYPTO_SYMBOLS:
+            assert sym in CRYPTO_IDENTITY, f"{sym} missing from CRYPTO_IDENTITY"
+
+    def test_crypto_identity_has_required_keys(self):
+        from src.market_data_service import CRYPTO_IDENTITY
+        for sym, info in CRYPTO_IDENTITY.items():
+            assert "quote_symbol" in info, f"{sym} missing quote_symbol"
+            assert "tv_symbol" in info, f"{sym} missing tv_symbol"
+            assert info["quote_symbol"].endswith("-USD"), f"{sym} quote_symbol should end with -USD"
+
+    def test_yf_symbol_uses_crypto_identity(self):
+        from src.market_data_service import _yf_symbol
+        assert _yf_symbol("BTC") == "BTC-USD"
+        assert _yf_symbol("XRP") == "XRP-USD"
+        assert _yf_symbol("TRUMP") == "TRUMP-USD"
+        assert _yf_symbol("AAPL") == "AAPL"
+
+    def test_crypto_identity_tv_symbols_have_exchange(self):
+        from src.market_data_service import CRYPTO_IDENTITY
+        for sym, info in CRYPTO_IDENTITY.items():
+            assert ":" in info["tv_symbol"], f"{sym} tv_symbol must be EXCHANGE:SYMBOL format"
