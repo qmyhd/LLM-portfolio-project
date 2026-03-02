@@ -727,29 +727,33 @@ async def get_movers(
             position_rows.append(rd)
             symbols.append(rd["symbol"])
 
-        prices_map = get_latest_closes_batch(symbols) if symbols else {}
-        prev_closes_map = get_previous_closes_batch(symbols) if symbols else {}
+        # Crypto-safe price routing (same pattern as GET /portfolio)
+        crypto_syms = [s for s in symbols if s in _CRYPTO_SYMBOLS]
+        equity_syms = [s for s in symbols if s not in _CRYPTO_SYMBOLS]
 
-        # yfinance fallback for missing symbols
+        prices_map = get_latest_closes_batch(equity_syms) if equity_syms else {}
+        prev_closes_map = get_previous_closes_batch(equity_syms) if equity_syms else {}
+
         yf_quotes: dict = {}
-        missing = [s for s in symbols if s not in prices_map]
-        if missing:
+        yf_needed = crypto_syms + [s for s in equity_syms if s not in prices_map]
+        if yf_needed:
             try:
-                yf_quotes = get_realtime_quotes_batch(missing)
+                yf_quotes = get_realtime_quotes_batch(yf_needed)
             except Exception as exc:
                 logger.debug("yfinance batch quotes skipped: %s", exc)
 
-        # Build mover items
+        # Build mover items with crypto-aware day change
         items: list[dict] = []
 
         for rd in position_rows:
             symbol = rd["symbol"]
             qty = float(rd["quantity"] or 0)
             avg_cost = float(rd["average_cost"] or 0)
+            is_crypto = symbol in _CRYPTO_SYMBOLS
 
-            # Price cascade
+            # Price cascade (crypto never uses Databento)
             snaptrade_price = float(rd.get("snaptrade_price") or 0)
-            databento_price = prices_map.get(symbol)
+            databento_price = prices_map.get(symbol) if not is_crypto else None
             yf_quote = yf_quotes.get(symbol)
 
             if databento_price:
@@ -763,24 +767,31 @@ async def get_movers(
 
             equity = qty * current_price
 
-            # Day change
-            prev_close = prev_closes_map.get(symbol)
-            if not prev_close and yf_quote:
-                prev_close = yf_quote.get("previousClose")
-
+            # Day change — crypto vs equity (same guards as GET /portfolio)
             day_change = None
             day_change_pct = None
-            if prev_close and prev_close > 0:
-                day_change = (current_price - prev_close) * qty
-                day_change_pct = ((current_price - prev_close) / prev_close) * 100
 
-            # Unrealized P/L as fallback
+            if is_crypto:
+                if yf_quote and yf_quote.get("dayChangePct") is not None:
+                    day_change_pct = yf_quote["dayChangePct"]
+                    day_change = qty * current_price * (day_change_pct / 100)
+            else:
+                prev_close = prev_closes_map.get(symbol)
+                if not prev_close and yf_quote:
+                    prev_close = yf_quote.get("previousClose")
+                if prev_close and prev_close > 0:
+                    day_change_pct = ((current_price - prev_close) / prev_close) * 100
+                    day_change = (current_price - prev_close) * qty
+                    if abs(day_change_pct) > 300:
+                        day_change_pct = None
+                        day_change = None
+
             open_pnl_pct = ((current_price - avg_cost) / avg_cost * 100) if avg_cost > 0 else 0.0
 
             items.append({
                 "symbol": symbol,
                 "currentPrice": r2(current_price),
-                "previousClose": r2n(prev_close),
+                "previousClose": r2n(prev_closes_map.get(symbol) or (yf_quote.get("previousClose") if yf_quote else None)),
                 "dayChange": r2n(day_change),
                 "dayChangePct": r2n(day_change_pct),
                 "quantity": qty,

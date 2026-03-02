@@ -208,3 +208,58 @@ class TestCryptoPriceRouting:
         xrp = next(p for p in data["positions"] if p["symbol"] == "XRP")
         assert xrp["currentPrice"] == 1.35  # yfinance price rounded to 2dp
         assert xrp["assetType"] == "crypto"
+
+
+class TestMoversEndpoint:
+    """Movers must also use crypto-safe price routing."""
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_movers_crypto_not_sent_to_databento(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        """Crypto symbols should be routed to yfinance in movers endpoint too."""
+        mock_sql.return_value = [
+            _mock_row({"symbol": "BTC", "quantity": 0.001, "average_cost": 50000, "snaptrade_price": 65000}),
+            _mock_row({"symbol": "AAPL", "quantity": 10, "average_cost": 150, "snaptrade_price": 178}),
+        ]
+        mock_latest.return_value = {"AAPL": 178.0}
+        mock_prev.return_value = {"AAPL": 176.0}
+        mock_yf.return_value = {
+            "BTC": {"price": 65842.71, "previousClose": 65000.0, "dayChange": 842.71, "dayChangePct": 1.30},
+        }
+
+        response = client.get("/portfolio/movers?limit=3")
+        assert response.status_code == 200
+
+        # Databento should only get equity symbols
+        latest_args = mock_latest.call_args[0][0]
+        assert "BTC" not in latest_args
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_movers_absurd_equity_pct_excluded(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        """Equity with absurd day change should have null dayChangePct in movers."""
+        mock_sql.return_value = [
+            _mock_row({"symbol": "BAD", "quantity": 5, "average_cost": 100, "snaptrade_price": 50}),
+        ]
+        mock_latest.return_value = {"BAD": 50.0}
+        mock_prev.return_value = {"BAD": 0.10}  # produces 49900% change
+        mock_yf.return_value = {}
+
+        response = client.get("/portfolio/movers?limit=3")
+        data = response.json()
+        # BAD should not appear as a gainer/loser with absurd % since dayChangePct is null
+        all_symbols = [g["symbol"] for g in data["topGainers"]] + [l["symbol"] for l in data["topLosers"]]
+        # If BAD appears, its dayChangePct should be null (using openPnlPct fallback)
+        if data["topGainers"] or data["topLosers"]:
+            items = data["topGainers"] + data["topLosers"]
+            for item in items:
+                if item["symbol"] == "BAD":
+                    assert item["dayChangePct"] is None
