@@ -1,0 +1,118 @@
+"""
+Tests for crypto vs equity price routing in portfolio endpoint.
+
+Verifies that crypto symbols are NEVER sent to Databento (ohlcv_daily)
+and always routed through yfinance with -USD suffix.
+"""
+
+from unittest.mock import MagicMock, patch
+import pytest
+
+
+@pytest.fixture
+def client():
+    """Create test client with auth disabled."""
+    with patch.dict("os.environ", {"DISABLE_AUTH": "true"}):
+        from app.main import app
+        from fastapi.testclient import TestClient
+        with TestClient(app) as c:
+            yield c
+
+
+def _mock_row(data: dict):
+    row = MagicMock()
+    row._mapping = data
+    return row
+
+
+class TestCryptoPriceRouting:
+    """Crypto symbols must never hit Databento; always use yfinance."""
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_crypto_excluded_from_databento(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        """BTC position should not be passed to Databento batch queries."""
+        mock_sql.side_effect = [
+            # 1) positions query
+            [
+                _mock_row({
+                    "symbol": "BTC", "quantity": 0.001, "average_cost": 50000,
+                    "snaptrade_price": 65000, "raw_symbol": "BTC",
+                    "account_id": "acc1", "asset_type": "Cryptocurrency",
+                    "company_name": "Bitcoin",
+                }),
+                _mock_row({
+                    "symbol": "AAPL", "quantity": 10, "average_cost": 150,
+                    "snaptrade_price": 175, "raw_symbol": "AAPL",
+                    "account_id": "acc1", "asset_type": "Common Stock",
+                    "company_name": "Apple Inc.",
+                }),
+            ],
+            # 2) account_balances query (uses SQL aliases total_cash, total_buying_power)
+            [_mock_row({"total_cash": 100, "total_buying_power": 200})],
+            # 3) last_updated query (MAX(sync_timestamp) as last_update)
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            # 4) connection status query (COALESCE(connection_status, 'connected') as status)
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {"AAPL": 178.0}
+        mock_prev.return_value = {"AAPL": 176.0}
+        mock_yf.return_value = {
+            "BTC": {"price": 65842.71, "previousClose": 65000.0, "dayChange": 842.71, "dayChangePct": 1.30},
+        }
+
+        response = client.get("/portfolio")
+        assert response.status_code == 200
+
+        # Verify Databento was called with ONLY equity symbols
+        latest_call_args = mock_latest.call_args[0][0]
+        assert "BTC" not in latest_call_args, "BTC should NOT be sent to Databento"
+        assert "AAPL" in latest_call_args, "AAPL should be sent to Databento"
+
+        prev_call_args = mock_prev.call_args[0][0]
+        assert "BTC" not in prev_call_args, "BTC should NOT be in prev_closes query"
+
+        # Verify yfinance was called with BTC
+        yf_call_args = mock_yf.call_args[0][0]
+        assert "BTC" in yf_call_args, "BTC must be routed to yfinance"
+
+    @patch("app.routes.portfolio.get_realtime_quotes_batch")
+    @patch("app.routes.portfolio.get_previous_closes_batch")
+    @patch("app.routes.portfolio.get_latest_closes_batch")
+    @patch("app.routes.portfolio.execute_sql")
+    def test_crypto_gets_yfinance_price(
+        self, mock_sql, mock_latest, mock_prev, mock_yf, client
+    ):
+        """Crypto position price should come from yfinance, not Databento."""
+        mock_sql.side_effect = [
+            # 1) positions query
+            [_mock_row({
+                "symbol": "XRP", "quantity": 50, "average_cost": 1.0,
+                "snaptrade_price": 1.35, "raw_symbol": "XRP",
+                "account_id": "acc1", "asset_type": "Cryptocurrency",
+                "company_name": "XRP",
+            })],
+            # 2) account_balances query
+            [_mock_row({"total_cash": 0, "total_buying_power": 0})],
+            # 3) last_updated query
+            [_mock_row({"last_update": "2026-03-01T18:00:00+00:00"})],
+            # 4) connection status query
+            [_mock_row({"status": "connected"})],
+        ]
+        mock_latest.return_value = {}  # Databento should return nothing for crypto
+        mock_prev.return_value = {}
+        mock_yf.return_value = {
+            "XRP": {"price": 1.353, "previousClose": 1.30, "dayChange": 0.053, "dayChangePct": 4.08},
+        }
+
+        response = client.get("/portfolio")
+        data = response.json()
+        assert response.status_code == 200
+
+        xrp = next(p for p in data["positions"] if p["symbol"] == "XRP")
+        assert xrp["currentPrice"] == 1.35  # yfinance price rounded to 2dp
+        assert xrp["assetType"] == "crypto"

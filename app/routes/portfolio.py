@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from src.db import execute_sql
+from src.market_data_service import _CRYPTO_SYMBOLS, get_realtime_quotes_batch
 from src.price_service import get_latest_closes_batch, get_previous_closes_batch
 from src.snaptrade_collector import SnapTradeCollector
 
@@ -214,9 +215,6 @@ async def get_portfolio(
             fetch_results=True,
         )
 
-        # Known crypto symbols for asset_type override
-        from src.market_data_service import _CRYPTO_SYMBOLS
-
         # Extract all symbols and batch fetch prices (single query instead of N queries)
         position_rows = []
         symbols_to_fetch = []
@@ -243,23 +241,23 @@ async def get_portfolio(
             position_rows.append(row_dict)
             symbols_to_fetch.append(sym)
 
-        # Batch fetch all prices in ONE database query
-        prices_map = (
-            get_latest_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
-        )
-        # Batch fetch previous closes for day-change calculation
-        prev_closes_map = (
-            get_previous_closes_batch(symbols_to_fetch) if symbols_to_fetch else {}
-        )
+        # ---- Phase 1B: Batch fetch prices ----
+        # CRITICAL: Split by asset type to avoid crypto/equity ticker collisions.
+        # Databento ohlcv_daily has equity tickers (BTC=Grayscale, ETH=Ethan Allen)
+        # that collide with crypto symbols. Never send crypto to Databento.
+        crypto_syms = [s for s in symbols_to_fetch if s in _CRYPTO_SYMBOLS]
+        equity_syms = [s for s in symbols_to_fetch if s not in _CRYPTO_SYMBOLS]
 
-        # yfinance fallback for symbols Databento doesn't cover (e.g. crypto)
+        # Databento ONLY for equities
+        prices_map = get_latest_closes_batch(equity_syms) if equity_syms else {}
+        prev_closes_map = get_previous_closes_batch(equity_syms) if equity_syms else {}
+
+        # yfinance for ALL crypto + equity symbols Databento doesn't cover
         yf_quotes: dict[str, dict] = {}
-        databento_missing = [s for s in symbols_to_fetch if s not in prices_map]
-        if databento_missing:
+        yf_needed = crypto_syms + [s for s in equity_syms if s not in prices_map]
+        if yf_needed:
             try:
-                from src.market_data_service import get_realtime_quotes_batch
-
-                yf_quotes = get_realtime_quotes_batch(databento_missing)
+                yf_quotes = get_realtime_quotes_batch(yf_needed)
             except Exception as exc:
                 logger.debug("yfinance batch quotes skipped: %s", exc)
 
@@ -714,8 +712,6 @@ async def get_movers(
         missing = [s for s in symbols if s not in prices_map]
         if missing:
             try:
-                from src.market_data_service import get_realtime_quotes_batch
-
                 yf_quotes = get_realtime_quotes_batch(missing)
             except Exception as exc:
                 logger.debug("yfinance batch quotes skipped: %s", exc)
