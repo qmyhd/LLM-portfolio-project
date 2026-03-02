@@ -327,6 +327,63 @@ class TestRefineIdea:
 
 
 # =========================================================================
+# GET /ideas/{id}/context — Context
+# =========================================================================
+
+class TestIdeaContext:
+    @patch("app.routes.ideas.execute_sql")
+    def test_returns_context_with_surrounding_messages(self, mock_sql, client):
+        """GET /ideas/{id}/context returns parent message + surrounding context."""
+        idea_row = {**SAMPLE_IDEA_ROW, "origin_message_id": "msg-123"}
+        mock_sql.side_effect = [
+            [_mock_row(idea_row)],  # idea query
+            [_mock_row({  # parent message
+                "message_id": "msg-123", "content": "Buy AAPL on the dip",
+                "author": "qaisy", "timestamp": "2026-02-28T14:30:00",
+                "channel": "trading-ideas",
+            })],
+            [  # context messages (±5)
+                _mock_row({"message_id": "msg-121", "content": "Market opening strong",
+                           "author": "user2", "timestamp": "2026-02-28T14:28:00", "channel": "trading-ideas"}),
+                _mock_row({"message_id": "msg-122", "content": "Watching tech names",
+                           "author": "qaisy", "timestamp": "2026-02-28T14:29:00", "channel": "trading-ideas"}),
+                _mock_row({"message_id": "msg-123", "content": "Buy AAPL on the dip",
+                           "author": "qaisy", "timestamp": "2026-02-28T14:30:00", "channel": "trading-ideas"}),
+                _mock_row({"message_id": "msg-124", "content": "Good call",
+                           "author": "user3", "timestamp": "2026-02-28T14:31:00", "channel": "trading-ideas"}),
+            ],
+        ]
+
+        response = client.get(f"/ideas/{SAMPLE_UUID}/context")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["parentMessage"]["messageId"] == "msg-123"
+        assert len(data["contextMessages"]) >= 3
+        # Parent message should be marked
+        parent_in_context = [m for m in data["contextMessages"] if m["isParent"]]
+        assert len(parent_in_context) == 1
+
+    @patch("app.routes.ideas.execute_sql")
+    def test_idea_not_found_returns_404(self, mock_sql, client):
+        """GET /ideas/{id}/context returns 404 for non-existent idea."""
+        mock_sql.return_value = []
+        response = client.get(f"/ideas/{SAMPLE_UUID}/context")
+        assert response.status_code == 404
+
+    @patch("app.routes.ideas.execute_sql")
+    def test_idea_without_origin_message(self, mock_sql, client):
+        """Ideas without origin_message_id return empty context."""
+        idea_row = {**SAMPLE_IDEA_ROW, "origin_message_id": None}
+        mock_sql.return_value = [_mock_row(idea_row)]
+        response = client.get(f"/ideas/{SAMPLE_UUID}/context")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["parentMessage"] is None
+        assert data["contextMessages"] == []
+        assert data["idea"]["id"] == SAMPLE_UUID
+
+
+# =========================================================================
 # GET /portfolio/movers — Top movers
 # =========================================================================
 
