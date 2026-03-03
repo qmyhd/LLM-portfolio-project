@@ -266,16 +266,29 @@ class TestRefineIdea:
             "changesSummary": "Added price level and improved clarity.",
         }
 
-        # Mock OpenAI
-        mock_completion = MagicMock()
-        mock_completion.choices = [
-            MagicMock(message=MagicMock(content=json.dumps(refine_result)))
-        ]
+        # Mock OpenAI — refine returns result, reflect returns no issues
+        reflect_result = {
+            "issues_found": False,
+            "critique": "No issues found.",
+            "hallucinated_targets": [],
+            "ticker_verified": True,
+        }
+
+        def _side_effect(*args, **kwargs):
+            messages = kwargs.get("messages", [])
+            system_msg = messages[0]["content"] if messages else ""
+            resp = MagicMock()
+            if "critique" in system_msg.lower() or "reflect" in system_msg.lower():
+                resp.choices = [MagicMock(message=MagicMock(content=json.dumps(reflect_result)))]
+            else:
+                resp.choices = [MagicMock(message=MagicMock(content=json.dumps(refine_result)))]
+            return resp
+
         mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = mock_completion
+        mock_client_instance.chat.completions.create.side_effect = _side_effect
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}), \
-             patch("openai.OpenAI", return_value=mock_client_instance):
+             patch("app.routes.ideas.OpenAI", return_value=mock_client_instance):
             resp = client.post(f"/ideas/{SAMPLE_UUID}/refine")
 
         assert resp.status_code == 200
@@ -307,15 +320,28 @@ class TestRefineIdea:
             "changesSummary": "Improved.",
         }
 
-        mock_completion = MagicMock()
-        mock_completion.choices = [
-            MagicMock(message=MagicMock(content=json.dumps(refine_result)))
-        ]
+        reflect_result = {
+            "issues_found": False,
+            "critique": "No issues found.",
+            "hallucinated_targets": [],
+            "ticker_verified": True,
+        }
+
+        def _side_effect(*args, **kwargs):
+            messages = kwargs.get("messages", [])
+            system_msg = messages[0]["content"] if messages else ""
+            resp = MagicMock()
+            if "critique" in system_msg.lower() or "reflect" in system_msg.lower():
+                resp.choices = [MagicMock(message=MagicMock(content=json.dumps(reflect_result)))]
+            else:
+                resp.choices = [MagicMock(message=MagicMock(content=json.dumps(refine_result)))]
+            return resp
+
         mock_client_instance = MagicMock()
-        mock_client_instance.chat.completions.create.return_value = mock_completion
+        mock_client_instance.chat.completions.create.side_effect = _side_effect
 
         with patch.dict("os.environ", {"OPENAI_API_KEY": "fake-key"}), \
-             patch("openai.OpenAI", return_value=mock_client_instance):
+             patch("app.routes.ideas.OpenAI", return_value=mock_client_instance):
             resp = client.post(f"/ideas/{SAMPLE_UUID}/refine?apply=true")
 
         assert resp.status_code == 200
