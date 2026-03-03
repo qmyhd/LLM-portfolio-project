@@ -27,7 +27,7 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
@@ -254,10 +254,37 @@ def _handle_event(event_type: str, account_id: str | None, payload: dict) -> str
     """Dispatch webhook event to the appropriate handler. Returns a message."""
 
     if event_type == "ACCOUNT_HOLDINGS_UPDATED":
-        # Holdings changed — refresh orders and reset notifications
-        logger.info("Account %s holdings updated — refreshing orders", account_id)
+        # Holdings changed — refresh positions, balances, and orders
+        logger.info("Account %s holdings updated — syncing positions/balances/orders", account_id)
+        collector = SnapTradeCollector()
+
         try:
-            collector = SnapTradeCollector()
+            positions_df = collector.get_positions(account_id)
+            if not positions_df.empty:
+                positions_for_db = positions_df.drop(
+                    columns=["raw_symbol", "type_code"], errors="ignore"
+                )
+                collector.write_to_database(
+                    positions_for_db, "positions", conflict_columns=["symbol", "account_id"]
+                )
+                collector._reconcile_stale_positions(positions_df, account_id)
+            logger.info("Positions synced from SnapTrade")
+        except Exception as e:
+            logger.error("Failed to sync positions: %s", e)
+
+        try:
+            balances_df = collector.get_balances(account_id)
+            if not balances_df.empty:
+                collector.write_to_database(
+                    balances_df,
+                    "account_balances",
+                    conflict_columns=["currency_code", "snapshot_date", "account_id"],
+                )
+            logger.info("Balances synced from SnapTrade")
+        except Exception as e:
+            logger.error("Failed to sync balances: %s", e)
+
+        try:
             collector.write_to_database(
                 collector.get_orders(account_id),
                 "orders",
@@ -279,22 +306,36 @@ def _handle_event(event_type: str, account_id: str | None, payload: dict) -> str
             """,
             params={"account_id": account_id},
         )
-        return "Holdings updated, orders refreshed, notifications reset"
+
+        # Mark account as recently synced
+        if account_id:
+            execute_sql(
+                "UPDATE accounts SET last_successful_sync = NOW() WHERE id = :acct",
+                params={"acct": account_id},
+            )
+
+        return "Holdings updated: positions, balances, orders synced"
 
     elif event_type in (
         "ACCOUNT_TRANSACTIONS_INITIAL_UPDATE",
         "ACCOUNT_TRANSACTIONS_UPDATED",
     ):
-        # Transactions synced — trigger activity refresh
+        # Transactions synced — fetch last 7 days only (nightly handles full 90-day window)
         logger.info(
             "Account %s transactions updated (%s)", account_id, event_type
         )
         try:
             collector = SnapTradeCollector()
-            activities = collector.get_activities(account_id)
-            if activities:
+            start = (datetime.now(UTC) - timedelta(days=7)).strftime("%Y-%m-%d")
+            activities = collector.get_activities(account_id, start_date=start)
+            if activities is not None and not activities.empty:
                 collector.write_to_database(activities, "activities", ["id"])
                 logger.info("Activities synced: %d records", len(activities))
+                if account_id:
+                    execute_sql(
+                        "UPDATE accounts SET last_successful_sync = NOW() WHERE id = :acct",
+                        params={"acct": account_id},
+                    )
         except Exception as e:
             logger.error("Failed to sync activities: %s", e)
         return f"Transactions updated ({event_type})"
