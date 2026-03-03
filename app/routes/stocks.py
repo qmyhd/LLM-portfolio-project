@@ -610,6 +610,8 @@ async def get_stock_idea_context(
     Uses the Discord message_id (snowflake string) — NOT the discord_parsed_ideas UUID.
     Returns ±context_window messages from the same channel, with the parent flagged isParent=True.
     """
+    _validate_ticker(ticker)  # validate + normalize ticker (consistent with all sibling endpoints)
+
     # 1. Fetch the parent message
     msg_rows = execute_sql(
         "SELECT message_id, content, author, timestamp, channel "
