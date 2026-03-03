@@ -84,6 +84,16 @@ OpenBB (FMP+SEC)─┘→ Cached fundamentals/filings/news → FastAPI → Next.
 - **`src/message_cleaner.py`** — Ticker extraction (`$AAPL`, `$BRK.B`), sentiment scoring via vaderSentiment
 - **`src/openbb_service.py`** — OpenBB Platform SDK wrapper. Thread-safe TTL caches (transcripts 24h, fundamentals 1h, news 15m). FMP provider for fundamentals/transcripts/management/news, SEC provider for filings (free). Never raises — returns `None`/`[]` on failure. Requires `FMP_API_KEY` for FMP data.
 - **`src/discord_ingest.py`** — Incremental Discord message ingestion with cursor-based tracking and content hash deduplication
+- **`src/analysis/`** — Multi-agent stock analysis system (5 deterministic agents + LLM consensus):
+  - `models.py` — Shared Pydantic models: `AnalysisInput`, `AnalystSignal`, `ConsensusReport`, `OHLCVBar`, `IdeaData`, `NewsItem`
+  - `indicators.py` — Technical indicator math library (RSI, MACD, Bollinger, EMA, SMA, ADX, ATR, Hurst)
+  - `technical.py` — 5-strategy weighted signal system (trend, mean_reversion, momentum, volatility, stat_arb)
+  - `fundamental.py` — 4-pillar threshold scoring (profitability, growth, financial health, valuation)
+  - `valuation.py` — 4-model weighted DCF (owner earnings, enhanced DCF, EV/EBITDA, residual income)
+  - `sentiment.py` — 3-source aggregation (Discord ideas with time decay, Discord sentiment proxy, news keywords)
+  - `risk.py` — Per-stock risk (annualized vol, max drawdown, position sizing) + portfolio-wide (VaR, HHI, correlation)
+  - `consensus.py` — Deterministic scoring + OpenAI narrative generation (gpt-5-mini, escalates to gpt-5 on conflict)
+  - `orchestrator.py` — Cache-first dispatch with stale-while-revalidate. Assembles `AnalysisInput` from 6 data sources. TTL: 4h equity, 1h crypto, 2h portfolio risk. Parallel agent execution via `asyncio.gather()`
 
 ### Discord Bot (`src/bot/`)
 
@@ -91,11 +101,11 @@ Modular command pattern. Each command file in `src/bot/commands/` exports a `reg
 
 ### Database Schema
 
-Consolidated schema in `schema/` (060_baseline_current.sql + 061-066 incremental, older files archived). 20 active tables. Recent migrations: 062 (stock_notes), 063 (discord_ingest_cursors), 064 (user_ideas), 065 (account_balances PK), 066 (accounts connection_status). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `activities`, `user_ideas`, `twitter_data`, `stock_profile_current`, `stock_notes`, `discord_ingest_cursors`. All tables have RLS enabled — service role key required in DATABASE_URL.
+Consolidated schema in `schema/` (060_baseline_current.sql + 061-067 incremental, older files archived). 22 active tables. Recent migrations: 062 (stock_notes), 063 (discord_ingest_cursors), 064 (user_ideas), 065 (account_balances PK), 066 (accounts connection_status), 067 (stock_analysis_cache + portfolio_risk_cache). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `activities`, `user_ideas`, `twitter_data`, `stock_profile_current`, `stock_notes`, `discord_ingest_cursors`, `stock_analysis_cache`, `portfolio_risk_cache`. All tables have RLS enabled — service role key required in DATABASE_URL.
 
 ### FastAPI Routes (`app/routes/`)
 
-14 route files: `portfolio.py` (positions, sync, movers, sparklines), `orders.py`, `stocks.py` (profile, ideas, OHLCV), `openbb.py` (transcripts, fundamentals, filings, news, notes), `chat.py`, `search.py`, `watchlist.py`, `ideas.py` (CRUD, refine, context), `activities.py`, `connections.py`, `sentiment.py`, `webhook.py`, `debug.py` (opt-in via `DEBUG_ENDPOINTS=1`).
+15 route files: `portfolio.py` (positions, sync, movers, sparklines), `orders.py`, `stocks.py` (profile, ideas, OHLCV), `openbb.py` (transcripts, fundamentals, filings, news, notes), `analysis.py` (multi-agent stock analysis, portfolio risk), `chat.py`, `search.py`, `watchlist.py`, `ideas.py` (CRUD, refine with 3-pass self-reflection, context), `activities.py`, `connections.py`, `sentiment.py`, `webhook.py`, `debug.py` (opt-in via `DEBUG_ENDPOINTS=1`).
 
 ### Deployment
 
