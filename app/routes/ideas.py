@@ -17,10 +17,12 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, Query
+from openai import OpenAI
 from pydantic import BaseModel, Field
 
 from src.db import execute_sql
 from src.discord_ingest import compute_content_hash
+from src.retry_utils import hardened_retry
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -82,6 +84,7 @@ class RefineResponse(BaseModel):
     extractedSymbols: list[str]
     suggestedTags: list[str]
     changesSummary: str
+    reflectionApplied: bool = False
 
 
 class ContextMessage(BaseModel):
@@ -334,10 +337,14 @@ async def refine_idea(
     apply: bool = Query(False, description="Auto-apply refined content to the idea"),
 ):
     """
-    AI auto-refine an idea using OpenAI.
+    AI auto-refine an idea using three-pass self-reflection:
 
-    Returns refined content, extracted symbols, and suggested tags.
-    If apply=true, updates the idea with the refined content.
+    1. **Refine** — generate improved idea with structured fields
+    2. **Reflect** — critique for hallucinated targets, ticker accuracy, direction support
+    3. **Re-refine** — incorporate critique and fix (only if issues found)
+
+    Returns refined content, extracted symbols, suggested tags, and whether
+    reflection was applied.  If apply=true, updates the idea in-place.
     """
     # Fetch the idea
     rows = execute_sql(
@@ -355,14 +362,25 @@ async def refine_idea(
     original_content = rd["content"]
 
     try:
-        from openai import OpenAI
-        from src.retry_utils import hardened_retry
+        _refine_model = os.getenv("OPENAI_MODEL_REFINE", "gpt-4o-mini")
 
+        def _strip_fences(raw: str) -> str:
+            """Strip optional markdown code fences from LLM output."""
+            raw = raw.strip()
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            return raw.strip()
+
+        # ------------------------------------------------------------------
+        # Pass 1: Refine (existing behaviour)
+        # ------------------------------------------------------------------
         @hardened_retry(max_retries=2, delay=2)
-        def _call_openai(content: str) -> dict:
+        def _call_openai_refine(content: str) -> dict:
             client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
             completion = client.chat.completions.create(
-                model=os.getenv("OPENAI_MODEL_REFINE", "gpt-4o-mini"),
+                model=_refine_model,
                 messages=[
                     {
                         "role": "system",
@@ -372,7 +390,7 @@ async def refine_idea(
                             '- "refinedContent": a clearer, more structured version of the idea '
                             "(keep the original meaning, improve clarity and structure)\n"
                             '- "extractedSymbols": array of stock ticker symbols mentioned or implied '
-                            "(uppercase, e.g. [\"AAPL\", \"MSFT\"])\n"
+                            '(uppercase, e.g. ["AAPL", "MSFT"])\n'
                             '- "suggestedTags": array of relevant tags from this list: '
                             "[thesis, entry, exit, technical, fundamental, catalyst, earnings, "
                             "risk, conviction, question, options, momentum, value, growth]\n"
@@ -386,16 +404,116 @@ async def refine_idea(
                 temperature=0.3,
             )
             raw = completion.choices[0].message.content or "{}"
-            # Strip markdown fences if present
-            raw = raw.strip()
-            if raw.startswith("```"):
-                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-            if raw.endswith("```"):
-                raw = raw[:-3]
-            raw = raw.strip()
-            return json.loads(raw)
+            return json.loads(_strip_fences(raw))
 
-        result = _call_openai(original_content)
+        # ------------------------------------------------------------------
+        # Pass 2: Reflect — critique the refinement
+        # ------------------------------------------------------------------
+        @hardened_retry(max_retries=2, delay=2)
+        def _call_openai_reflect(original: str, refined: str, symbols: list[str]) -> dict:
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            completion = client.chat.completions.create(
+                model=_refine_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a trading idea critique and reflection assistant. "
+                            "Compare the ORIGINAL idea with the REFINED version and check for:\n"
+                            "1. Hallucinated price targets — numbers/targets NOT present in the original\n"
+                            "2. Ticker accuracy — are the extracted symbols actually mentioned or implied?\n"
+                            "3. Direction support — does the original idea support the direction/sentiment "
+                            "expressed in the refinement?\n\n"
+                            "Return a JSON object with exactly these keys:\n"
+                            '- "issues_found": boolean — true if any problems were detected\n'
+                            '- "critique": string — brief explanation of issues (or confirmation of quality)\n'
+                            '- "hallucinated_targets": array of strings — any price targets or numbers '
+                            "added that were NOT in the original\n"
+                            '- "ticker_verified": boolean — true if extracted symbols are accurate\n\n'
+                            "Return ONLY valid JSON, no markdown fences."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"ORIGINAL IDEA:\n{original}\n\n"
+                            f"REFINED VERSION:\n{refined}\n\n"
+                            f"EXTRACTED SYMBOLS: {json.dumps(symbols)}"
+                        ),
+                    },
+                ],
+                max_tokens=500,
+                temperature=0.2,
+            )
+            raw = completion.choices[0].message.content or "{}"
+            return json.loads(_strip_fences(raw))
+
+        # ------------------------------------------------------------------
+        # Pass 3: Re-refine (only when issues found)
+        # ------------------------------------------------------------------
+        @hardened_retry(max_retries=2, delay=2)
+        def _call_openai_rerefine(original: str, refined: str, critique: str) -> dict:
+            client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+            completion = client.chat.completions.create(
+                model=_refine_model,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "You are a trading idea refinement assistant performing a CORRECTION pass. "
+                            "A previous refinement was critiqued and issues were found.\n\n"
+                            "Using the ORIGINAL idea and the CRITIQUE, produce a corrected JSON object "
+                            "with exactly these keys:\n"
+                            '- "refinedContent": corrected version that fixes the issues raised in the '
+                            "critique while keeping the original meaning\n"
+                            '- "extractedSymbols": corrected array of stock ticker symbols '
+                            '(uppercase, e.g. ["AAPL"])\n'
+                            '- "suggestedTags": array of relevant tags from this list: '
+                            "[thesis, entry, exit, technical, fundamental, catalyst, earnings, "
+                            "risk, conviction, question, options, momentum, value, growth]\n"
+                            '- "changesSummary": one sentence describing what was corrected\n\n'
+                            "Return ONLY valid JSON, no markdown fences."
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"ORIGINAL IDEA:\n{original}\n\n"
+                            f"PREVIOUS REFINEMENT:\n{refined}\n\n"
+                            f"CRITIQUE:\n{critique}"
+                        ),
+                    },
+                ],
+                max_tokens=1000,
+                temperature=0.3,
+            )
+            raw = completion.choices[0].message.content or "{}"
+            return json.loads(_strip_fences(raw))
+
+        # ------------------------------------------------------------------
+        # Execute three-pass pipeline
+        # ------------------------------------------------------------------
+        result = _call_openai_refine(original_content)
+        reflection_applied = False
+
+        refined_content = result.get("refinedContent", original_content)
+        extracted_symbols = [s.upper() for s in result.get("extractedSymbols", [])]
+
+        # Pass 2: Reflect
+        reflection = _call_openai_reflect(original_content, refined_content, extracted_symbols)
+        logger.info(
+            "Idea %s reflection: issues_found=%s, ticker_verified=%s",
+            idea_id,
+            reflection.get("issues_found"),
+            reflection.get("ticker_verified"),
+        )
+
+        # Pass 3: Re-refine if issues were found
+        if reflection.get("issues_found"):
+            critique_text = reflection.get("critique", "Issues detected in refinement.")
+            result = _call_openai_rerefine(original_content, refined_content, critique_text)
+            reflection_applied = True
+            logger.info("Idea %s re-refined after reflection critique", idea_id)
 
         refined_content = result.get("refinedContent", original_content)
         extracted_symbols = [s.upper() for s in result.get("extractedSymbols", [])]
@@ -430,6 +548,7 @@ async def refine_idea(
             extractedSymbols=extracted_symbols,
             suggestedTags=suggested_tags,
             changesSummary=changes_summary,
+            reflectionApplied=reflection_applied,
         )
 
     except HTTPException:
