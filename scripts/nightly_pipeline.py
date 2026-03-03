@@ -105,6 +105,56 @@ def run_snaptrade_sync(timeout: int = 600) -> bool:
         return False
 
 
+def snapshot_positions() -> bool:
+    """Snapshot current positions for historical P/L tracking.
+
+    Inserts one row per (account_id, symbol) into position_snapshots.
+    Uses ON CONFLICT to update if already snapshotted today.
+    Only includes positions from non-deleted accounts.
+    """
+    try:
+        from src.db import execute_sql
+
+        logger.info("Snapshotting positions for historical P/L...")
+        execute_sql(
+            """
+            INSERT INTO position_snapshots
+                (account_id, symbol, snapshot_date, quantity, average_buy_price,
+                 current_price, equity, total_portfolio_value)
+            SELECT
+                p.account_id,
+                p.symbol,
+                CURRENT_DATE,
+                p.quantity,
+                p.average_buy_price,
+                COALESCE(p.current_price, p.price),
+                p.equity,
+                (SELECT COALESCE(SUM(equity), 0)
+                 FROM positions
+                 WHERE account_id IN (
+                     SELECT id FROM accounts
+                     WHERE COALESCE(connection_status, 'connected') != 'deleted'
+                 ))
+            FROM positions p
+            JOIN accounts a ON a.id = p.account_id
+                AND COALESCE(a.connection_status, 'connected') != 'deleted'
+            WHERE p.quantity > 0
+            ON CONFLICT (account_id, symbol, snapshot_date) DO UPDATE SET
+                quantity = EXCLUDED.quantity,
+                average_buy_price = EXCLUDED.average_buy_price,
+                current_price = EXCLUDED.current_price,
+                equity = EXCLUDED.equity,
+                total_portfolio_value = EXCLUDED.total_portfolio_value
+            """,
+            fetch_results=False,
+        )
+        logger.info("Position snapshot complete")
+        return True
+    except Exception as e:
+        logger.error(f"Position snapshot failed: {e}")
+        return False
+
+
 def run_script(script_path: str, args: list[str] = None, timeout: int = 600) -> bool:
     """Run a Python script with optional arguments.
 
@@ -166,6 +216,10 @@ def main():
     # Step 0: SnapTrade Sync (accounts, positions, orders, balances)
     logger.info("\n💼 Step 0: SnapTrade Sync")
     results["snaptrade"] = run_snaptrade_sync(timeout=600)  # 10 min
+
+    # Step 0b: Snapshot positions for historical P/L
+    logger.info("\n📸 Step 0b: Position Snapshots")
+    results["position_snapshots"] = snapshot_positions()
 
     # Step 1: OHLCV Backfill (Databento → Supabase)
     logger.info("\n📊 Step 1: OHLCV Backfill")
@@ -277,6 +331,10 @@ def main():
     # New symbol backfill failure is non-critical
     if results.get("new_symbols") is False:
         logger.warning("⚠️ New symbol OHLCV backfill failed (non-critical)")
+
+    # Position snapshot failure is non-critical
+    if results.get("position_snapshots") is False:
+        logger.warning("⚠️ Position snapshots failed (non-critical)")
 
     if any(critical_failures):
         logger.error("Pipeline completed with critical failures")
