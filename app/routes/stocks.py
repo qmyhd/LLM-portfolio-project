@@ -168,6 +168,24 @@ class IdeasResponse(BaseModel):
     total: int
 
 
+class IdeaContextMessage(BaseModel):
+    """Single Discord message in context window."""
+
+    messageId: str
+    content: str
+    author: str
+    sentAt: str
+    channel: str
+    isParent: bool = False
+
+
+class StockIdeaContextResponse(BaseModel):
+    """Context window around a Discord message."""
+
+    messageId: str
+    contextMessages: list[IdeaContextMessage] = []
+
+
 # ---------------------------------------------------------------------------
 # OHLCV models  (matches api.ts OHLCVBar / ChartOrder / OHLCVSeries)
 # ---------------------------------------------------------------------------
@@ -578,6 +596,72 @@ async def get_stock_ideas(
     except Exception as e:
         logger.error(f"Error fetching ideas for {symbol}: {e}")
         return IdeasResponse(ticker=symbol, ideas=[], total=0)
+
+
+@router.get("/{ticker}/ideas/{message_id}/context", response_model=StockIdeaContextResponse)
+async def get_stock_idea_context(
+    ticker: str = Path(..., description="Stock ticker symbol"),
+    message_id: str = Path(..., description="Discord message snowflake ID"),
+    context_window: int = Query(5, ge=1, le=20, description="Messages before/after parent"),
+):
+    """
+    Get surrounding Discord context for a parsed idea.
+
+    Uses the Discord message_id (snowflake string) — NOT the discord_parsed_ideas UUID.
+    Returns ±context_window messages from the same channel, with the parent flagged isParent=True.
+    """
+    # 1. Fetch the parent message
+    msg_rows = execute_sql(
+        "SELECT message_id, content, author, timestamp, channel "
+        "FROM discord_messages WHERE message_id = :msg_id",
+        params={"msg_id": message_id},
+        fetch_results=True,
+    )
+    if not msg_rows:
+        # Message not found — return empty context rather than 404
+        return StockIdeaContextResponse(messageId=message_id, contextMessages=[])
+
+    mr = dict(msg_rows[0]._mapping)
+
+    # 2. Fetch surrounding messages from same channel
+    # timestamp is stored as text (ISO 8601) — text comparison works correctly for ISO strings
+    ctx_rows = execute_sql(
+        """
+        (SELECT message_id, content, author, timestamp, channel
+         FROM discord_messages
+         WHERE channel = :channel AND timestamp <= :ts
+         ORDER BY timestamp DESC
+         LIMIT :before)
+        UNION ALL
+        (SELECT message_id, content, author, timestamp, channel
+         FROM discord_messages
+         WHERE channel = :channel AND timestamp > :ts
+         ORDER BY timestamp ASC
+         LIMIT :after)
+        ORDER BY timestamp ASC
+        """,
+        params={
+            "channel": mr["channel"],
+            "ts": mr["timestamp"],
+            "before": context_window + 1,  # +1 to include parent itself
+            "after": context_window,
+        },
+        fetch_results=True,
+    )
+
+    context_msgs: list[IdeaContextMessage] = []
+    for cr in (ctx_rows or []):
+        cd = dict(cr._mapping)
+        context_msgs.append(IdeaContextMessage(
+            messageId=cd["message_id"],
+            content=cd["content"],
+            author=cd["author"],
+            sentAt=str(cd["timestamp"]),
+            channel=cd["channel"],
+            isParent=cd["message_id"] == message_id,
+        ))
+
+    return StockIdeaContextResponse(messageId=message_id, contextMessages=context_msgs)
 
 
 @router.get("/{ticker}/ohlcv", response_model=OHLCVSeries)
