@@ -571,6 +571,16 @@ async def get_portfolio(
                 # Priority: error > disconnected > connected
                 priority = {"error": 0, "disconnected": 1, "connected": 2}
                 connection_status = min(statuses, key=lambda s: priority.get(s, 2))
+            else:
+                # No non-deleted accounts — check if all accounts are deleted
+                all_rows = execute_sql(
+                    "SELECT COUNT(*) as cnt FROM accounts WHERE connection_status = 'deleted'",
+                    fetch_results=True,
+                )
+                if all_rows:
+                    cnt = (dict(all_rows[0]._mapping) if hasattr(all_rows[0], "_mapping") else dict(all_rows[0])).get("cnt", 0)
+                    if cnt and cnt > 0:
+                        connection_status = "deleted"
         except Exception:
             pass  # Column may not exist yet if migration hasn't run
 

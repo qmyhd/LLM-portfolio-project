@@ -341,8 +341,33 @@ def _handle_event(event_type: str, account_id: str | None, payload: dict) -> str
         return f"Transactions updated ({event_type})"
 
     elif event_type == "ACCOUNT_UPDATED":
-        logger.info("Account %s updated, triggering sync", account_id)
-        return "Account sync will be triggered"
+        # Refresh account metadata (name, institution) from SnapTrade
+        logger.info("Account %s updated, refreshing metadata", account_id)
+        try:
+            collector = SnapTradeCollector()
+            accounts_df = collector.get_accounts()
+            if not accounts_df.empty:
+                # Filter to this account if account_id is known, otherwise refresh all
+                if account_id:
+                    accounts_df = accounts_df[accounts_df["id"] == account_id]
+                for _, row in accounts_df.iterrows():
+                    execute_sql(
+                        """
+                        UPDATE accounts
+                        SET name = :name,
+                            institution_name = :institution_name
+                        WHERE id = :id
+                        """,
+                        params={
+                            "name": row.get("name"),
+                            "institution_name": row.get("institution_name"),
+                            "id": row["id"],
+                        },
+                    )
+                logger.info("Account metadata refreshed for %d account(s)", len(accounts_df))
+        except Exception as e:
+            logger.error("Failed to refresh account metadata: %s", e)
+        return f"Account {account_id} metadata refreshed"
 
     elif event_type == "ORDER_PLACED":
         order_id = payload.get("data", {}).get("orderId")
@@ -406,7 +431,40 @@ def _handle_event(event_type: str, account_id: str | None, payload: dict) -> str
                 """,
                 params={"auth_id": auth_id},
             )
-        return f"Connection {auth_id} marked as connected"
+
+            # Trigger a lightweight sync so data is fresh immediately (no waiting until nightly)
+            try:
+                collector = SnapTradeCollector()
+                # Look up the account_id for this auth connection
+                rows = execute_sql(
+                    "SELECT id FROM accounts WHERE brokerage_authorization = :auth_id"
+                    " OR brokerage_authorization_id = :auth_id",
+                    params={"auth_id": auth_id},
+                    fetch_results=True,
+                )
+                for row in (rows or []):
+                    acct_id = (dict(row._mapping) if hasattr(row, "_mapping") else dict(row)).get("id")
+                    if not acct_id:
+                        continue
+                    try:
+                        positions_df = collector.get_positions(acct_id)
+                        if not positions_df.empty:
+                            positions_for_db = positions_df.drop(columns=["raw_symbol", "type_code"], errors="ignore")
+                            collector.write_to_database(positions_for_db, "positions", conflict_columns=["symbol", "account_id"])
+                        balances_df = collector.get_balances(acct_id)
+                        if not balances_df.empty:
+                            collector.write_to_database(balances_df, "account_balances", conflict_columns=["currency_code", "snapshot_date", "account_id"])
+                        execute_sql(
+                            "UPDATE accounts SET last_successful_sync = NOW() WHERE id = :acct",
+                            params={"acct": acct_id},
+                        )
+                        logger.info("Initial sync complete for reconnected account %s", acct_id)
+                    except Exception as e:
+                        logger.error("Failed initial sync for account %s: %s", acct_id, e)
+            except Exception as e:
+                logger.error("Failed to trigger initial sync after CONNECTION_CONNECTED: %s", e)
+
+        return f"Connection {auth_id} marked as connected and synced"
 
     elif event_type == "CONNECTION_DISCONNECTED":
         auth_id = payload.get("brokerageAuthorizationId")
