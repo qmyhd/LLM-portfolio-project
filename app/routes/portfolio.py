@@ -923,9 +923,13 @@ async def get_sparklines(
     start_date = end_date - timedelta(days=days)
 
     try:
-        # Get held symbols
+        # Get held symbols — exclude positions from deleted (orphaned) accounts
         held = execute_sql(
-            "SELECT DISTINCT symbol FROM positions WHERE quantity > 0",
+            "SELECT DISTINCT symbol FROM positions WHERE quantity > 0"
+            " AND NOT EXISTS ("
+            "   SELECT 1 FROM accounts a"
+            "   WHERE a.id = account_id AND a.connection_status = 'deleted'"
+            " )",
             fetch_results=True,
         )
         symbols = [
