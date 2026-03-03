@@ -65,7 +65,7 @@ def weak_fundamentals_input() -> AnalysisInput:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fundamental_strong(strong_fundamentals_input: AnalysisInput) -> None:
     """Strong fundamentals should produce a bullish signal with decent confidence."""
     result = await run(strong_fundamentals_input)
@@ -76,7 +76,7 @@ async def test_fundamental_strong(strong_fundamentals_input: AnalysisInput) -> N
     assert result.confidence > 0.5
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fundamental_weak(weak_fundamentals_input: AnalysisInput) -> None:
     """Weak fundamentals should produce a bearish signal."""
     result = await run(weak_fundamentals_input)
@@ -87,7 +87,7 @@ async def test_fundamental_weak(weak_fundamentals_input: AnalysisInput) -> None:
     assert result.confidence > 0.3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fundamental_no_data() -> None:
     """No fundamental data should return neutral with zero confidence."""
     inp = AnalysisInput(ticker="NONE", ohlcv=[], fundamentals=None, portfolio_value=50000.0)
@@ -100,7 +100,7 @@ async def test_fundamental_no_data() -> None:
     assert "No fundamental data" in result.reasoning
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_fundamental_metrics_include_pillars(strong_fundamentals_input: AnalysisInput) -> None:
     """Metrics dict should contain all four pillar keys."""
     result = await run(strong_fundamentals_input)

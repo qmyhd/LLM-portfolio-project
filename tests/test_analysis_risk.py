@@ -36,7 +36,7 @@ def risk_input() -> AnalysisInput:
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_risk_produces_signal(risk_input: AnalysisInput) -> None:
     """Risk agent returns valid signal with risk metrics."""
     signal = await run(risk_input)
@@ -45,7 +45,7 @@ async def test_risk_produces_signal(risk_input: AnalysisInput) -> None:
     assert 0.0 <= signal.confidence <= 1.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_risk_metrics_structure(risk_input: AnalysisInput) -> None:
     """Risk metrics include volatility, drawdown, and sizing."""
     signal = await run(risk_input)
@@ -55,7 +55,7 @@ async def test_risk_metrics_structure(risk_input: AnalysisInput) -> None:
     assert "position_size_recommendation_pct" in signal.metrics
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_risk_no_data() -> None:
     """Empty OHLCV returns neutral."""
     inp = AnalysisInput(ticker="EMPTY", ohlcv=[], portfolio_value=50000.0)

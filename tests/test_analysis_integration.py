@@ -49,7 +49,7 @@ def full_input():
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_all_agents_run_without_error(full_input):
     """Every agent produces a valid AnalystSignal from realistic data."""
     from src.analysis import technical, fundamental, valuation, sentiment, risk
@@ -68,7 +68,7 @@ async def test_all_agents_run_without_error(full_input):
     assert agent_ids == {"technical", "fundamental", "valuation", "sentiment", "risk"}
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_full_pipeline_with_mocked_llm(full_input):
     """Full pipeline: 5 agents -> consensus with mocked LLM."""
     from src.analysis import technical, fundamental, valuation, sentiment, risk

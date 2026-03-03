@@ -57,7 +57,7 @@ def overvalued_input() -> AnalysisInput:
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_valuation_undervalued(undervalued_input: AnalysisInput) -> None:
     """Stock trading well below intrinsic value should produce bullish signal."""
     result = await run(undervalued_input)
@@ -67,7 +67,7 @@ async def test_valuation_undervalued(undervalued_input: AnalysisInput) -> None:
     assert result.confidence > 0.3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_valuation_overvalued(overvalued_input: AnalysisInput) -> None:
     """Stock trading well above intrinsic value should produce bearish signal."""
     result = await run(overvalued_input)
@@ -77,7 +77,7 @@ async def test_valuation_overvalued(overvalued_input: AnalysisInput) -> None:
     assert result.confidence > 0.3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_valuation_no_data() -> None:
     """No fundamentals should return neutral with zero confidence."""
     inp = AnalysisInput(ticker="NONE", ohlcv=[], fundamentals=None, portfolio_value=50000.0)
@@ -87,7 +87,7 @@ async def test_valuation_no_data() -> None:
     assert result.confidence == 0.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_valuation_no_price() -> None:
     """No OHLCV price should return neutral."""
     inp = AnalysisInput(
@@ -102,7 +102,7 @@ async def test_valuation_no_price() -> None:
     assert result.confidence == 0.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_valuation_metrics_structure(undervalued_input: AnalysisInput) -> None:
     """Metrics should contain model results and weighted gap."""
     result = await run(undervalued_input)

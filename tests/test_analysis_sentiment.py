@@ -80,7 +80,7 @@ def bearish_sentiment_input() -> AnalysisInput:
     )
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sentiment_bullish(bullish_sentiment_input: AnalysisInput) -> None:
     """Bullish ideas + positive news should produce bullish signal."""
     result = await run(bullish_sentiment_input)
@@ -90,7 +90,7 @@ async def test_sentiment_bullish(bullish_sentiment_input: AnalysisInput) -> None
     assert result.confidence > 0.3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sentiment_bearish(bearish_sentiment_input: AnalysisInput) -> None:
     """Bearish ideas + negative news should produce bearish signal."""
     result = await run(bearish_sentiment_input)
@@ -100,7 +100,7 @@ async def test_sentiment_bearish(bearish_sentiment_input: AnalysisInput) -> None
     assert result.confidence > 0.3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sentiment_no_data() -> None:
     """No ideas or news should return neutral with zero confidence."""
     inp = AnalysisInput(ticker="EMPTY", ohlcv=[], ideas=[], news=[], portfolio_value=50000.0)
@@ -110,7 +110,7 @@ async def test_sentiment_no_data() -> None:
     assert result.confidence == 0.0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sentiment_news_only() -> None:
     """News-only input should still produce a signal from the news source."""
     inp = AnalysisInput(
@@ -129,7 +129,7 @@ async def test_sentiment_news_only() -> None:
     assert "news" in result.metrics
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_sentiment_metrics_structure(bullish_sentiment_input: AnalysisInput) -> None:
     """Metrics should contain all 3 source keys with expected sub-fields."""
     result = await run(bullish_sentiment_input)

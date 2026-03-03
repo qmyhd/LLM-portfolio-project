@@ -85,7 +85,7 @@ def test_should_not_escalate_aligned() -> None:
     assert _should_escalate(signals) is False
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 @pytest.mark.openai
 async def test_consensus_full_run(bullish_signals: list[AnalystSignal]) -> None:
     """Full consensus run with mocked OpenAI call."""

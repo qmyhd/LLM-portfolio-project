@@ -76,7 +76,7 @@ def empty_ohlcv_input() -> AnalysisInput:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_technical_bullish_trend(bullish_ohlcv_input: AnalysisInput) -> None:
     """200 bars with a strong uptrend should produce a bullish or neutral signal
     with positive confidence and expected metric keys."""
@@ -89,7 +89,7 @@ async def test_technical_bullish_trend(bullish_ohlcv_input: AnalysisInput) -> No
     assert "macd_histogram" in result.metrics
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_technical_short_data_degrades(short_ohlcv_input: AnalysisInput) -> None:
     """With only 10 bars, signal should degrade to neutral with low confidence."""
     result = await run(short_ohlcv_input)
@@ -99,7 +99,7 @@ async def test_technical_short_data_degrades(short_ohlcv_input: AnalysisInput) -
     assert result.confidence <= 0.3
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_technical_empty_data(empty_ohlcv_input: AnalysisInput) -> None:
     """Zero bars should return neutral with zero confidence."""
     result = await run(empty_ohlcv_input)
@@ -110,7 +110,7 @@ async def test_technical_empty_data(empty_ohlcv_input: AnalysisInput) -> None:
     assert result.metrics["bars_available"] == 0
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_technical_metrics_structure(bullish_ohlcv_input: AnalysisInput) -> None:
     """200 bars should produce metrics with all expected top-level keys."""
     result = await run(bullish_ohlcv_input)

@@ -10,7 +10,7 @@ import pytest
 from src.analysis.models import AnalystSignal
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_orchestrator_cache_hit() -> None:
     """Returns cached result without running agents if fresh."""
     from src.analysis.orchestrator import get_stock_analysis
@@ -39,7 +39,7 @@ async def test_orchestrator_cache_hit() -> None:
     assert report["summary"] == "cached"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_orchestrator_cache_miss_runs_agents() -> None:
     """Cache miss triggers full agent pipeline."""
     from src.analysis.orchestrator import get_stock_analysis
@@ -86,7 +86,7 @@ async def test_orchestrator_cache_miss_runs_agents() -> None:
     mock_consensus.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_orchestrator_refresh_bypasses_cache() -> None:
     """refresh=True should skip cache and run full pipeline."""
     from src.analysis.orchestrator import get_stock_analysis
@@ -135,7 +135,7 @@ async def test_orchestrator_refresh_bypasses_cache() -> None:
     assert report["summary"] == "refreshed"
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_orchestrator_stale_triggers_background_refresh() -> None:
     """Stale cache returns stale result and triggers background refresh."""
     from src.analysis.orchestrator import get_stock_analysis
@@ -171,7 +171,7 @@ async def test_orchestrator_stale_triggers_background_refresh() -> None:
     mock_create_task.assert_called_once()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_agents_handles_failure() -> None:
     """A failing agent returns neutral signal with error info."""
     from src.analysis.orchestrator import _run_agents
@@ -208,7 +208,7 @@ async def test_run_agents_handles_failure() -> None:
     assert "error" in failed[0].reasoning.lower()
 
 
-@pytest.mark.asyncio
+@pytest.mark.anyio
 async def test_run_agents_filters_by_name() -> None:
     """Only requested agents run when agents list is specified."""
     from src.analysis.orchestrator import _run_agents
