@@ -715,6 +715,7 @@ class SnapTradeCollector:
                     "NONE": "PENDING",
                     "ACCEPTED": "PENDING",
                     "NEW": "PENDING",
+                    "QUEUED": "PENDING",
                     "PARTIALLY_FILLED": "PARTIAL",
                     "PART_CANCELED": "CANCELED",
                 }
