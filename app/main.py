@@ -42,6 +42,7 @@ from app.routes import (
     search,
     sentiment,
     stocks,
+    trades,
     watchlist,
     webhook,
 )
@@ -202,6 +203,11 @@ app.include_router(
     connections.router,
     prefix="/connections",
     tags=["Connections"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    trades.router,
+    tags=["Trades"],
     dependencies=[Depends(require_api_key)],
 )
 
