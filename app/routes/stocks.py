@@ -626,18 +626,27 @@ async def get_stock_idea_context(
     mr = dict(msg_rows[0]._mapping)
 
     # 2. Fetch surrounding messages from same channel
+    # Filter out bot responses and commands for cleaner context
     # timestamp is stored as text (ISO 8601) — text comparison works correctly for ISO strings
+    bot_filter = (
+        " AND LOWER(author) NOT IN ('qbot')"
+        " AND content NOT LIKE '!%'"
+        " AND content NOT LIKE '/%'"
+        " AND LENGTH(COALESCE(content, '')) >= 5"
+    )
     ctx_rows = execute_sql(
-        """
+        f"""
         (SELECT message_id, content, author, timestamp, channel
          FROM discord_messages
          WHERE channel = :channel AND timestamp <= :ts
+           {bot_filter}
          ORDER BY timestamp DESC
          LIMIT :before)
         UNION ALL
         (SELECT message_id, content, author, timestamp, channel
          FROM discord_messages
          WHERE channel = :channel AND timestamp > :ts
+           {bot_filter}
          ORDER BY timestamp ASC
          LIMIT :after)
         ORDER BY timestamp ASC
@@ -662,6 +671,19 @@ async def get_stock_idea_context(
             channel=cd["channel"],
             isParent=cd["message_id"] == message_id,
         ))
+
+    # Ensure the parent message is always included even if it was filtered
+    parent_ids = {cm.messageId for cm in context_msgs}
+    if message_id not in parent_ids:
+        context_msgs.append(IdeaContextMessage(
+            messageId=mr["message_id"],
+            content=mr["content"],
+            author=mr["author"],
+            sentAt=str(mr["timestamp"]),
+            channel=mr["channel"],
+            isParent=True,
+        ))
+        context_msgs.sort(key=lambda cm: cm.sentAt)
 
     return StockIdeaContextResponse(messageId=message_id, contextMessages=context_msgs)
 
