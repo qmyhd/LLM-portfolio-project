@@ -32,6 +32,7 @@ from fastapi.responses import JSONResponse
 from app.auth import require_api_key
 from app.routes import (
     activities,
+    analysis as analysis_routes,
     chat,
     connections,
     ideas,
@@ -147,6 +148,11 @@ app.include_router(
     stocks.router,
     prefix="/stocks",
     tags=["Stocks"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    analysis_routes.router,
+    tags=["Analysis"],
     dependencies=[Depends(require_api_key)],
 )
 app.include_router(
