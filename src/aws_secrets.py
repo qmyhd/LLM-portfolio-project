@@ -80,11 +80,7 @@ SECRET_KEY_MAPPING = {
     "JWT_SECRET": "JWT_SECRET",
     # OpenAI (required for NLP)
     "OPENAI_API_KEY": "OPENAI_API_KEY",
-    "OPENAI_MODEL_TRIAGE": "OPENAI_MODEL_TRIAGE",
-    "OPENAI_MODEL_MAIN": "OPENAI_MODEL_MAIN",
-    "OPENAI_MODEL_ESCALATION": "OPENAI_MODEL_ESCALATION",
-    "OPENAI_MODEL_LONG": "OPENAI_MODEL_LONG",
-    "OPENAI_MODEL_SUMMARY": "OPENAI_MODEL_SUMMARY",
+    # Model names are hardcoded in src/nlp/openai_parser.py — no longer env-configurable
     "OPENAI_MAX_OUTPUT_TOKENS": "OPENAI_MAX_OUTPUT_TOKENS",
     "OPENAI_REASONING_EFFORT_MAIN": "OPENAI_REASONING_EFFORT_MAIN",
     "OPENAI_PROMPT_VERSION": "OPENAI_PROMPT_VERSION",
@@ -380,11 +376,7 @@ def create_secret_template() -> dict:
         "JWT_SECRET": "",
         # Required - OpenAI
         "OPENAI_API_KEY": "sk-your_openai_key",
-        "OPENAI_MODEL_TRIAGE": "gpt-5-mini",
-        "OPENAI_MODEL_MAIN": "gpt-5-mini",
-        "OPENAI_MODEL_ESCALATION": "gpt-5.1",
-        "OPENAI_MODEL_LONG": "gpt-5.1",
-        "OPENAI_MODEL_SUMMARY": "gpt-5-mini",
+        # Model names are hardcoded in src/nlp/openai_parser.py — no longer env-configurable
         "OPENAI_MAX_OUTPUT_TOKENS": "3500",
         "OPENAI_REASONING_EFFORT_MAIN": "medium",
         "OPENAI_PROMPT_VERSION": "v1.0",

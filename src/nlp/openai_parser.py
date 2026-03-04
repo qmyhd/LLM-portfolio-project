@@ -261,12 +261,12 @@ _FALLBACK_MODELS = {
     "long": "gpt-4o",
 }
 
-# Active models (set after validation)
-MODEL_TRIAGE = os.getenv("OPENAI_MODEL_TRIAGE", _PREFERRED_MODELS["triage"])
-MODEL_MAIN = os.getenv("OPENAI_MODEL_MAIN", _PREFERRED_MODELS["main"])
-MODEL_ESCALATION = os.getenv("OPENAI_MODEL_ESCALATION", _PREFERRED_MODELS["escalation"])
-MODEL_SUMMARY = os.getenv("OPENAI_MODEL_SUMMARY", _PREFERRED_MODELS["summary"])
-MODEL_LONG_CONTEXT = os.getenv("OPENAI_MODEL_LONG", _PREFERRED_MODELS["long"])
+# Active models (set after validation; model names are managed in code, not env vars)
+MODEL_TRIAGE = _PREFERRED_MODELS["triage"]
+MODEL_MAIN = _PREFERRED_MODELS["main"]
+MODEL_ESCALATION = _PREFERRED_MODELS["escalation"]
+MODEL_SUMMARY = _PREFERRED_MODELS["summary"]
+MODEL_LONG_CONTEXT = _PREFERRED_MODELS["long"]
 
 # Character/token thresholds for model routing (env-configurable)
 # Based on user request: 500 tokens (~2000 chars) triggers long-context routing

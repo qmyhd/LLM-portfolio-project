@@ -109,9 +109,8 @@ if result and result.ideas:
         # Each idea has: primary_symbol, labels, direction, confidence, levels
         print(f"{idea.primary_symbol}: {idea.labels} ({idea.confidence})")
 
-# Model routing via environment variables:
-# OPENAI_MODEL_TRIAGE, OPENAI_MODEL_MAIN, OPENAI_MODEL_ESCALATION
-# OPENAI_MODEL_LONG (high symbol density), OPENAI_MODEL_SUMMARY
+# Model names are hardcoded in _PREFERRED_MODELS dict (not env-configurable)
+# Validation + fallback logic in validate_models()
 ```
 
 ### Discord Bot (Modular Command Pattern)
@@ -156,9 +155,8 @@ if result and result.ideas:
         # Each idea has: primary_symbol, labels, direction, confidence, levels
         print(f"{idea.primary_symbol}: {idea.labels} ({idea.confidence})")
 
-# Model routing via environment variables:
-# OPENAI_MODEL_TRIAGE, OPENAI_MODEL_MAIN, OPENAI_MODEL_ESCALATION
-# OPENAI_MODEL_LONG (high symbol density), OPENAI_MODEL_SUMMARY
+# Model names are hardcoded in _PREFERRED_MODELS dict (not env-configurable)
+# Validation + fallback logic in validate_models()
 ```
 
 ### Ticker Accuracy (preclean.py)

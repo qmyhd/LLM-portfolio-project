@@ -9,10 +9,10 @@ The LLM Portfolio Journal uses a tiered model strategy to balance cost, latency,
 
 ## Model Tiers
 
-### Tier 1: Quick Triage (`gpt-5-nano`)
+### Tier 1: Quick Triage (`gpt-5-mini-2025-08-07`)
 
-**Use Case:** Initial message classification and triage  
-**Environment Variable:** `OPENAI_MODEL_TRIAGE`  
+**Use Case:** Initial message classification and triage
+**Configured in:** `src/nlp/openai_parser.py` (`_PREFERRED_MODELS["triage"]`)
 **Fallback:** `gpt-4o-mini`
 
 - Ultra-fast initial classification
@@ -26,10 +26,10 @@ The LLM Portfolio Journal uses a tiered model strategy to balance cost, latency,
 # "good morning everyone" → classify as social → skip parsing
 ```
 
-### Tier 2: Main Parsing (`gpt-5-mini`)
+### Tier 2: Main Parsing (`gpt-5.1-2025-11-13`)
 
-**Use Case:** Standard message parsing and summaries  
-**Environment Variables:** `OPENAI_MODEL_MAIN`, `OPENAI_MODEL_SUMMARY`  
+**Use Case:** Standard message parsing and summaries
+**Configured in:** `src/nlp/openai_parser.py` (`_PREFERRED_MODELS["main"]`, `_PREFERRED_MODELS["summary"]`)
 **Fallback:** `gpt-4o-mini`
 
 - Primary workhorse for idea extraction
@@ -44,10 +44,10 @@ The LLM Portfolio Journal uses a tiered model strategy to balance cost, latency,
 - Determine trade direction (LONG, SHORT, NEUTRAL)
 - Calculate confidence scores
 
-### Tier 3: Escalation & Long Context (`gpt-5.1`)
+### Tier 3: Escalation & Long Context (`gpt-5.1-2025-11-13`)
 
-**Use Case:** Complex messages, high symbol density, long content  
-**Environment Variables:** `OPENAI_MODEL_ESCALATION`, `OPENAI_MODEL_LONG`  
+**Use Case:** Complex messages, high symbol density, long content
+**Configured in:** `src/nlp/openai_parser.py` (`_PREFERRED_MODELS["escalation"]`, `_PREFERRED_MODELS["long"]`)
 **Fallback:** `gpt-4o`
 
 Triggers when:
@@ -153,24 +153,18 @@ OPENAI_API_KEY=sk-...
 GEMINI_API_KEY=AIza...
 ```
 
-### Model Routing Variables
+### Model Selection
 
-```bash
-# Triage model (first pass classification)
-OPENAI_MODEL_TRIAGE=gpt-5-nano
+Model names are **hardcoded** in `src/nlp/openai_parser.py` (`_PREFERRED_MODELS` dict) — not env-configurable.
+To change models, update `_PREFERRED_MODELS` in the source code directly.
 
-# Main parsing model (standard messages)
-OPENAI_MODEL_MAIN=gpt-5-mini
-
-# Escalation model (complex/ambiguous)
-OPENAI_MODEL_ESCALATION=gpt-5.1
-
-# Long context model (>500 tokens)
-OPENAI_MODEL_LONG=gpt-5.1
-
-# Summary model (batch summaries)
-OPENAI_MODEL_SUMMARY=gpt-5-mini
-```
+| Role | Model | Fallback |
+|------|-------|----------|
+| Triage | `gpt-5-mini-2025-08-07` | `gpt-4o-mini` |
+| Main | `gpt-5.1-2025-11-13` | `gpt-4o-mini` |
+| Escalation | `gpt-5.1-2025-11-13` | `gpt-4o` |
+| Long Context | `gpt-5.1-2025-11-13` | `gpt-4o` |
+| Summary | `gpt-5-mini-2025-08-07` | `gpt-4o-mini` |
 
 ### Routing Thresholds
 
