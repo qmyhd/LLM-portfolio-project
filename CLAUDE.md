@@ -101,11 +101,11 @@ Modular command pattern. Each command file in `src/bot/commands/` exports a `reg
 
 ### Database Schema
 
-Consolidated schema in `schema/` (060_baseline_current.sql + 061-067 incremental, older files archived). 22 active tables. Recent migrations: 062 (stock_notes), 063 (discord_ingest_cursors), 064 (user_ideas), 065 (account_balances PK), 066 (accounts connection_status), 067 (stock_analysis_cache + portfolio_risk_cache). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `activities`, `user_ideas`, `twitter_data`, `stock_profile_current`, `stock_notes`, `discord_ingest_cursors`, `stock_analysis_cache`, `portfolio_risk_cache`. All tables have RLS enabled — service role key required in DATABASE_URL.
+Consolidated schema in `schema/` (060_baseline_current.sql + 061-068 incremental, older files archived). 23 active tables. Recent migrations: 062 (stock_notes), 063 (discord_ingest_cursors), 064 (user_ideas), 065 (account_balances PK), 066 (accounts connection_status), 067 (stock_analysis_cache + portfolio_risk_cache), 068 (position_snapshots). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `activities`, `user_ideas`, `twitter_data`, `stock_profile_current`, `stock_notes`, `discord_ingest_cursors`, `stock_analysis_cache`, `portfolio_risk_cache`, `position_snapshots`. All tables have RLS enabled — service role key required in DATABASE_URL.
 
 ### FastAPI Routes (`app/routes/`)
 
-15 route files: `portfolio.py` (positions, sync, movers, sparklines), `orders.py`, `stocks.py` (profile, ideas, OHLCV), `openbb.py` (transcripts, fundamentals, filings, news, notes), `analysis.py` (multi-agent stock analysis, portfolio risk), `chat.py`, `search.py`, `watchlist.py`, `ideas.py` (CRUD, refine with 3-pass self-reflection, context), `activities.py`, `connections.py`, `sentiment.py`, `webhook.py`, `debug.py` (opt-in via `DEBUG_ENDPOINTS=1`).
+16 route files: `portfolio.py` (positions, sync, movers, sparklines), `orders.py`, `stocks.py` (profile, ideas, OHLCV), `openbb.py` (transcripts, fundamentals, filings, news, notes), `analysis.py` (multi-agent stock analysis, portfolio risk), `trades.py` (unified trade feed with P/L enrichment), `chat.py`, `search.py`, `watchlist.py`, `ideas.py` (CRUD, refine with 3-pass self-reflection, context), `activities.py`, `connections.py`, `sentiment.py`, `webhook.py`, `debug.py` (opt-in via `DEBUG_ENDPOINTS=1`).
 
 ### Deployment
 

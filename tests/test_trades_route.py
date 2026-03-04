@@ -133,7 +133,7 @@ class TestGetStockTrades:
 
         trade = data["trades"][0]
         assert trade["symbol"] == "AAPL"
-        assert trade["side"] == "BUY"
+        assert trade["type"] == "BUY"
         assert trade["source"] == "activity"
         assert trade["price"] == 150.0
         assert trade["units"] == 10.0
@@ -172,7 +172,7 @@ class TestGetStockTrades:
         trade = data["trades"][0]
         assert trade["source"] == "order"
         assert trade["symbol"] == "TSLA"
-        assert trade["side"] == "BUY"
+        assert trade["type"] == "BUY"
         assert trade["price"] == 200.0
         assert trade["fee"] == 0  # orders don't have fee data
 
@@ -260,9 +260,11 @@ class TestGetStockTrades:
         data = resp.json()
 
         trade = data["trades"][0]
-        assert trade["side"] == "SELL"
+        assert trade["type"] == "SELL"
         # realizedPnl = (salePrice - avgCost) * units = (160 - 145) * 10 = 150
         assert trade["realizedPnl"] == 150.0
+        # realizedPnlPct = (160 - 145) / 145 * 100 ≈ 10.34%
+        assert trade["realizedPnlPct"] == pytest.approx(10.34, abs=0.01)
         assert trade["unrealizedPnl"] is None
 
     @patch("app.routes.trades.execute_sql")

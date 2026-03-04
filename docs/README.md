@@ -1,6 +1,6 @@
 # LLM Portfolio Journal - Documentation Hub
 
-**Last Updated:** March 1, 2026
+**Last Updated:** March 3, 2026
 
 ## Active Documentation
 
@@ -30,7 +30,6 @@ docs/
 ├── schema-report.md              # Database schema documentation
 ├── legacy-migrations.md          # Historical reference
 ├── LLM_MODELS.md                 # LLM model routing strategy
-├── FULL_CODEBASE_AUDIT.md        # Point-in-time audit (Feb 2026 snapshot)
 ├── EC2_DEPLOYMENT.md             # EC2 production deployment
 ├── EC2_SETUP_QUICK_REFERENCE.md  # EC2 quick commands
 ├── recon_checklist.md            # Portfolio QA checklist
@@ -70,7 +69,7 @@ python scripts/nightly_pipeline.py
 - Run `verify_database.py` before schema changes
 
 **Current System Status:**
-- 20 operational tables (migrations 060-066)
+- 21 operational tables (migrations 060-068)
 - PostgreSQL-only (Supabase)
 - RLS policies on all tables
 - Production ready

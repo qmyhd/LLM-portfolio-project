@@ -57,12 +57,12 @@ class EnrichedTrade(BaseModel):
 
     id: str
     symbol: str
-    side: str  # BUY, SELL, DIVIDEND, etc.
+    type: str  # BUY, SELL, DIVIDEND, etc. (maps from DB side/action)
     price: float | None = None
     units: float | None = None
     amount: float = 0.0
     fee: float = 0.0
-    executedAt: str | None = None  # ISO timestamp
+    tradeDate: str | None = None  # ISO timestamp
     source: str  # "activity" or "order"
     description: str | None = None
 
@@ -75,7 +75,9 @@ class EnrichedTrade(BaseModel):
 
     # P/L enrichment
     realizedPnl: float | None = None  # For SELL: (salePrice - avgCost) * units
+    realizedPnlPct: float | None = None  # For SELL: percentage gain/loss
     unrealizedPnl: float | None = None  # For BUY: (currentPrice - avgCost) * units
+    unrealizedPnlPct: float | None = None  # For BUY: percentage gain/loss
 
 
 class TradesResponse(BaseModel):
@@ -194,25 +196,31 @@ def _enrich_trade(
 
     # P/L calculation
     realized_pnl = None
+    realized_pnl_pct = None
     unrealized_pnl = None
+    unrealized_pnl_pct = None
     side = (trade.get("side") or "").upper()
     trade_price = _safe_float_optional(trade.get("price"))
     trade_units = _safe_float_optional(trade.get("units"))
 
     if side == "SELL" and trade_price is not None and trade_units is not None and avg_cost:
         realized_pnl = round((trade_price - avg_cost) * abs(trade_units), 2)
+        if avg_cost > 0:
+            realized_pnl_pct = round((trade_price - avg_cost) / avg_cost * 100, 2)
     elif side == "BUY" and trade_units is not None and avg_cost and current_price:
         unrealized_pnl = round((current_price - avg_cost) * abs(trade_units), 2)
+        if avg_cost > 0:
+            unrealized_pnl_pct = round((current_price - avg_cost) / avg_cost * 100, 2)
 
     return EnrichedTrade(
         id=trade["id"],
         symbol=symbol,
-        side=side or trade.get("side", "UNKNOWN"),
+        type=side or trade.get("side", "UNKNOWN"),
         price=_safe_float_optional(trade.get("price")),
         units=_safe_float_optional(trade.get("units")),
         amount=_safe_float(trade.get("amount")),
         fee=_safe_float(trade.get("fee")),
-        executedAt=str(trade["executed_at"]) if trade.get("executed_at") else None,
+        tradeDate=str(trade["executed_at"]) if trade.get("executed_at") else None,
         source=trade.get("source", "unknown"),
         description=trade.get("description"),
         currentPrice=round(current_price, 2) if current_price else None,
@@ -221,7 +229,9 @@ def _enrich_trade(
         marketValue=round(market_value, 2) if market_value else None,
         portfolioPct=portfolio_pct,
         realizedPnl=realized_pnl,
+        realizedPnlPct=realized_pnl_pct,
         unrealizedPnl=unrealized_pnl,
+        unrealizedPnlPct=unrealized_pnl_pct,
     )
 
 

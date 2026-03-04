@@ -1,7 +1,7 @@
 # LLM Portfolio Journal - Codebase Map
 
-> **Last Updated:** March 1, 2026
-> **Status:** Current — 20 core tables, migrations 060-066, Supabase PostgreSQL.
+> **Last Updated:** March 3, 2026
+> **Status:** Current — 21 core tables, migrations 060-068, Supabase PostgreSQL.
 
 ## 1. Project Overview
 
@@ -37,6 +37,8 @@ The **LLM Portfolio Journal** is a data-driven application that integrates broke
 | **`app/routes/activities.py`** | SnapTrade activity history | `/activities` |
 | **`app/routes/connections.py`** | SnapTrade connection status, portal URL | `/connections` |
 | **`app/routes/sentiment.py`** | Sentiment summary, messages | `/sentiment` |
+| **`app/routes/trades.py`** | Unified trade feed (activities + orders, enriched) | `/trades` |
+| **`app/routes/analysis.py`** | Multi-agent stock analysis, portfolio risk | `/analysis` |
 | **`app/routes/webhook.py`** | SnapTrade webhook (HMAC verified) | `/webhook` |
 | **`app/routes/debug.py`** | Symbol trace (opt-in via `DEBUG_ENDPOINTS=1`) | `/debug` |
 
@@ -76,13 +78,13 @@ The **LLM Portfolio Journal** is a data-driven application that integrates broke
 
 SQL files defining the database structure. Applied via `deploy_database.py`.
 
-- **Baseline**: `060_baseline_current.sql` — Complete 20-table schema for fresh installs
-- **Migrations**: `061_cleanup` through `066_accounts_connection_status`
+- **Baseline**: `060_baseline_current.sql` — Complete schema for fresh installs
+- **Migrations**: `061_cleanup` through `068_position_snapshots`
 - **Archive**: `schema/archive/` — Retired migrations (000-059), kept for reference
 
 ### `tests/` - Test Suite
 
-344 tests. CI runs on Python 3.11 and 3.12, skips `openai` and `integration` markers.
+427 tests. CI runs on Python 3.11 and 3.12, skips `openai` and `integration` markers.
 
 ### `systemd/` - EC2 Services
 
@@ -173,7 +175,7 @@ graph TD
     API --> NEXT
 ```
 
-## 5. Database Tables (20 Active)
+## 5. Database Tables (21 Active)
 
 | Category | Tables |
 | :--- | :--- |
@@ -183,4 +185,5 @@ graph TD
 | **Market Data** | `ohlcv_daily` (Databento) |
 | **Stock Analytics** | `stock_profile_current`, `stock_profile_history`, `stock_notes` |
 | **Twitter** | `twitter_data` |
+| **Snapshots** | `position_snapshots` |
 | **System** | `processing_status`, `schema_migrations`, `symbol_aliases`, `institutional_holdings` |
