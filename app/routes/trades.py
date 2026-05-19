@@ -118,11 +118,30 @@ def _round_minute(dt_str: str | None) -> str | None:
         return None
 
 
-def _dedup_key(symbol: str, executed_at: str | None, amount: float) -> str:
-    """Generate a deduplication key from symbol + minute-rounded time + rounded amount."""
+def _dedup_key(
+    symbol: str,
+    executed_at: str | None,
+    side: str | None,
+    units: Any,
+    amount: float,
+) -> str:
+    """Generate a deduplication key.
+
+    Activities store fee-inclusive net amounts while orders store gross
+    (price * filled_quantity), so amount-based dedup misses real duplicates
+    that differ by a few cents. Units match exactly across both sources, so
+    use them when present. Falls back to amount for non-share rows
+    (DIVIDEND/FEE/etc.). Side is included to prevent collisions between a
+    DIVIDEND and a BUY at the same minute/notional.
+    """
     minute = _round_minute(executed_at) or "none"
-    rounded_amount = round(amount, 2)
-    return f"{symbol.upper()}|{minute}|{rounded_amount}"
+    side_key = (side or "").upper() or "?"
+    units_f = _safe_float_optional(units)
+    if units_f is not None and units_f != 0:
+        qty_key = f"u:{abs(round(units_f, 4))}"
+    else:
+        qty_key = f"a:{round(amount, 2)}"
+    return f"{symbol.upper()}|{minute}|{side_key}|{qty_key}"
 
 
 def _build_position_map(rows: list) -> dict[str, dict]:
@@ -251,6 +270,8 @@ def _merge_and_dedup(
         key = _dedup_key(
             act["symbol"],
             act.get("executed_at"),
+            act.get("side"),
+            act.get("units"),
             act.get("amount", 0),
         )
         seen[key] = act
@@ -260,6 +281,8 @@ def _merge_and_dedup(
         key = _dedup_key(
             order["symbol"],
             order.get("executed_at"),
+            order.get("side"),
+            order.get("units"),
             order.get("amount", 0),
         )
         if key not in seen:

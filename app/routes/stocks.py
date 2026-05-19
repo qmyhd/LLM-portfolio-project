@@ -335,7 +335,7 @@ async def get_stock_profile(
                 MIN(time_executed)                         AS first_trade,
                 MAX(time_executed)                         AS last_trade
             FROM orders
-            WHERE UPPER(symbol) = :s AND status = 'filled'
+            WHERE UPPER(symbol) = :s AND UPPER(status) IN ('EXECUTED', 'FILLED')
             """,
             params={"s": symbol},
             fetch_results=True,
@@ -765,7 +765,7 @@ async def get_stock_ohlcv(
             FROM orders
             WHERE UPPER(symbol) = :symbol
               AND time_executed >= :start_date
-              AND status = 'filled'
+              AND UPPER(status) IN ('EXECUTED', 'FILLED')
             ORDER BY time_executed
             """,
             params={"symbol": symbol, "start_date": start_date.isoformat()},
