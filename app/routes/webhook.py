@@ -153,6 +153,54 @@ def verify_event_timestamp(event_timestamp: str | None) -> bool:
         return False
 
 
+def _write_processing_status(table_name: str, status: str) -> None:
+    """Idempotently record webhook lifecycle into processing_status.
+
+    Called twice per event: once at request time with status='received',
+    again from the background task with 'processed' or 'error:...'.
+    Swallows DB errors — telemetry must never block webhook ACKs.
+    """
+    try:
+        execute_sql(
+            """
+            INSERT INTO processing_status (table_name, status, last_run)
+            VALUES (:table_name, :status, :last_run)
+            ON CONFLICT (table_name)
+            DO UPDATE SET status = :status, last_run = :last_run
+            """,
+            params={
+                "table_name": table_name,
+                "status": status,
+                "last_run": datetime.now(UTC).isoformat(),
+            },
+        )
+    except Exception as e:
+        logger.error("Failed to write processing_status %s=%s: %s", table_name, status, e)
+
+
+def _process_event_background(
+    event_type: str, account_id: str | None, payload: dict
+) -> None:
+    """Run the webhook handler off the request thread.
+
+    SnapTrade requires a fast ACK; positions/balances/orders syncs can take
+    15-30s and will trigger SnapTrade's retry policy if they block the
+    response. This wrapper runs in FastAPI's BackgroundTasks pool, calls
+    `_handle_event`, then writes the terminal status to processing_status.
+    """
+    table_name = f"webhook_{event_type.lower()}"
+    try:
+        _handle_event(event_type, account_id, payload)
+        _write_processing_status(table_name, "processed")
+    except Exception as e:
+        logger.error(
+            "Background webhook handler failed for %s account=%s: %s",
+            event_type, account_id, e, exc_info=True,
+        )
+        # Truncate to fit a reasonable column width while keeping the error visible
+        _write_processing_status(table_name, f"error: {str(e)[:200]}")
+
+
 @router.post("/snaptrade", response_model=WebhookResponse)
 async def handle_snaptrade_webhook(
     request: Request,
@@ -176,6 +224,12 @@ async def handle_snaptrade_webhook(
     - HMAC SHA-256 Signature header verification (SNAPTRADE_CLIENT_SECRET)
     - Replay protection via eventTimestamp (5-minute window)
     - webhookId deduplication
+
+    Processing model:
+    - Signature/replay/dedup checks happen synchronously and may 4xx.
+    - The actual collector sync runs in a background task so SnapTrade
+      gets a fast ACK. The terminal status (processed/error) is recorded
+      to the processing_status table when the background task finishes.
     """
     try:
         # Read raw body BEFORE parsing JSON (needed for HMAC)
@@ -211,37 +265,28 @@ async def handle_snaptrade_webhook(
                 message=f"Duplicate webhook {webhook_id} — already processed",
             )
 
-        logger.info("SnapTrade webhook: %s for user=%s account=%s", event_type, user_id, account_id)
+        logger.info(
+            "SnapTrade webhook: %s for user=%s account=%s — queued",
+            event_type, user_id, account_id,
+        )
 
-        # --- Handle event types ---
-        message = _handle_event(event_type, account_id, payload)
-
-        # Log webhook receipt
-        execute_sql(
-            """
-            INSERT INTO processing_status (table_name, status, last_run)
-            VALUES (:table_name, :status, :last_run)
-            ON CONFLICT (table_name)
-            DO UPDATE SET status = :status, last_run = :last_run
-            """,
-            params={
-                "table_name": f"webhook_{event_type.lower()}",
-                "status": "processed",
-                "last_run": datetime.now(UTC).isoformat(),
-            },
+        # --- Log receipt + schedule background processing ---
+        _write_processing_status(f"webhook_{event_type.lower()}", "received")
+        background_tasks.add_task(
+            _process_event_background, event_type, account_id, payload
         )
 
         return WebhookResponse(
-            status="success",
+            status="accepted",
             event=event_type,
-            processed=True,
-            message=message,
+            processed=False,
+            message="Event accepted; processing in background",
         )
 
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Error processing webhook: %s", e)
+        logger.error("Error accepting webhook: %s", e)
         return WebhookResponse(
             status="error",
             event=payload.get("eventType", "UNKNOWN") if "payload" in dir() else "UNKNOWN",

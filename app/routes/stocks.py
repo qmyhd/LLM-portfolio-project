@@ -108,7 +108,9 @@ class StockProfileCurrent(BaseModel):
     totalMentionCount: int = 0
     mentionCount30d: int = 0
     mentionCount7d: int = 0
-    avgSentimentScore: float | None = None
+    avgSentimentScore: float | None = None       # all-time avg of discord_messages.sentiment_score
+    avgSentimentScore30d: float | None = None
+    avgSentimentScore7d: float | None = None
     bullishMentionPct: float | None = None
     bearishMentionPct: float | None = None
     neutralMentionPct: float | None = None
@@ -356,6 +358,9 @@ async def get_stock_profile(
                 COUNT(*) FILTER (WHERE dpi.direction = 'bullish')         AS bull,
                 COUNT(*) FILTER (WHERE dpi.direction = 'bearish')         AS bear,
                 COUNT(*) FILTER (WHERE dpi.direction = 'neutral')         AS neut,
+                AVG(dm.sentiment_score)                                   AS sent_all,
+                AVG(dm.sentiment_score) FILTER (WHERE dm.created_at >= NOW() - INTERVAL '30 days') AS sent_30d,
+                AVG(dm.sentiment_score) FILTER (WHERE dm.created_at >= NOW() - INTERVAL '7 days')  AS sent_7d,
                 MIN(dm.created_at) AS first_at,
                 MAX(dm.created_at) AS last_at
             FROM discord_parsed_ideas dpi
@@ -452,6 +457,15 @@ async def get_stock_profile(
             totalMentionCount=total_ment,
             mentionCount30d=int(sd.get("m30d") or 0),
             mentionCount7d=int(sd.get("m7d") or 0),
+            avgSentimentScore=(
+                round(float(sd["sent_all"]), 4) if sd.get("sent_all") is not None else None
+            ),
+            avgSentimentScore30d=(
+                round(float(sd["sent_30d"]), 4) if sd.get("sent_30d") is not None else None
+            ),
+            avgSentimentScore7d=(
+                round(float(sd["sent_7d"]), 4) if sd.get("sent_7d") is not None else None
+            ),
             bullishMentionPct=_pct(int(sd.get("bull") or 0)),
             bearishMentionPct=_pct(int(sd.get("bear") or 0)),
             neutralMentionPct=_pct(int(sd.get("neut") or 0)),
