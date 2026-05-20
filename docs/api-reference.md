@@ -213,6 +213,7 @@ Get close-price arrays for all held symbols, suitable for sparkline charts. Uses
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `period` | string | `1M` | Period: `1W`, `1M`, `3M` |
+| `bucket` | string | null | Strategy bucket filter |
 
 **Response Model:** `SparklineResponse`
 
@@ -228,6 +229,45 @@ Get close-price arrays for all held symbols, suitable for sparkline charts. Uses
   "period": "1M"
 }
 ```
+
+#### `GET /portfolio/equity-curve`
+
+Daily portfolio equity time-series from `position_snapshots`. Sums each
+day's equity across all (bucket-scoped) accounts. Powers the equity-curve
+chart on the `/portfolio` landing page.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `days` | int | 90 | Lookback window in days (7-730) |
+| `bucket` | string | null | Strategy bucket filter |
+
+**Response Model:** `EquityCurveResponse`
+
+```json
+{
+  "points": [
+    {"date": "2026-02-01", "equity": 142350.25},
+    {"date": "2026-02-02", "equity": 143120.50}
+  ],
+  "bucket": "long_term",
+  "days": 90
+}
+```
+
+Notes:
+- Returns empty `points` array (not 500) if `position_snapshots` is unpopulated. The frontend chart degrades to an empty state explaining the nightly pipeline.
+- Historical correctness reflects today's bucket assignments per the documented retroactive-labeling decision.
+
+#### `GET /portfolio/risk`
+
+Portfolio-wide risk analysis (VaR, concentration, correlation). Cached per bucket via `portfolio_risk_cache` composite PK.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refresh` | bool | false | Force fresh computation bypassing cache |
+| `bucket` | string | null | Strategy bucket filter |
 
 ---
 
@@ -467,6 +507,45 @@ Chat with AI about a stock using OpenAI.
   "sources": ["Discord trading ideas", "Portfolio positions"]
 }
 ```
+
+---
+
+### Analysis (`/stocks/{ticker}/analysis*` and `/portfolio/risk`)
+
+Multi-agent stock analysis (5 deterministic agents + LLM consensus narrative). See [docs/ARCHITECTURE.md](./ARCHITECTURE.md) for the agent system design. Results are cached per `(ticker, analysis_type, bucket)` in `stock_analysis_cache`; portfolio risk caches per `(portfolio_id, bucket)` in `portfolio_risk_cache`.
+
+#### `GET /stocks/{ticker}/analysis`
+
+Full multi-agent analysis (technical, fundamental, valuation, sentiment, risk) with consensus report. Bucket scopes the position context and portfolio value fed to the risk agent.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refresh` | bool | false | Force fresh analysis bypassing cache |
+| `agents` | string | null | Comma-separated agent subset, e.g. `technical,sentiment` |
+| `bucket` | string | null | Strategy bucket filter |
+
+**Response Model:** `ConsensusReport` (see `src/analysis/models.py`)
+
+#### `GET /stocks/{ticker}/analysis/technical`
+
+Technical analysis only (single agent). 5-strategy weighted signal system (trend, mean_reversion, momentum, volatility, stat_arb). Technical signals are stock-wide but cache is bucket-keyed for consistency.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refresh` | bool | false | Force fresh analysis bypassing cache |
+| `bucket` | string | null | Strategy bucket filter (affects cache key only) |
+
+#### `GET /stocks/{ticker}/analysis/risk`
+
+Per-stock risk analysis (annualized volatility, max drawdown, Sharpe, position sizing %). Bucket scopes the position-sizing inputs so the % is relative to the bucket's portfolio total, not the user's full net worth.
+
+**Query Parameters:**
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `refresh` | bool | false | Force fresh analysis bypassing cache |
+| `bucket` | string | null | Strategy bucket filter |
 
 ---
 

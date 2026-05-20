@@ -1,15 +1,30 @@
 # Portfolio Buckets + Research-First IA — Implementation Plan
 
-> **Status (2026-05-19): Phases 0-4 implemented (uncommitted). Phases 5-6 deferred.**
+> **Status (2026-05-20): All six phases shipped to production.**
 >
 > Shipped:
-> - **Phase 0** — `schema/069_account_buckets.sql` adds `accounts.bucket` enum, `schema/070_risk_cache_bucket.sql` adds bucket to `portfolio_risk_cache` PK.
-> - **Phase 1** — `src/bucket.py` helpers + `?bucket=` filter on every data endpoint (positions, movers, sparklines, risk, orders, activities, trades, stock profile, OHLCV overlay, stock activities, chat). Uses LEFT JOIN so legacy orphan-account rows still surface when no bucket filter is set. `src/analysis/orchestrator.py` `get_portfolio_risk` is bucket-aware; cache keyed by bucket.
+>
+> - **Phase 0** — `schema/069_account_buckets.sql` adds `accounts.bucket` enum, `schema/070_risk_cache_bucket.sql` adds bucket to `portfolio_risk_cache` PK, `schema/071_analysis_cache_bucket.sql` adds bucket to `stock_analysis_cache` PK.
+> - **Phase 1** — `src/bucket.py` helpers + `?bucket=` filter on every data endpoint (positions, movers, sparklines, risk, orders, activities, trades, stock profile, OHLCV overlay, stock activities, chat). Uses LEFT JOIN so legacy orphan-account rows still surface when no bucket filter is set. `src/analysis/orchestrator.py` `get_portfolio_risk` bucket-aware; cache keyed by bucket.
 > - **Phase 2** — `PATCH /connections/{id}/bucket` backend endpoint + Settings UI dropdown with optimistic update.
 > - **Phase 3** — Sidebar split into Research / Portfolio groups; `/page.tsx` is the new research home (ideas feed + quick-jump tiles); positions/orders/activity moved under `/portfolio/*` via `git mv`; permanent redirects in `next.config.mjs` keep old URLs working.
-> - **Phase 4** — `BucketContext` + `BucketProvider` + `useBucket` + `withBucket`; `BucketSwitcher` tab strip; URL is source of truth via `?bucket=`; portfolio layout and stock-detail layout both wrap children in the provider; all data hooks read the bucket and include it in SWR keys.
+> - **Phase 4** — `BucketContext` + `BucketProvider` + `useBucket` + `withBucket`; `BucketSwitcher` tab strip (self-wrapped in Suspense); URL is source of truth via `?bucket=`; portfolio layout and stock-detail layout both wrap children in the provider; all data hooks read the bucket and include it in SWR keys. `BucketBadge` on filtered stock pages, `stockHref()` helper propagates bucket through links.
+> - **Phase 5** — `/portfolio/equity-curve?days=&bucket=` endpoint reads `position_snapshots`. New `<EquityCurveCard>` on `/portfolio` landing renders a daily-equity area chart via lightweight-charts with 1M/3M/6M/1Y/ALL tabs. Empty state explains the nightly pipeline when snapshots are sparse.
+> - **Phase 6** — Migration 071 extends `stock_analysis_cache` PK to include `bucket`. `get_stock_analysis(bucket=...)` threads through `_check_cache`, `_compute_analysis`, `_refresh_analysis`, `_cache_result`. `_assemble_input` aggregates position context across (bucket-scoped) accounts (replacing the previous arbitrary `LIMIT 1` pick), and the portfolio-value denominator for the risk agent's position-sizing math is bucket-scoped too. Frontend `AnalysisPanel` + `RiskCard` refetch on bucket change.
 >
-> Deferred: Phase 5 (per-bucket equity curves) and Phase 6 (bucket-aware multi-agent analysis) — both require new endpoints and analysis-layer changes.
+> Companion fixes shipped alongside the bucket work:
+>
+> - **B1** (high) — Trade P/L now uses historical weighted-avg basis at-time-of-trade (`_compute_historical_basis` walk) instead of current avg_cost. Fixes "every old SELL on a closed-out position shows null/wrong P/L" and "BUY unrealized uses portfolio avg instead of lot price".
+> - **B2** (high) — SnapTrade webhook handler now backgrounds `_handle_event` via `BackgroundTasks` so the 15-30s sync doesn't trip SnapTrade's webhook retry threshold.
+> - **B3** (high) — `stocks.py` order-count + OHLCV trade-marker queries used `status = 'filled'` (lowercase) against uppercase column data, always returning 0. Fixed to `UPPER(status) IN ('EXECUTED', 'FILLED')`.
+> - **B4** (medium) — `avgSentimentScore` was declared but never computed; now returns all-time + 30d + 7d windowed AVGs.
+> - **B5** (medium) — Trade-feed dedup key switched from amount (different in activities vs orders) to units + side (matches across sources).
+> - **B6** (medium) — Per-stock vs recent trades inconsistency.
+> - **B7** (medium) — `refine_idea(apply=True)` now runs inside a `transaction()` block with `pg_advisory_xact_lock` so double-click during the 3-pass refine can't race.
+> - **B8** (medium) — `snaptrade_collector` reconcile Guard 3 now fails closed when the sync-timestamp check itself errors (was failing open with `except: pass`).
+> - **F1-F7** UI fixes: BlossomTradeCard neutral SELL when P/L unknown, TradeCard amount-color removed, PanelGroup direction prop, conditional ellipsis, Analytics inside SplashGate, IdeasPanel error state, dead PositionCard removed.
+> - **Discord bot** — `!portfolio <bucket>` accepts any of the five bucket names alongside the existing winners/losers/limit filters.
+
 
 
 ## Vision

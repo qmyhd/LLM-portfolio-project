@@ -36,12 +36,14 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 
 **Key Tables (20 Core in Supabase):**
 - **SnapTrade Integration**: `accounts` (with `bucket` strategy classification, migration 069), `account_balances`, `positions`, `orders`, `symbols`, `activities`
+- **Position Tracking**: `position_snapshots` (daily snapshot of every account+symbol's equity, written by the nightly pipeline; powers the equity-curve endpoint and historical-basis P/L)
 - **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`, `discord_parsed_ideas`
 - **Ideas Journal**: `user_ideas` (unified ideas from Discord, manual entry, and transcription)
 - **Discord Ingestion**: `discord_ingest_cursors` (incremental ingestion high-water marks)
 - **Symbol Management**: `symbol_aliases` (ticker variants for resolution)
 - **Market Data**: `ohlcv_daily` (Databento OHLCV source)
 - **Stock Analytics**: `stock_profile_current`, `stock_profile_history` (derived metrics)
+- **Multi-agent Analysis Caches**: `stock_analysis_cache` (PK = ticker, analysis_type, bucket — migration 071); `portfolio_risk_cache` (PK = portfolio_id, bucket — migration 070). Bucket-keyed so different strategy filters cache independently.
 - **OpenBB / Notes**: `stock_notes` (user annotations per ticker)
 - **System**: `twitter_data`, `processing_status`, `schema_migrations`, `institutional_holdings`
 

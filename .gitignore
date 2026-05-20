@@ -13,11 +13,19 @@
 
 # Common secret key files
 *.pem
+*.pem.pub
+*.pub
 *.key
 *.p12
 *.pfx
 *.crt
 *.der
+
+# SSH key material that sometimes ends up in repos when poking around on EC2
+known_hosts
+authorized_keys
+id_rsa*
+id_ed25519*
 
 ###############################################################################
 # 2) Venvs & Python build artefacts
