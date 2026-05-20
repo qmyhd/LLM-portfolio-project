@@ -1562,26 +1562,50 @@ class SnapTradeCollector:
                 return
 
             # --- Guard 3: recent sync ---
+            # Refuse to reconcile if we can't confirm the sync is recent.
+            # Failing OPEN (proceeding when the check itself errors) would
+            # mean a column-missing scenario could let a stale-sync wipe
+            # legitimate positions. Fail SAFE (skip reconcile) instead.
             try:
                 sync_rows = execute_sql(
                     "SELECT last_successful_sync FROM accounts WHERE id = :acct",
                     {"acct": account_id},
                     fetch_results=True,
                 )
-                if sync_rows and sync_rows[0][0]:
-                    last_sync = sync_rows[0][0]
-                    if hasattr(last_sync, "tzinfo") and last_sync.tzinfo is None:
-                        last_sync = last_sync.replace(tzinfo=timezone.utc)
-                    age = datetime.now(timezone.utc) - last_sync
-                    if age > timedelta(days=7):
-                        logger.info(
-                            "reconcile skip | account=%s reason=stale_sync "
-                            "age_days=%d",
-                            acct_short, age.days,
-                        )
-                        return
-            except Exception:
-                pass  # Column missing or parse error; proceed
+            except Exception as e:
+                logger.warning(
+                    "reconcile skip | account=%s reason=guard3_check_failed err=%s",
+                    acct_short, e,
+                )
+                return
+
+            if not sync_rows or not sync_rows[0][0]:
+                # No last_successful_sync recorded yet — can't prove the sync
+                # is fresh, so don't risk zeroing positions.
+                logger.info(
+                    "reconcile skip | account=%s reason=no_sync_timestamp",
+                    acct_short,
+                )
+                return
+
+            last_sync = sync_rows[0][0]
+            try:
+                if hasattr(last_sync, "tzinfo") and last_sync.tzinfo is None:
+                    last_sync = last_sync.replace(tzinfo=timezone.utc)
+                age = datetime.now(timezone.utc) - last_sync
+            except Exception as e:
+                logger.warning(
+                    "reconcile skip | account=%s reason=guard3_parse_failed err=%s",
+                    acct_short, e,
+                )
+                return
+
+            if age > timedelta(days=7):
+                logger.info(
+                    "reconcile skip | account=%s reason=stale_sync age_days=%d",
+                    acct_short, age.days,
+                )
+                return
 
             # --- Structured summary (always logged) ---
             logger.info(

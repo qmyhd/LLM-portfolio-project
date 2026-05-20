@@ -26,28 +26,53 @@ async def stock_analysis(
     ticker: str,
     refresh: bool = Query(False, description="Force fresh analysis bypassing cache"),
     agents: str | None = Query(None, description="Comma-separated agent subset, e.g. 'technical,sentiment'"),
+    bucket: str | None = BucketQuery,
 ):
-    """Full multi-agent stock analysis with consensus report."""
+    """Full multi-agent stock analysis with consensus report.
+
+    Pass ``?bucket=<name>`` to scope the position context and portfolio
+    value fed to the risk agent. Each bucket has its own cache entry.
+    """
     agent_list = [a.strip() for a in agents.split(",")] if agents else None
-    return await get_stock_analysis(ticker, refresh=refresh, agents=agent_list)
+    return await get_stock_analysis(
+        ticker,
+        refresh=refresh,
+        agents=agent_list,
+        bucket=validate_bucket(bucket),
+    )
 
 
 @router.get("/stocks/{ticker}/analysis/technical")
 async def stock_analysis_technical(
     ticker: str,
     refresh: bool = Query(False),
+    bucket: str | None = BucketQuery,
 ):
-    """Technical analysis only (single agent)."""
-    return await get_stock_analysis(ticker, refresh=refresh, agents=["technical"])
+    """Technical analysis only (single agent). Technical signals are
+    stock-wide but the cache is bucket-keyed for consistency with the
+    full-analysis route."""
+    return await get_stock_analysis(
+        ticker,
+        refresh=refresh,
+        agents=["technical"],
+        bucket=validate_bucket(bucket),
+    )
 
 
 @router.get("/stocks/{ticker}/analysis/risk")
 async def stock_analysis_risk(
     ticker: str,
     refresh: bool = Query(False),
+    bucket: str | None = BucketQuery,
 ):
-    """Per-stock risk analysis only (single agent)."""
-    return await get_stock_analysis(ticker, refresh=refresh, agents=["risk"])
+    """Per-stock risk analysis only. Bucket scopes the position-sizing
+    inputs (current holdings + portfolio value)."""
+    return await get_stock_analysis(
+        ticker,
+        refresh=refresh,
+        agents=["risk"],
+        bucket=validate_bucket(bucket),
+    )
 
 
 @router.get("/portfolio/risk")

@@ -1044,3 +1044,93 @@ async def get_sparklines(
     except Exception as e:
         logger.error(f"Error fetching sparklines: {e}")
         raise HTTPException(status_code=500, detail="Failed to fetch sparklines") from e
+
+
+# ---------------------------------------------------------------------------
+# Equity curve — daily portfolio value over time, optionally per-bucket
+# ---------------------------------------------------------------------------
+
+
+class EquityPoint(BaseModel):
+    """One day's total portfolio equity for the active bucket scope."""
+
+    date: str  # ISO date (YYYY-MM-DD)
+    equity: float
+
+
+class EquityCurveResponse(BaseModel):
+    """Time-series of daily portfolio equity, optionally bucket-scoped."""
+
+    points: list[EquityPoint]
+    bucket: str  # 'all' or one of the bucket enum values
+    days: int
+
+
+@router.get("/equity-curve", response_model=EquityCurveResponse)
+async def get_equity_curve(
+    days: int = Query(90, ge=7, le=730, description="Lookback window in days"),
+    bucket: str | None = BucketQuery,
+):
+    """Daily portfolio equity time-series from `position_snapshots`.
+
+    The nightly pipeline writes one row per (account, symbol, date) with
+    the share's equity at close. We sum across symbols (and bucket-scoped
+    accounts) to get the bucket's total equity per day, suitable for an
+    equity-curve chart.
+
+    Notes:
+    - Historical correctness reflects today's bucket assignments
+      (retroactive labeling, per the documented data-model decision).
+    - Days with no snapshot row (e.g., before migration 068 shipped) are
+      simply absent from the response. The frontend can interpolate or
+      leave gaps as preferred.
+    """
+    bucket = validate_bucket(bucket)
+    cutoff_date = (date.today() - timedelta(days=days)).isoformat()
+
+    bucket_clause = ""
+    params: dict[str, Any] = {"cutoff": cutoff_date}
+    if bucket:
+        bucket_clause = " AND acc.bucket = :bucket"
+        params["bucket"] = bucket
+
+    try:
+        rows = execute_sql(
+            f"""
+            SELECT
+                ps.snapshot_date AS date,
+                SUM(ps.equity)   AS equity
+            FROM position_snapshots ps
+            LEFT JOIN accounts acc ON acc.id = ps.account_id
+            WHERE ps.snapshot_date >= :cutoff
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
+            GROUP BY ps.snapshot_date
+            ORDER BY ps.snapshot_date ASC
+            """,
+            params=params,
+            fetch_results=True,
+        ) or []
+
+        points: list[EquityPoint] = []
+        for r in rows:
+            rd = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)  # type: ignore[arg-type]
+            equity_val = rd.get("equity")
+            if equity_val is None:
+                continue
+            points.append(EquityPoint(
+                date=str(rd["date"]),
+                equity=round(float(equity_val), 2),
+            ))
+
+        return EquityCurveResponse(
+            points=points,
+            bucket=bucket if bucket else "all",
+            days=days,
+        )
+
+    except Exception as e:
+        logger.error(f"Error fetching equity curve: {e}", exc_info=True)
+        # Return empty series rather than 500 — the chart should degrade
+        # gracefully if snapshots aren't populated yet.
+        return EquityCurveResponse(points=[], bucket=bucket or "all", days=days)

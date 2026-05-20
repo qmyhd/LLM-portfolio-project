@@ -20,7 +20,9 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
-from src.db import execute_sql
+from sqlalchemy import text
+
+from src.db import execute_sql, transaction
 from src.discord_ingest import compute_content_hash
 from src.retry_utils import hardened_retry
 
@@ -520,28 +522,43 @@ async def refine_idea(
         suggested_tags = [t.lower() for t in result.get("suggestedTags", [])]
         changes_summary = result.get("changesSummary", "Refined for clarity.")
 
-        # Auto-apply if requested
+        # Auto-apply if requested. Wrap in a transaction with an advisory
+        # lock keyed on the idea_id so a double-click during the multi-second
+        # 3-pass refine pipeline can't race two stale writes against each
+        # other. The lock is xact-scoped — released automatically on COMMIT
+        # or ROLLBACK.
         if apply:
             new_hash = compute_content_hash(refined_content)
-            execute_sql(
-                """
-                UPDATE user_ideas
-                SET content = :content,
-                    symbols = :symbols,
-                    tags = :tags,
-                    status = 'refined',
-                    content_hash = :content_hash
-                WHERE id = :id
-                """,
-                params={
-                    "content": refined_content,
-                    "symbols": extracted_symbols or None,
-                    "tags": suggested_tags or None,
-                    "content_hash": new_hash,
-                    "id": str(idea_id),
-                },
-                fetch_results=False,
-            )
+            # idea_id is a UUID string; mask to a positive bigint for
+            # pg_advisory_xact_lock(bigint). Same pattern used in
+            # src/db.py::save_parsed_ideas_atomic.
+            lock_key = hash(str(idea_id)) & 0x7FFFFFFFFFFFFFFF
+
+            with transaction() as conn:
+                conn.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                    {"lock_key": lock_key},
+                )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE user_ideas
+                        SET content = :content,
+                            symbols = :symbols,
+                            tags = :tags,
+                            status = 'refined',
+                            content_hash = :content_hash
+                        WHERE id = :id
+                        """
+                    ),
+                    {
+                        "content": refined_content,
+                        "symbols": extracted_symbols or None,
+                        "tags": suggested_tags or None,
+                        "content_hash": new_hash,
+                        "id": str(idea_id),
+                    },
+                )
 
         return RefineResponse(
             refinedContent=refined_content,

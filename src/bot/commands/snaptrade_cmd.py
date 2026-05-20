@@ -161,31 +161,38 @@ def register(bot: commands.Bot, twitter_client=None):
         """Show your current portfolio positions with P/L (interactive).
 
         Usage:
-            !portfolio           - Interactive portfolio view (all positions)
-            !portfolio 50        - Show up to 50 positions
-            !portfolio winners   - Show only winning positions (sorted by P/L%)
-            !portfolio losers    - Show only losing positions (sorted by P/L%)
-            !portfolio winners 30 - Show top 30 winners
+            !portfolio              - Interactive portfolio view (all positions)
+            !portfolio 50           - Show up to 50 positions
+            !portfolio winners      - Show only winning positions (sorted by P/L%)
+            !portfolio losers       - Show only losing positions (sorted by P/L%)
+            !portfolio long_term    - Filter to a strategy bucket
+            !portfolio swing        - (swing / day / retirement / other all work)
+            !portfolio long_term 30 - Bucket filter + limit
+            !portfolio winners 30   - Show top 30 winners
 
         Features:
             • Page through positions
-            • Filter: All / Winners / Losers
+            • Filter: All / Winners / Losers / Bucket
             • Toggle P/L display: $ vs %
             • Live refresh button
         """
         try:
+            from src.bucket import VALID_BUCKETS
             from src.db import execute_sql
 
-            # Parse arguments - handle both filter and limit in either order
+            # Parse arguments — filter keyword OR bucket name OR a digit limit.
             filter_mode = "all"
+            bucket_filter: str | None = None
             effective_limit = 100  # Default limit
 
             if filter_or_limit is not None:
-                # Check if it's a filter keyword
-                if filter_or_limit.lower() in ["winners", "winner", "w"]:
+                low = filter_or_limit.lower()
+                if low in ("winners", "winner", "w"):
                     filter_mode = "winners"
-                elif filter_or_limit.lower() in ["losers", "loser", "l"]:
+                elif low in ("losers", "loser", "l"):
                     filter_mode = "losers"
+                elif low in VALID_BUCKETS:
+                    bucket_filter = low
                 elif filter_or_limit.isdigit():
                     effective_limit = int(filter_or_limit)
 
@@ -193,15 +200,27 @@ def register(bot: commands.Bot, twitter_client=None):
             if limit is not None:
                 effective_limit = limit
 
+            # Bucket filter via JOIN accounts. LEFT JOIN preserves legacy
+            # rows with orphan account_id when no bucket filter is active.
+            bucket_clause = ""
+            sql_params: dict = {"limit": effective_limit}
+            if bucket_filter:
+                bucket_clause = " AND acc.bucket = :bucket"
+                sql_params["bucket"] = bucket_filter
+
             result = execute_sql(
-                """
-                SELECT symbol, quantity, price, equity, average_buy_price, open_pnl
-                FROM positions
-                WHERE quantity > 0
-                ORDER BY equity DESC
+                f"""
+                SELECT p.symbol, p.quantity, p.price, p.equity,
+                       p.average_buy_price, p.open_pnl
+                FROM positions p
+                LEFT JOIN accounts acc ON acc.id = p.account_id
+                WHERE p.quantity > 0
+                  AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+                  {bucket_clause}
+                ORDER BY p.equity DESC
                 LIMIT :limit
                 """,
-                params={"limit": effective_limit},
+                params=sql_params,
                 fetch_results=True,
             )
 

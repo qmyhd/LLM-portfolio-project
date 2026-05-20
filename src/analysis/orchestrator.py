@@ -50,21 +50,34 @@ def _is_crypto(ticker: str) -> bool:
         return False
 
 
-def _check_cache(ticker: str, analysis_type: str = "full") -> dict | None:
+def _check_cache(
+    ticker: str,
+    analysis_type: str = "full",
+    bucket: str | None = None,
+) -> dict | None:
     """Check stock_analysis_cache for fresh result.
 
     Returns dict with keys ``result`` (parsed) and ``is_fresh`` (bool),
-    or *None* if no cache row exists.
+    or *None* if no cache row exists for (ticker, analysis_type, bucket).
+    Bucket defaults to 'all' to match the cache row that get_stock_analysis
+    writes when no filter is active.
     """
+    cache_bucket = bucket if bucket else "all"
     rows = execute_sql(
         """
         SELECT result, agent_signals, expires_at
         FROM stock_analysis_cache
-        WHERE ticker = :ticker AND analysis_type = :analysis_type
+        WHERE ticker = :ticker
+          AND analysis_type = :analysis_type
+          AND bucket = :bucket
         ORDER BY computed_at DESC
         LIMIT 1
         """,
-        params={"ticker": ticker.upper(), "analysis_type": analysis_type},
+        params={
+            "ticker": ticker.upper(),
+            "analysis_type": analysis_type,
+            "bucket": cache_bucket,
+        },
         fetch_results=True,
     )
     if not rows:
@@ -88,8 +101,17 @@ def _check_cache(ticker: str, analysis_type: str = "full") -> dict | None:
     return {"result": result, "is_fresh": is_fresh}
 
 
-def _assemble_input(ticker: str) -> tuple[AnalysisInput, list[str]]:
+def _assemble_input(
+    ticker: str,
+    bucket: str | None = None,
+) -> tuple[AnalysisInput, list[str]]:
     """Assemble AnalysisInput from multiple data sources.
+
+    Stock-wide data (OHLCV, fundamentals, news, ideas) ignores bucket.
+    Bucket-scoped data (current position, portfolio value) filters by the
+    accounts.bucket column when a bucket is provided — so e.g. running
+    analysis on AAPL under bucket=day sees only the position you hold in
+    day-trading accounts, not your long-term holdings.
 
     Returns ``(AnalysisInput, data_sources_list)``.
     """
@@ -186,39 +208,80 @@ def _assemble_input(ticker: str) -> tuple[AnalysisInput, list[str]]:
     except Exception:
         logger.warning("Failed to fetch ideas for %s", ticker_upper, exc_info=True)
 
-    # 5. Position data
+    # 5. Position data — aggregated across (bucket-scoped) accounts. The
+    #    previous LIMIT 1 was picking an arbitrary single row when a stock
+    #    was held in multiple accounts; the aggregation is correct.
     try:
+        bucket_clause = ""
+        pos_params: dict[str, str] = {"ticker": ticker_upper}
+        if bucket:
+            bucket_clause = " AND acc.bucket = :bucket"
+            pos_params["bucket"] = bucket
         pos_rows = execute_sql(
-            """
-            SELECT quantity, avg_cost, price as current_price, market_value,
-                   unrealized_pnl, unrealized_pnl_pct
-            FROM positions
-            WHERE UPPER(symbol) = :ticker
-            LIMIT 1
+            f"""
+            SELECT
+                SUM(p.quantity)                                            AS quantity,
+                CASE WHEN SUM(p.quantity) > 0
+                    THEN SUM(p.quantity * p.average_buy_price) / SUM(p.quantity)
+                    ELSE 0
+                END                                                         AS avg_cost,
+                AVG(COALESCE(p.current_price, p.price))                     AS current_price,
+                SUM(p.quantity * COALESCE(p.current_price, p.price))        AS market_value
+            FROM positions p
+            LEFT JOIN accounts acc ON acc.id = p.account_id
+            WHERE UPPER(p.symbol) = :ticker
+              AND p.quantity > 0
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             """,
-            params={"ticker": ticker_upper},
+            params=pos_params,
             fetch_results=True,
         )
         if pos_rows:
             m = pos_rows[0]._mapping if hasattr(pos_rows[0], "_mapping") else pos_rows[0]
-            position_data = PositionData(
-                quantity=float(m.get("quantity", 0) or 0),
-                avg_cost=float(m.get("avg_cost", 0) or 0),
-                current_price=float(m.get("current_price", 0) or 0),
-                market_value=float(m.get("market_value", 0) or 0),
-                unrealized_pnl=float(m.get("unrealized_pnl", 0) or 0),
-                unrealized_pnl_pct=float(m.get("unrealized_pnl_pct", 0) or 0),
-            )
-            data_sources.append(f"Portfolio positions ({m.get('quantity', 0)} shares)")
+            qty = float(m.get("quantity") or 0)
+            if qty > 0:
+                avg_cost = float(m.get("avg_cost") or 0)
+                current_price = float(m.get("current_price") or 0)
+                market_value = float(m.get("market_value") or 0)
+                cost_basis = qty * avg_cost
+                unrealized_pnl = market_value - cost_basis
+                unrealized_pnl_pct = (
+                    (unrealized_pnl / cost_basis * 100) if cost_basis > 0 else 0.0
+                )
+                position_data = PositionData(
+                    quantity=qty,
+                    avg_cost=avg_cost,
+                    current_price=current_price,
+                    market_value=market_value,
+                    unrealized_pnl=unrealized_pnl,
+                    unrealized_pnl_pct=unrealized_pnl_pct,
+                )
+                scope = f"bucket={bucket}" if bucket else "all buckets"
+                data_sources.append(f"Portfolio positions ({qty:g} shares, {scope})")
     except Exception:
         logger.warning("Failed to fetch position for %s", ticker_upper, exc_info=True)
 
-    # 6. Portfolio value
+    # 6. Portfolio value — bucket-scoped when a filter is active so the
+    #    risk agent's position-sizing math compares this ticker to the
+    #    correct denominator (e.g., 50% concentration in day-bucket is
+    #    very different from 50% of total net worth).
     try:
-        bal_rows = execute_sql(
-            "SELECT SUM(total_value) as total FROM account_balances",
-            fetch_results=True,
-        )
+        if bucket:
+            bal_rows = execute_sql(
+                """
+                SELECT SUM(total_value) AS total
+                FROM account_balances
+                WHERE account_id IN (SELECT id FROM accounts WHERE bucket = :bucket)
+                """,
+                params={"bucket": bucket},
+                fetch_results=True,
+            )
+        else:
+            bal_rows = execute_sql(
+                "SELECT SUM(total_value) AS total FROM account_balances",
+                fetch_results=True,
+            )
         if bal_rows:
             m = bal_rows[0]._mapping if hasattr(bal_rows[0], "_mapping") else bal_rows[0]
             portfolio_value = float(m.get("total", 0) or 0)
@@ -293,18 +356,27 @@ def _cache_result(
     agent_signals: list[dict],
     model_used: str,
     data_sources: list[str],
+    bucket: str | None = None,
 ) -> None:
-    """Upsert result into stock_analysis_cache."""
+    """Upsert result into stock_analysis_cache.
+
+    Cache key is (ticker, analysis_type, bucket). Bucket defaults to 'all'
+    for portfolio-wide analyses so toggling the bucket switcher doesn't
+    blow away the unfiltered cache entry.
+    """
     ttl_hours = CRYPTO_TTL_HOURS if _is_crypto(ticker) else EQUITY_TTL_HOURS
     expires_at = datetime.now(tz=timezone.utc) + timedelta(hours=ttl_hours)
+    cache_bucket = bucket if bucket else "all"
 
     execute_sql(
         """
         INSERT INTO stock_analysis_cache
-            (ticker, analysis_type, result, agent_signals, model_used, data_sources, computed_at, expires_at)
+            (ticker, analysis_type, bucket, result, agent_signals,
+             model_used, data_sources, computed_at, expires_at)
         VALUES
-            (:ticker, :analysis_type, :result, :agent_signals, :model_used, :data_sources, NOW(), :expires_at)
-        ON CONFLICT (ticker, analysis_type) DO UPDATE SET
+            (:ticker, :analysis_type, :bucket, :result, :agent_signals,
+             :model_used, :data_sources, NOW(), :expires_at)
+        ON CONFLICT (ticker, analysis_type, bucket) DO UPDATE SET
             result = EXCLUDED.result,
             agent_signals = EXCLUDED.agent_signals,
             model_used = EXCLUDED.model_used,
@@ -315,6 +387,7 @@ def _cache_result(
         params={
             "ticker": ticker.upper(),
             "analysis_type": analysis_type,
+            "bucket": cache_bucket,
             "result": json.dumps(result),
             "agent_signals": json.dumps(agent_signals),
             "model_used": model_used,
@@ -328,6 +401,7 @@ async def get_stock_analysis(
     ticker: str,
     refresh: bool = False,
     agents: list[str] | None = None,
+    bucket: str | None = None,
 ) -> dict:
     """Main entry point for stock analysis.
 
@@ -340,29 +414,35 @@ async def get_stock_analysis(
         ticker: Stock ticker symbol
         refresh: Force fresh analysis bypassing cache
         agents: Optional list of specific agents to run
+        bucket: Strategy bucket filter (long_term/swing/day/retirement/other).
+            Scopes the position context and portfolio value fed to the
+            risk agent. None = portfolio-wide (cached under 'all').
     """
     analysis_type = "full" if not agents else ",".join(sorted(agents))
 
     if not refresh:
-        cached = _check_cache(ticker, analysis_type)
+        cached = _check_cache(ticker, analysis_type, bucket=bucket)
         if cached:
             if cached["is_fresh"]:
                 return cached["result"]
             # Stale-while-revalidate: return stale, trigger background refresh
-            asyncio.create_task(_refresh_analysis(ticker, analysis_type, agents))
+            asyncio.create_task(
+                _refresh_analysis(ticker, analysis_type, agents, bucket=bucket)
+            )
             return cached["result"]
 
-    return await _compute_analysis(ticker, analysis_type, agents)
+    return await _compute_analysis(ticker, analysis_type, agents, bucket=bucket)
 
 
 async def _refresh_analysis(
     ticker: str,
     analysis_type: str,
     agents: list[str] | None,
+    bucket: str | None = None,
 ) -> None:
     """Background refresh task for stale-while-revalidate."""
     try:
-        await _compute_analysis(ticker, analysis_type, agents)
+        await _compute_analysis(ticker, analysis_type, agents, bucket=bucket)
     except Exception:
         logger.warning("Background refresh failed for %s", ticker, exc_info=True)
 
@@ -371,10 +451,11 @@ async def _compute_analysis(
     ticker: str,
     analysis_type: str,
     agents: list[str] | None,
+    bucket: str | None = None,
 ) -> dict:
     """Run the full analysis pipeline."""
-    # Assemble input
-    input_data, data_sources = _assemble_input(ticker)
+    # Assemble input (position/portfolio_value scoped to bucket if provided)
+    input_data, data_sources = _assemble_input(ticker, bucket=bucket)
 
     # Run agents
     signals = await _run_agents(input_data, agents)
@@ -382,7 +463,7 @@ async def _compute_analysis(
     # Run consensus
     result = await _run_consensus(ticker, signals, data_sources)
 
-    # Cache
+    # Cache (keyed by ticker + analysis_type + bucket)
     agent_signal_dicts = [s.model_dump(mode="json") for s in signals]
     _cache_result(
         ticker=ticker,
@@ -391,6 +472,7 @@ async def _compute_analysis(
         agent_signals=agent_signal_dicts,
         model_used=result.get("model_used", "unknown"),
         data_sources=data_sources,
+        bucket=bucket,
     )
 
     return result
