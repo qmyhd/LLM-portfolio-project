@@ -14,6 +14,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from src.bucket import BucketQuery, validate_bucket
 from src.db import execute_sql
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ async def get_orders(
     ),
     ticker: Optional[str] = Query(None, description="Filter by ticker symbol"),
     include_drip: bool = Query(False, description="Include DRIP/dividend reinvestment orders"),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get order history with optional filters.
@@ -92,13 +94,19 @@ async def get_orders(
         status: Filter by order status
         ticker: Filter by ticker symbol
         include_drip: If False (default), only show trade-relevant actions (BUY/SELL/etc.)
+        bucket: Filter by strategy bucket (long_term, swing, day, retirement, other, or 'all').
 
     Returns:
         List of orders with metadata
     """
     try:
-        # Build query with optional filters
-        conditions: list[str] = []
+        bucket = validate_bucket(bucket)
+
+        # Build query with optional filters. JOIN accounts so we can filter by
+        # bucket and exclude deleted accounts when no specific filter is given.
+        conditions: list[str] = [
+            "COALESCE(acc.connection_status, 'connected') != 'deleted'",
+        ]
         params: dict[str, Any] = {
             "limit": limit + 1,
             "offset": offset,
@@ -116,6 +124,10 @@ async def get_orders(
             conditions.append("UPPER(o.action) IN (:act_0, :act_1, :act_2, :act_3, :act_4, :act_5)")
             for i, action in enumerate(TRADE_ACTIONS):
                 params[f"act_{i}"] = action
+
+        if bucket:
+            conditions.append("acc.bucket = :bucket")
+            params["bucket"] = bucket
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
 
@@ -135,6 +147,7 @@ async def get_orders(
                 o.time_executed as time_executed,
                 o.notified as notified
             FROM orders o
+            LEFT JOIN accounts acc ON acc.id = o.account_id
             WHERE {where_clause}
             ORDER BY o.time_placed DESC NULLS LAST
             LIMIT :limit OFFSET :offset
@@ -181,10 +194,12 @@ async def get_orders(
                 )
             )
 
-        # Get total count for pagination
+        # Get total count for pagination — same JOIN + filter set so totals stay
+        # consistent with the paginated result.
         count_query = f"""
             SELECT COUNT(*) as total
             FROM orders o
+            LEFT JOIN accounts acc ON acc.id = o.account_id
             WHERE {where_clause}
         """
         # Remove limit/offset from params for count query

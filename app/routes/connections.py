@@ -9,9 +9,10 @@ Endpoints:
 import logging
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from fastapi import APIRouter, Body, HTTPException, Path
+from pydantic import BaseModel, Field
 
+from src.bucket import VALID_BUCKETS
 from src.config import settings
 from src.db import execute_sql
 from src.retry_utils import snaptrade_retry
@@ -28,6 +29,7 @@ class ConnectionInfo(BaseModel):
     disabledAt: str | None = None
     errorMessage: str | None = None
     lastSync: str | None = None
+    bucket: str = "other"
 
 
 class ConnectionsResponse(BaseModel):
@@ -38,15 +40,28 @@ class PortalUrlResponse(BaseModel):
     redirectUri: str
 
 
+class BucketUpdateRequest(BaseModel):
+    bucket: str = Field(
+        ...,
+        description="Strategy bucket: long_term, swing, day, retirement, or other.",
+    )
+
+
+class BucketUpdateResponse(BaseModel):
+    accountId: str
+    bucket: str
+
+
 @router.get("", response_model=ConnectionsResponse)
 async def list_connections():
-    """List all brokerage connections with their status."""
+    """List all brokerage connections with their status and strategy bucket."""
     rows = execute_sql(
         """
         SELECT id, name, institution_name,
                COALESCE(connection_status, 'connected') as connection_status,
                connection_disabled_at, connection_error_message,
-               last_successful_sync
+               last_successful_sync,
+               COALESCE(bucket, 'other') as bucket
         FROM accounts
         ORDER BY institution_name, name
         """,
@@ -63,8 +78,52 @@ async def list_connections():
             disabledAt=str(rd["connection_disabled_at"]) if rd.get("connection_disabled_at") else None,
             errorMessage=rd.get("connection_error_message"),
             lastSync=str(rd["last_successful_sync"]) if rd.get("last_successful_sync") else None,
+            bucket=rd.get("bucket") or "other",
         ))
     return ConnectionsResponse(connections=connections)
+
+
+@router.patch("/{account_id}/bucket", response_model=BucketUpdateResponse)
+async def update_account_bucket(
+    account_id: str = Path(..., description="Account ID to update"),
+    payload: BucketUpdateRequest = Body(...),
+):
+    """Assign a strategy bucket to a brokerage account.
+
+    Buckets classify accounts by trading strategy and are used to filter
+    positions, trades, risk, and analysis by strategy. Reassignment is
+    immediate and retroactive — past positions and trades inherit the new
+    bucket the moment this call returns.
+    """
+    desired = (payload.bucket or "").strip().lower()
+    if desired not in VALID_BUCKETS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Invalid bucket '{payload.bucket}'. "
+                f"Must be one of: {sorted(VALID_BUCKETS)}."
+            ),
+        )
+
+    # Verify the account exists before issuing the UPDATE (so we can return
+    # a clean 404 instead of a silent no-op).
+    existing = execute_sql(
+        "SELECT 1 FROM accounts WHERE id = :id LIMIT 1",
+        params={"id": account_id},
+        fetch_results=True,
+    )
+    if not existing:
+        raise HTTPException(
+            status_code=404, detail=f"Account '{account_id}' not found"
+        )
+
+    execute_sql(
+        "UPDATE accounts SET bucket = :bucket WHERE id = :id",
+        params={"bucket": desired, "id": account_id},
+    )
+
+    logger.info("Account %s bucket set to %s", account_id, desired)
+    return BucketUpdateResponse(accountId=account_id, bucket=desired)
 
 
 @router.post("/portal", response_model=PortalUrlResponse)

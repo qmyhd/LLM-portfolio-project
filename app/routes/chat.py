@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Path
 from pydantic import BaseModel
 from openai import OpenAI
 
+from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
 from src.db import execute_sql
 from src.price_service import get_latest_close
 
@@ -38,6 +39,7 @@ class ChatResponse(BaseModel):
 async def chat_about_stock(
     ticker: str = Path(..., description="Stock ticker symbol"),
     request: Optional[ChatRequest] = None,
+    bucket: str | None = BucketQuery,
 ):
     """
     Chat with AI about a stock using OpenAI.
@@ -47,14 +49,20 @@ async def chat_about_stock(
     - Current price and change data
     - Position information if owned
 
+    Pass ``?bucket=<name>`` to scope the position context to a single
+    strategy bucket. Ideas and price data remain stock-wide.
+
     Args:
         ticker: Stock ticker symbol
         request: Chat message and optional context
+        bucket: Strategy bucket filter for position context only.
 
     Returns:
         AI response with sources used
     """
     symbol = ticker.upper()
+    bucket = validate_bucket(bucket)
+    bucket_clause, bucket_params = bucket_filter_sql(bucket, alias="acc")
 
     if request is None:
         raise HTTPException(status_code=400, detail="Request body is required")
@@ -103,18 +111,23 @@ async def chat_about_stock(
             context_parts.append(ideas_context)
             sources.append("Discord trading ideas")
 
-        # Get position if owned
+        # Get position if owned — aggregated across (bucket-scoped) accounts.
         position_data = execute_sql(
-            """
+            f"""
             SELECT
-                p.quantity,
-                p.average_buy_price
+                SUM(p.quantity) AS quantity,
+                CASE WHEN SUM(p.quantity) > 0
+                    THEN SUM(p.quantity * p.average_buy_price) / SUM(p.quantity)
+                    ELSE NULL
+                END AS average_buy_price
             FROM positions p
+            LEFT JOIN accounts acc ON acc.id = p.account_id
             WHERE UPPER(p.symbol) = :symbol
               AND p.quantity > 0
-            LIMIT 1
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             """,
-            params={"symbol": symbol},
+            params={"symbol": symbol, **bucket_params},
             fetch_results=True,
         )
 

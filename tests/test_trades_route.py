@@ -141,11 +141,16 @@ class TestGetStockTrades:
 
         # Position enrichment
         assert trade["currentPrice"] == 155.0
-        assert trade["avgCost"] == 145.0
+        # avgCost reports the historical basis at the time of this BUY (which
+        # equals the trade price for the first buy on a fresh position).
+        assert trade["avgCost"] == 150.0
         assert trade["totalShares"] == 100.0
 
-        # P/L: BUY trade => unrealizedPnl = (currentPrice - avgCost) * units
-        assert trade["unrealizedPnl"] == (155.0 - 145.0) * 10.0
+        # P/L: BUY trade unrealized uses the lot's own trade price as basis
+        # (this lot bought at 150 → current 155 → up $5/share × 10 = $50).
+        # This is more accurate than the old "current avg vs current price"
+        # because it tells the user how *this specific lot* has performed.
+        assert trade["unrealizedPnl"] == (155.0 - 150.0) * 10.0
 
     @patch("app.routes.trades.execute_sql")
     def test_returns_orders_when_no_activities(self, mock_sql, client):
@@ -431,14 +436,21 @@ class TestHelperFunctions:
         """_dedup_key generates consistent keys."""
         from app.routes.trades import _dedup_key
 
-        key1 = _dedup_key("AAPL", "2026-02-28 10:30:45", 1500.0)
-        key2 = _dedup_key("aapl", "2026-02-28 10:30:59", 1500.0)
-        # Same symbol (case-insensitive), same minute, same amount => same key
+        # Signature is now (symbol, executed_at, side, units, amount). The key
+        # uses units when available (matches across activity/order sources),
+        # so same-symbol/same-minute/same-side/same-units trades dedup.
+        key1 = _dedup_key("AAPL", "2026-02-28 10:30:45", "BUY", 10.0, 1500.0)
+        key2 = _dedup_key("aapl", "2026-02-28 10:30:59", "BUY", 10.0, 1500.0)
+        # Same symbol (case-insensitive), same minute, same side, same units => same key
         assert key1 == key2
 
-        key3 = _dedup_key("AAPL", "2026-02-28 10:31:00", 1500.0)
+        key3 = _dedup_key("AAPL", "2026-02-28 10:31:00", "BUY", 10.0, 1500.0)
         # Different minute => different key
         assert key1 != key3
+
+        key4 = _dedup_key("AAPL", "2026-02-28 10:30:45", "SELL", 10.0, 1500.0)
+        # Different side => different key (prevents DIVIDEND/BUY collisions etc.)
+        assert key1 != key4
 
     def test_merge_and_dedup_prefers_activities(self):
         """_merge_and_dedup keeps activity when both match."""

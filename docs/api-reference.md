@@ -26,6 +26,33 @@ Authorization: Bearer <API_SECRET_KEY>
 
 Set `API_SECRET_KEY` in your environment. In development, a default key is used if not set.
 
+### Bucket Filtering
+
+Every endpoint returning positions, trades, activities, orders, or risk
+accepts an optional `bucket` query parameter that scopes the result to
+one strategy bucket:
+
+| Value | Meaning |
+|-------|---------|
+| `long_term` | Taxable buy-and-hold (e.g., individual Robinhood) |
+| `swing` | Multi-day to multi-week positions |
+| `day` | Intraday |
+| `retirement` | IRA / Roth IRA / 401k |
+| `other` | Default for new connections / mixed accounts |
+| `all` *or omitted* | No filter — portfolio-wide |
+
+Buckets are assigned per-account via `PATCH /connections/{account_id}/bucket`.
+Reassignment is retroactive: historical queries JOIN against the *current*
+`accounts.bucket` value, so moving an account from `long_term` to `swing`
+immediately re-labels all of its past data.
+
+Endpoints that accept `?bucket=`: `/portfolio`, `/portfolio/movers`,
+`/portfolio/sparklines`, `/portfolio/risk`, `/orders`, `/activities`,
+`/trades/recent`, `/stocks/{ticker}`, `/stocks/{ticker}/trades`,
+`/stocks/{ticker}/ohlcv` (trade-marker overlay only — price bars are
+stock-wide), `/stocks/{ticker}/activities`, `/stocks/{ticker}/chat`
+(position context only). Invalid values return `400`.
+
 ### Interactive Documentation
 
 - **Swagger UI**: http://localhost:8000/docs
@@ -65,6 +92,7 @@ Get portfolio summary and all positions with current prices.
 |-----------|------|---------|-------------|
 | `asset_class` | string | null | Filter: `equity`, `crypto`, `all`, or omit for all |
 | `account_id` | string | null | Filter by account ID, or `all` for all accounts |
+| `bucket` | string | null | Strategy bucket filter (see [Bucket Filtering](#bucket-filtering)) |
 | `recon` | bool | false | Include per-position debug metadata (price sources, raw values) |
 
 **Response Model:** `PortfolioResponse`
@@ -840,7 +868,8 @@ List all brokerage connections with their status.
       "connectionStatus": "connected",
       "disabledAt": null,
       "errorMessage": null,
-      "lastSync": "2026-03-01T12:00:00Z"
+      "lastSync": "2026-03-01T12:00:00Z",
+      "bucket": "long_term"
     }
   ]
 }
@@ -855,6 +884,36 @@ Generate a SnapTrade Connect redirect URL for linking a new brokerage.
 ```json
 {
   "redirectUri": "https://app.snaptrade.com/connect/..."
+}
+```
+
+#### `PATCH /connections/{account_id}/bucket`
+
+Assign a strategy bucket to a brokerage account. Reassignment is
+retroactive — past positions, trades, activities, and orders associated
+with this account immediately re-label to the new bucket the moment this
+call returns.
+
+**Path Parameters:**
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `account_id` | string | The SnapTrade account ID to update |
+
+**Request Body:**
+
+```json
+{ "bucket": "long_term" }
+```
+
+Valid values: `long_term`, `swing`, `day`, `retirement`, `other`. Any
+other value returns `400`. Returns `404` if the account does not exist.
+
+**Response Model:** `BucketUpdateResponse`
+
+```json
+{
+  "accountId": "c4caf1cc-...",
+  "bucket": "long_term"
 }
 ```
 

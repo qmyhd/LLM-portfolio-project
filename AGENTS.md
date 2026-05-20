@@ -516,6 +516,49 @@ execute_sql("UPDATE positions SET price = :price WHERE symbol = :symbol",
            params={'price': 150.00, 'symbol': 'AAPL'})
 ```
 
+### Strategy Bucket Filtering
+
+Every endpoint returning positions, trades, activities, orders, or risk
+accepts an optional `?bucket=<long_term|swing|day|retirement|other|all>`
+query param. Buckets live on `accounts.bucket` (migration 069) and are
+assigned via Settings UI → `PATCH /connections/{id}/bucket`. Reassignment
+is retroactive: historical queries JOIN against the *current* bucket.
+
+```python
+from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
+
+@router.get("/positions")
+async def get_positions(bucket: str | None = BucketQuery):
+    bucket = validate_bucket(bucket)            # 400s on invalid input
+    clause, bp = bucket_filter_sql(bucket, alias="acc")
+    # clause is "" when bucket is None — safe to interpolate either way
+    rows = execute_sql(
+        f"""
+        SELECT p.symbol, p.quantity, ...
+        FROM positions p
+        LEFT JOIN accounts acc ON acc.id = p.account_id
+        WHERE p.quantity > 0
+          AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+          {clause}
+        """,
+        params={**existing, **bp},
+        fetch_results=True,
+    )
+```
+
+**Two non-obvious requirements:**
+
+1. **LEFT JOIN, not INNER JOIN** — legacy rows with orphan `account_id`
+   (where the parent account was deleted) should still surface when no
+   bucket filter is set. The `LEFT JOIN` keeps them; the
+   `COALESCE(acc.connection_status, 'connected')` filter treats a NULL
+   `acc` as "connected" so it passes through. When `?bucket=` is set,
+   the orphan is naturally excluded (NULL = :bucket is UNKNOWN).
+2. **Cache keys must include bucket** — anything caching portfolio-level
+   data needs the bucket dimension or different buckets will evict each
+   other. See `portfolio_risk_cache(portfolio_id, bucket)` (migration
+   070) for the pattern.
+
 ## 🚨 Important Notes for Agents
 
 ### SETUP SEQUENCE (CRITICAL)

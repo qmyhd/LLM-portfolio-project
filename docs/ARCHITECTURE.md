@@ -35,7 +35,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 - **RLS Enabled**: All tables have Row Level Security enabled
 
 **Key Tables (20 Core in Supabase):**
-- **SnapTrade Integration**: `accounts`, `account_balances`, `positions`, `orders`, `symbols`, `activities`
+- **SnapTrade Integration**: `accounts` (with `bucket` strategy classification, migration 069), `account_balances`, `positions`, `orders`, `symbols`, `activities`
 - **Discord/Social**: `discord_messages`, `discord_market_clean`, `discord_trading_clean`, `discord_parsed_ideas`
 - **Ideas Journal**: `user_ideas` (unified ideas from Discord, manual entry, and transcription)
 - **Discord Ingestion**: `discord_ingest_cursors` (incremental ingestion high-water marks)
@@ -65,6 +65,7 @@ The LLM Portfolio Journal is a data-driven application integrating brokerage dat
 - **`twitter_analysis.py`**: Twitter/X sentiment analysis and data extraction
 - **`market_data_service.py`**: yfinance wrapper with TTL caching for real-time quotes, crypto identity mapping (`CRYPTO_IDENTITY`, `_CRYPTO_SYMBOLS`), and TradingView symbol resolution
 - **`discord_ingest.py`**: Incremental Discord message ingestion with cursor-based tracking and content hash deduplication
+- **`bucket.py`**: Strategy bucket utilities. Defines the `BucketName` enum (`long_term` / `swing` / `day` / `retirement` / `other`), `validate_bucket()` parser, `bucket_filter_sql(bucket, alias)` SQL-fragment builder, and the reusable `BucketQuery` FastAPI dependency. Every data endpoint accepts `?bucket=<name>` to scope positions/trades/risk to one strategy
 
 #### OpenBB Fundamentals (`src/`)
 

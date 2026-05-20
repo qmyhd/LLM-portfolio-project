@@ -17,6 +17,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
 from src.db import execute_sql
 from src.market_data_service import _CRYPTO_SYMBOLS, CRYPTO_IDENTITY, get_realtime_quotes_batch, get_return_metrics
 from src.price_service import get_latest_closes_batch, get_previous_closes_batch
@@ -151,6 +152,7 @@ async def get_portfolio(
         None,
         description="Filter by account ID, or 'all' for all accounts",
     ),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get portfolio summary and all positions.
@@ -165,6 +167,7 @@ async def get_portfolio(
             asset_class = None
         if account_id and account_id.lower() == "all":
             account_id = None
+        bucket = validate_bucket(bucket)
 
         # Get positions from database (join symbols for asset_type + company name).
         # Exclude positions from accounts marked as 'deleted' (orphaned re-links)
@@ -182,6 +185,17 @@ async def get_portfolio(
                 "   AND a.connection_status = 'deleted'"
                 " )"
             )
+
+        # Bucket filter — composes with the deleted-account subquery above.
+        if bucket:
+            pos_where += (
+                " AND EXISTS ("
+                "   SELECT 1 FROM accounts ab"
+                "   WHERE ab.id = p.account_id"
+                "   AND ab.bucket = :bucket"
+                " )"
+            )
+            pos_params["bucket"] = bucket
 
         positions_data = execute_sql(
             f"""
@@ -218,6 +232,14 @@ async def get_portfolio(
                 "  SELECT id FROM accounts WHERE connection_status = 'deleted'"
                 ")"
             )
+        # Bucket filter — restrict to accounts in the selected bucket.
+        if bucket:
+            bal_where += (
+                " AND account_id IN ("
+                "  SELECT id FROM accounts WHERE bucket = :bucket"
+                ")"
+            )
+            bal_params["bucket"] = bucket
 
         balances_data = execute_sql(
             f"""
@@ -737,6 +759,7 @@ class MoversResponse(BaseModel):
 @router.get("/movers", response_model=MoversResponse)
 async def get_movers(
     limit: int = Query(10, ge=1, le=50),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get top gainers and losers from current positions.
@@ -745,8 +768,20 @@ async def get_movers(
     Only includes positions with valid price data.
     """
     try:
+        bucket = validate_bucket(bucket)
+        bucket_clause = ""
+        movers_params: dict[str, Any] = {}
+        if bucket:
+            bucket_clause = (
+                " AND EXISTS ("
+                "   SELECT 1 FROM accounts ab"
+                "   WHERE ab.id = p.account_id AND ab.bucket = :bucket"
+                " )"
+            )
+            movers_params["bucket"] = bucket
+
         positions_data = execute_sql(
-            """
+            f"""
             SELECT p.symbol, p.quantity, p.average_buy_price as average_cost,
                    p.price as snaptrade_price
             FROM positions p
@@ -755,8 +790,10 @@ async def get_movers(
                 SELECT 1 FROM accounts a
                 WHERE a.id = p.account_id AND a.connection_status = 'deleted'
             )
+            {bucket_clause}
             ORDER BY p.symbol
             """,
+            params=movers_params if movers_params else None,
             fetch_results=True,
         )
 
@@ -922,6 +959,7 @@ class SparklineResponse(BaseModel):
 @router.get("/sparklines", response_model=SparklineResponse)
 async def get_sparklines(
     period: str = Query("1M", description="Period: 1W, 1M, or 3M"),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get close-price arrays for all held symbols, suitable for sparkline charts.
@@ -931,15 +969,30 @@ async def get_sparklines(
     days = PERIOD_DAYS.get(period.upper(), 30)
     end_date = date.today()
     start_date = end_date - timedelta(days=days)
+    bucket = validate_bucket(bucket)
 
     try:
-        # Get held symbols — exclude positions from deleted (orphaned) accounts
+        # Get held symbols — exclude positions from deleted (orphaned) accounts,
+        # and restrict to the selected bucket when filtering.
+        bucket_clause = ""
+        held_params: dict[str, Any] = {}
+        if bucket:
+            bucket_clause = (
+                " AND EXISTS ("
+                "   SELECT 1 FROM accounts ab"
+                "   WHERE ab.id = positions.account_id AND ab.bucket = :bucket"
+                " )"
+            )
+            held_params["bucket"] = bucket
+
         held = execute_sql(
-            "SELECT DISTINCT symbol FROM positions WHERE quantity > 0"
-            " AND NOT EXISTS ("
-            "   SELECT 1 FROM accounts a"
-            "   WHERE a.id = account_id AND a.connection_status = 'deleted'"
-            " )",
+            f"SELECT DISTINCT symbol FROM positions WHERE quantity > 0"
+            f" AND NOT EXISTS ("
+            f"   SELECT 1 FROM accounts a"
+            f"   WHERE a.id = account_id AND a.connection_status = 'deleted'"
+            f" )"
+            f" {bucket_clause}",
+            params=held_params if held_params else None,
             fetch_results=True,
         )
         symbols = [

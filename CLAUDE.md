@@ -76,6 +76,7 @@ OpenBB (FMP+SEC)─┘→ Cached fundamentals/filings/news → FastAPI → Next.
   - `schemas.py` — Pydantic models: `ParsedIdea`, `MessageParseResult`, `TradingLabels` enum (13 label types)
   - `preclean.py` — Deterministic pre-LLM ticker extraction. `RESERVED_SIGNAL_WORDS` (80+ terms) prevents false positives like "target" → $TGT. `ALIAS_MAP` resolves company names to tickers.
   - `soft_splitter.py` — Deterministic message splitting for long content
+- **`src/bucket.py`** — Strategy bucket utilities. `BucketName` literal (`long_term` / `swing` / `day` / `retirement` / `other`), `validate_bucket()` parses + 400s on invalid input, `bucket_filter_sql(bucket, alias)` returns an empty-or-AND clause + params dict that composes safely with existing WHERE clauses, `BucketQuery` is the reusable FastAPI `Query` declaration. Every data endpoint accepts `?bucket=<name>` (or `all`/omitted = no filter).
 - **`src/snaptrade_collector.py`** — SnapTrade ETL (accounts, positions, orders, balances) with stale position reconciliation (safety-guarded: connection health, count sanity, sync recency)
 - **`src/databento_collector.py`** — Databento OHLCV → Supabase upsert + optional S3 archive
 - **`src/retry_utils.py`** — `@hardened_retry()` for API calls, `@database_retry()` for DB operations, `@snaptrade_retry()` for SnapTrade SDK calls (429 rate-limit aware)
@@ -101,11 +102,13 @@ Modular command pattern. Each command file in `src/bot/commands/` exports a `reg
 
 ### Database Schema
 
-Consolidated schema in `schema/` (060_baseline_current.sql + 061-068 incremental, older files archived). 23 active tables. Recent migrations: 062 (stock_notes), 063 (discord_ingest_cursors), 064 (user_ideas), 065 (account_balances PK), 066 (accounts connection_status), 067 (stock_analysis_cache + portfolio_risk_cache), 068 (position_snapshots). Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `activities`, `user_ideas`, `twitter_data`, `stock_profile_current`, `stock_notes`, `discord_ingest_cursors`, `stock_analysis_cache`, `portfolio_risk_cache`, `position_snapshots`. All tables have RLS enabled — service role key required in DATABASE_URL.
+Consolidated schema in `schema/` (060_baseline_current.sql + 061-070 incremental, older files archived). 23 active tables. Recent migrations: 062 (stock_notes), 063 (discord_ingest_cursors), 064 (user_ideas), 065 (account_balances PK), 066 (accounts connection_status), 067 (stock_analysis_cache + portfolio_risk_cache), 068 (position_snapshots), **069 (accounts.bucket strategy classification — long_term/swing/day/retirement/other), 070 (portfolio_risk_cache bucket in PK so each bucket caches independently)**. Core tables: `discord_messages`, `discord_parsed_ideas`, `ohlcv_daily`, `positions`, `orders`, `accounts`, `account_balances`, `activities`, `user_ideas`, `twitter_data`, `stock_profile_current`, `stock_notes`, `discord_ingest_cursors`, `stock_analysis_cache`, `portfolio_risk_cache`, `position_snapshots`. All tables have RLS enabled — service role key required in DATABASE_URL.
 
 ### FastAPI Routes (`app/routes/`)
 
-16 route files: `portfolio.py` (positions, sync, movers, sparklines), `orders.py`, `stocks.py` (profile, ideas, OHLCV), `openbb.py` (transcripts, fundamentals, filings, news, notes), `analysis.py` (multi-agent stock analysis, portfolio risk), `trades.py` (unified trade feed with P/L enrichment), `chat.py`, `search.py`, `watchlist.py`, `ideas.py` (CRUD, refine with 3-pass self-reflection, context), `activities.py`, `connections.py`, `sentiment.py`, `webhook.py`, `debug.py` (opt-in via `DEBUG_ENDPOINTS=1`).
+16 route files: `portfolio.py` (positions, sync, movers, sparklines), `orders.py`, `stocks.py` (profile, ideas, OHLCV), `openbb.py` (transcripts, fundamentals, filings, news, notes), `analysis.py` (multi-agent stock analysis, portfolio risk), `trades.py` (unified trade feed with P/L enrichment), `chat.py`, `search.py`, `watchlist.py`, `ideas.py` (CRUD, refine with 3-pass self-reflection, context), `activities.py`, `connections.py` (lists accounts with bucket; `PATCH /connections/{id}/bucket` assigns), `sentiment.py`, `webhook.py`, `debug.py` (opt-in via `DEBUG_ENDPOINTS=1`).
+
+**Bucket filtering (`?bucket=<long_term|swing|day|retirement|other|all>`)**: every endpoint that returns positions, trades, activities, orders, or risk accepts an optional bucket query param. Endpoints with bucket support: `/portfolio`, `/portfolio/movers`, `/portfolio/sparklines`, `/portfolio/risk` (cached per bucket via `portfolio_risk_cache` composite PK), `/orders`, `/activities`, `/trades/recent`, `/stocks/{ticker}/trades`, `/stocks/{ticker}` (position metrics + order counts), `/stocks/{ticker}/ohlcv` (trade-marker overlay), `/stocks/{ticker}/activities`, `/stocks/{ticker}/chat` (position context). Implementation pattern: `bucket = validate_bucket(bucket); clause, bp = bucket_filter_sql(bucket, alias="acc")` then interpolate `{clause}` into the WHERE and merge `bp` into params. New JOINs use `LEFT JOIN accounts acc ON ...` so legacy rows with orphan `account_id` keep surfacing when no bucket filter is set.
 
 ### Deployment
 
@@ -140,6 +143,27 @@ def call_snaptrade(): ...
 ```
 
 **File paths — always use pathlib.Path, never string concatenation.**
+
+**Bucket filtering — use the helpers in `src/bucket.py`:**
+
+```python
+from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
+
+@router.get("/positions")
+async def get_positions(bucket: str | None = BucketQuery):
+    bucket = validate_bucket(bucket)
+    clause, bp = bucket_filter_sql(bucket, alias="acc")
+    rows = execute_sql(
+        f"SELECT ... FROM positions p LEFT JOIN accounts acc ON acc.id = p.account_id "
+        f"WHERE p.quantity > 0 "
+        f"AND COALESCE(acc.connection_status, 'connected') != 'deleted' "
+        f"{clause}",
+        params={**other_params, **bp},
+        fetch_results=True,
+    )
+```
+
+The `LEFT JOIN` + `COALESCE` pattern keeps legacy rows with orphan `account_id` visible when no bucket is set; the bucket filter (when present) excludes them naturally because `NULL = :bucket` is `UNKNOWN`.
 
 ## Constraints
 

@@ -396,21 +396,31 @@ async def _compute_analysis(
     return result
 
 
-async def get_portfolio_risk(refresh: bool = False) -> dict:
+async def get_portfolio_risk(
+    refresh: bool = False,
+    bucket: str | None = None,
+) -> dict:
     """Compute portfolio-wide risk metrics.
 
-    Fetches all positions, gets OHLCV for top 15 holdings by market value,
-    then runs portfolio risk analysis.
+    Fetches positions, gets OHLCV for top 15 holdings by market value,
+    then runs portfolio risk analysis. When ``bucket`` is provided, the
+    computation is scoped to accounts in that bucket (long_term, swing,
+    day, retirement, other). Result is cached per bucket — passing None
+    or 'all' caches under bucket='all' for the portfolio-wide view.
     """
+    # Cache key uses 'all' to represent the unfiltered (portfolio-wide) entry.
+    cache_bucket = bucket if bucket else "all"
+
     # Check cache
     if not refresh:
         rows = execute_sql(
             """
             SELECT result, expires_at
             FROM portfolio_risk_cache
-            WHERE portfolio_id = 'default'
+            WHERE portfolio_id = 'default' AND bucket = :bucket
             LIMIT 1
             """,
+            params={"bucket": cache_bucket},
             fetch_results=True,
         )
         if rows:
@@ -425,15 +435,34 @@ async def get_portfolio_risk(refresh: bool = False) -> dict:
                     result = json.loads(result)
                 return result
 
-    # Fetch top 15 positions by market value
+    # Fetch top 15 positions by market value. Filter to:
+    # - non-zero quantity
+    # - accounts not flagged as deleted (orphaned re-links)
+    # - the requested bucket (if any)
+    pos_sql = """
+        SELECT p.symbol, p.quantity, p.market_value
+        FROM positions p
+        WHERE p.quantity > 0
+          AND NOT EXISTS (
+              SELECT 1 FROM accounts a
+              WHERE a.id = p.account_id
+                AND a.connection_status = 'deleted'
+          )
+    """
+    pos_params: dict[str, str] = {}
+    if bucket:
+        pos_sql += (
+            " AND EXISTS ("
+            "   SELECT 1 FROM accounts ab"
+            "   WHERE ab.id = p.account_id AND ab.bucket = :bucket"
+            " )"
+        )
+        pos_params["bucket"] = bucket
+    pos_sql += " ORDER BY p.market_value DESC NULLS LAST LIMIT 15"
+
     pos_rows = execute_sql(
-        """
-        SELECT symbol, quantity, market_value
-        FROM positions
-        WHERE quantity > 0
-        ORDER BY market_value DESC NULLS LAST
-        LIMIT 15
-        """,
+        pos_sql,
+        params=pos_params if pos_params else None,
         fetch_results=True,
     )
 
@@ -496,12 +525,24 @@ async def get_portfolio_risk(refresh: bool = False) -> dict:
     # Only include tickers that have returns data
     valid_weights = {t: w for t, w in weights.items() if t in returns_data}
 
-    # Get total portfolio value
+    # Get total portfolio value — scoped to the requested bucket when set.
     try:
-        bal_rows = execute_sql(
-            "SELECT SUM(total_value) as total FROM account_balances",
-            fetch_results=True,
-        )
+        if bucket:
+            bal_rows = execute_sql(
+                """
+                SELECT SUM(total_value) as total FROM account_balances
+                WHERE account_id IN (
+                    SELECT id FROM accounts WHERE bucket = :bucket
+                )
+                """,
+                params={"bucket": bucket},
+                fetch_results=True,
+            )
+        else:
+            bal_rows = execute_sql(
+                "SELECT SUM(total_value) as total FROM account_balances",
+                fetch_results=True,
+            )
         if bal_rows:
             bm = bal_rows[0]._mapping if hasattr(bal_rows[0], "_mapping") else bal_rows[0]
             total_value = float(bm.get("total", 0) or 0)
@@ -519,18 +560,19 @@ async def get_portfolio_risk(refresh: bool = False) -> dict:
 
     result = report.model_dump(mode="json")
 
-    # Cache result
+    # Cache result, keyed by (portfolio_id, bucket).
     expires_at = datetime.now(tz=timezone.utc) + timedelta(hours=PORTFOLIO_RISK_TTL_HOURS)
     execute_sql(
         """
-        INSERT INTO portfolio_risk_cache (portfolio_id, result, computed_at, expires_at)
-        VALUES ('default', :result, NOW(), :expires_at)
-        ON CONFLICT (portfolio_id) DO UPDATE SET
+        INSERT INTO portfolio_risk_cache (portfolio_id, bucket, result, computed_at, expires_at)
+        VALUES ('default', :bucket, :result, NOW(), :expires_at)
+        ON CONFLICT (portfolio_id, bucket) DO UPDATE SET
             result = EXCLUDED.result,
             computed_at = NOW(),
             expires_at = EXCLUDED.expires_at
         """,
         params={
+            "bucket": cache_bucket,
             "result": json.dumps(result),
             "expires_at": expires_at,
         },

@@ -12,12 +12,14 @@ Enriches each trade with current position metrics for P/L calculation.
 
 import logging
 import math
+from collections import defaultdict
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from fastapi import APIRouter, Path, Query
 from pydantic import BaseModel, Field
 
+from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
 from src.db import execute_sql
 
 logger = logging.getLogger(__name__)
@@ -195,12 +197,83 @@ def _compute_total_portfolio_value(position_map: dict[str, dict]) -> float:
     return sum(p["market_value"] for p in position_map.values())
 
 
+def _trade_sort_key(t: dict) -> str:
+    """Sort key for chronological ordering. None/missing sort last."""
+    return str(t.get("executed_at") or "")
+
+
+def _compute_historical_basis(trades: list[dict]) -> None:
+    """Annotate each trade in-place with `basis_at_trade` (weighted-avg cost
+    per share at the moment the trade occurred), computed by walking
+    BUY/SELL trades chronologically.
+
+    Matches the "moving average cost" method most brokerages use:
+        - BUY adds (units * price) to total_cost and units to qty_held.
+        - SELL reduces qty_held; the per-share basis is total_cost/qty_held
+          right before the sale, and total_cost is reduced proportionally
+          so the remaining shares keep that same avg cost.
+
+    Non-share rows (DIVIDEND/FEE/SPLIT) are skipped. Trades missing price
+    or units are skipped (basis_at_trade stays None).
+
+    This is what makes per-trade realized P/L on closed-out or
+    sold-then-rebought positions meaningful — using the *current* positions
+    table avg_cost would give wrong answers for both cases.
+    """
+    # Group by symbol to walk each symbol's trade timeline independently.
+    by_symbol: dict[str, list[dict]] = defaultdict(list)
+    for t in trades:
+        sym = (t.get("symbol") or "").upper()
+        if sym:
+            by_symbol[sym].append(t)
+
+    for sym_trades in by_symbol.values():
+        # Sort oldest -> newest for the walk.
+        sym_trades.sort(key=_trade_sort_key)
+        qty_held = 0.0
+        total_cost = 0.0
+        for t in sym_trades:
+            side = (t.get("side") or "").upper()
+            units_raw = _safe_float_optional(t.get("units"))
+            price_raw = _safe_float_optional(t.get("price"))
+            if units_raw is None or units_raw == 0 or price_raw is None:
+                # Dividends, fees, splits, or trades with missing data —
+                # don't update the running basis and don't annotate.
+                continue
+            units = abs(units_raw)
+            if side == "BUY":
+                qty_held += units
+                total_cost += units * price_raw
+                # Record the avg cost the buyer is now holding at (informational).
+                t["basis_at_trade"] = (total_cost / qty_held) if qty_held > 0 else None
+            elif side == "SELL":
+                # Basis-per-share right before this sale.
+                basis = (total_cost / qty_held) if qty_held > 0 else None
+                t["basis_at_trade"] = basis
+                if basis is not None and qty_held > 0:
+                    # Reduce both qty and total_cost proportionally so the
+                    # remaining shares keep the same avg cost.
+                    sold = min(units, qty_held)
+                    total_cost -= basis * sold
+                    qty_held -= sold
+                    # Floor at zero to avoid drift from rounding.
+                    if qty_held < 1e-9:
+                        qty_held = 0.0
+                        total_cost = 0.0
+
+
 def _enrich_trade(
     trade: dict,
     position_map: dict[str, dict],
     total_portfolio_value: float,
 ) -> EnrichedTrade:
-    """Enrich a raw trade dict with position + P/L data."""
+    """Enrich a raw trade dict with position + P/L data.
+
+    P/L uses the **historical** basis from `_compute_historical_basis` when
+    available (weighted-avg cost at the moment of the trade), falling back
+    to the current positions-table avg_cost only if the historical walk
+    didn't annotate this trade (no prior buys for the symbol).
+    """
     symbol = trade["symbol"]
     pos = position_map.get(symbol.upper(), {})
 
@@ -213,7 +286,9 @@ def _enrich_trade(
     if market_value and total_portfolio_value > 0:
         portfolio_pct = round(market_value / total_portfolio_value * 100, 2)
 
-    # P/L calculation
+    # P/L calculation — prefer historical basis (basis_at_trade) over the
+    # current avg_cost. Current avg_cost is only meaningful for trades on
+    # actively held positions; historical basis is correct for everything.
     realized_pnl = None
     realized_pnl_pct = None
     unrealized_pnl = None
@@ -221,15 +296,24 @@ def _enrich_trade(
     side = (trade.get("side") or "").upper()
     trade_price = _safe_float_optional(trade.get("price"))
     trade_units = _safe_float_optional(trade.get("units"))
+    historical_basis = _safe_float_optional(trade.get("basis_at_trade"))
 
-    if side == "SELL" and trade_price is not None and trade_units is not None and avg_cost:
-        realized_pnl = round((trade_price - avg_cost) * abs(trade_units), 2)
-        if avg_cost > 0:
-            realized_pnl_pct = round((trade_price - avg_cost) / avg_cost * 100, 2)
-    elif side == "BUY" and trade_units is not None and avg_cost and current_price:
-        unrealized_pnl = round((current_price - avg_cost) * abs(trade_units), 2)
-        if avg_cost > 0:
-            unrealized_pnl_pct = round((current_price - avg_cost) / avg_cost * 100, 2)
+    if side == "SELL" and trade_price is not None and trade_units is not None:
+        basis = historical_basis if historical_basis is not None else avg_cost
+        if basis is not None and basis > 0:
+            realized_pnl = round((trade_price - basis) * abs(trade_units), 2)
+            realized_pnl_pct = round((trade_price - basis) / basis * 100, 2)
+    elif side == "BUY" and trade_units is not None and current_price:
+        # For BUY, "unrealized P/L on this lot" uses the trade's own price
+        # as the cost basis (this lot was bought at this price). Note this
+        # assumes the lot is still held — fully-or-partially-sold lots
+        # would need per-lot FIFO tracking to be precise, which we don't
+        # do. Treating each BUY's unrealized P/L as "as if still held" is
+        # informative but not strictly accurate when followed by SELLs.
+        lot_basis = trade_price
+        if lot_basis is not None and lot_basis > 0:
+            unrealized_pnl = round((current_price - lot_basis) * abs(trade_units), 2)
+            unrealized_pnl_pct = round((current_price - lot_basis) / lot_basis * 100, 2)
 
     return EnrichedTrade(
         id=trade["id"],
@@ -243,7 +327,7 @@ def _enrich_trade(
         source=trade.get("source", "unknown"),
         description=trade.get("description"),
         currentPrice=round(current_price, 2) if current_price else None,
-        avgCost=round(avg_cost, 2) if avg_cost else None,
+        avgCost=round(historical_basis, 2) if historical_basis is not None else (round(avg_cost, 2) if avg_cost else None),
         totalShares=round(total_shares, 4) if total_shares else None,
         marketValue=round(market_value, 2) if market_value else None,
         portfolioPct=portfolio_pct,
@@ -306,6 +390,7 @@ async def get_stock_trades(
     ticker: str = Path(..., description="Stock ticker symbol"),
     limit: int = Query(50, ge=1, le=200, description="Number of trades to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get per-stock trade history merging orders + activities with P/L enrichment.
@@ -313,13 +398,22 @@ async def get_stock_trades(
     Merges from both `activities` and `orders` tables, deduplicates rows
     that appear in both (preferring activities for fee data), and enriches
     each trade with current position metrics and P/L calculations.
+
+    Pass ``?bucket=<name>`` to restrict to a single strategy bucket.
     """
     symbol = ticker.strip().upper()
+    bucket = validate_bucket(bucket)
+    bucket_clause, bucket_params = bucket_filter_sql(bucket, alias="acc")
+    # Historical-basis computation needs the *full* per-symbol trade history,
+    # not just the paginated window. 5000 is a generous ceiling for any
+    # realistic retail trader; if anyone has more than that on a single
+    # symbol the oldest trades will get an approximate basis.
+    HISTORICAL_FETCH_LIMIT = 5000
 
     try:
         # 1. Fetch activities for this symbol (exclude deleted accounts)
         activities_rows = execute_sql(
-            """
+            f"""
             SELECT
                 a.id,
                 a.symbol,
@@ -334,10 +428,11 @@ async def get_stock_trades(
             JOIN accounts acc ON acc.id = a.account_id
             WHERE UPPER(a.symbol) = :symbol
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             ORDER BY a.trade_date DESC
             LIMIT :fetch_limit
             """,
-            params={"symbol": symbol, "fetch_limit": limit + offset + 100},
+            params={"symbol": symbol, "fetch_limit": HISTORICAL_FETCH_LIMIT, **bucket_params},
             fetch_results=True,
         ) or []
 
@@ -349,7 +444,7 @@ async def get_stock_trades(
 
         # 2. Fetch orders for this symbol (exclude deleted accounts)
         orders_rows = execute_sql(
-            """
+            f"""
             SELECT
                 o.brokerage_order_id AS id,
                 o.symbol,
@@ -366,10 +461,11 @@ async def get_stock_trades(
               AND o.status IN ('EXECUTED', 'FILLED')
               AND o.time_executed IS NOT NULL
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             ORDER BY o.time_executed DESC
             LIMIT :fetch_limit
             """,
-            params={"symbol": symbol, "fetch_limit": limit + offset + 100},
+            params={"symbol": symbol, "fetch_limit": HISTORICAL_FETCH_LIMIT, **bucket_params},
             fetch_results=True,
         ) or []
 
@@ -383,12 +479,19 @@ async def get_stock_trades(
         merged = _merge_and_dedup(activities, orders)
         total = len(merged)
 
-        # 4. Apply pagination
+        # 3b. Compute historical (weighted-avg-at-time) cost basis for each
+        #     trade by walking the full chronologically-ordered history
+        #     once. Annotates each trade with `basis_at_trade` which the
+        #     enrichment step uses to compute meaningful realized P/L on
+        #     closed-out and sold-then-rebought positions.
+        _compute_historical_basis(merged)
+
+        # 4. Apply pagination (merged is sorted newest-first by _merge_and_dedup)
         page = merged[offset: offset + limit]
 
-        # 5. Fetch position data for enrichment
+        # 5. Fetch position data for enrichment (bucket-scoped if requested)
         position_rows = execute_sql(
-            """
+            f"""
             SELECT p.symbol, p.quantity, p.average_buy_price,
                    COALESCE(p.current_price, p.price) AS current_price
             FROM positions p
@@ -396,23 +499,27 @@ async def get_stock_trades(
             WHERE UPPER(p.symbol) = :symbol
               AND p.quantity > 0
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             """,
-            params={"symbol": symbol},
+            params={"symbol": symbol, **bucket_params},
             fetch_results=True,
         ) or []
 
         position_map = _build_position_map(position_rows)
 
-        # Get total portfolio value for portfolioPct
+        # Get total portfolio value for portfolioPct — also bucket-scoped so
+        # the percentage stays meaningful in a bucket-filtered view.
         all_positions = execute_sql(
-            """
+            f"""
             SELECT p.symbol, p.quantity, p.average_buy_price,
                    COALESCE(p.current_price, p.price) AS current_price
             FROM positions p
             JOIN accounts acc ON acc.id = p.account_id
             WHERE p.quantity > 0
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             """,
+            params=bucket_params if bucket_params else None,
             fetch_results=True,
         ) or []
 
@@ -436,19 +543,23 @@ async def get_stock_trades(
 async def get_recent_trades(
     limit: int = Query(20, ge=1, le=100, description="Number of recent trades"),
     days: int = Query(30, ge=1, le=365, description="Lookback window in days"),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get recent trades across all stocks for the dashboard.
 
     Merges activities + orders from the lookback window, deduplicates,
-    and enriches with position data.
+    and enriches with position data. Pass ``?bucket=<name>`` to scope
+    the feed to a single strategy bucket.
     """
     try:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d")
+        bucket = validate_bucket(bucket)
+        bucket_clause, bucket_params = bucket_filter_sql(bucket, alias="acc")
 
         # 1. Fetch recent activities (exclude deleted accounts)
         activities_rows = execute_sql(
-            """
+            f"""
             SELECT
                 a.id,
                 a.symbol,
@@ -465,10 +576,11 @@ async def get_recent_trades(
               AND a.symbol IS NOT NULL
               AND UPPER(a.activity_type) IN ('BUY', 'SELL')
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             ORDER BY a.trade_date DESC
             LIMIT :fetch_limit
             """,
-            params={"cutoff": cutoff, "fetch_limit": limit + 100},
+            params={"cutoff": cutoff, "fetch_limit": limit + 100, **bucket_params},
             fetch_results=True,
         ) or []
 
@@ -480,7 +592,7 @@ async def get_recent_trades(
 
         # 2. Fetch recent orders (exclude deleted accounts)
         orders_rows = execute_sql(
-            """
+            f"""
             SELECT
                 o.brokerage_order_id AS id,
                 o.symbol,
@@ -498,10 +610,11 @@ async def get_recent_trades(
               AND o.time_executed IS NOT NULL
               AND UPPER(o.action) IN ('BUY', 'SELL')
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             ORDER BY o.time_executed DESC
             LIMIT :fetch_limit
             """,
-            params={"cutoff": cutoff, "fetch_limit": limit + 100},
+            params={"cutoff": cutoff, "fetch_limit": limit + 100, **bucket_params},
             fetch_results=True,
         ) or []
 
@@ -518,16 +631,19 @@ async def get_recent_trades(
         page = merged[:limit]
         total = len(merged)
 
-        # 5. Fetch all position data for enrichment
+        # 5. Fetch position data for enrichment — bucket-scoped so
+        # portfolio % stays accurate inside a filtered view.
         position_rows = execute_sql(
-            """
+            f"""
             SELECT p.symbol, p.quantity, p.average_buy_price,
                    COALESCE(p.current_price, p.price) AS current_price
             FROM positions p
             JOIN accounts acc ON acc.id = p.account_id
             WHERE p.quantity > 0
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             """,
+            params=bucket_params if bucket_params else None,
             fetch_results=True,
         ) or []
 

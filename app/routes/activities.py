@@ -13,6 +13,7 @@ from typing import Any, Optional
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 
+from src.bucket import BucketQuery, validate_bucket
 from src.db import execute_sql
 
 logger = logging.getLogger(__name__)
@@ -90,23 +91,31 @@ async def get_activities(
         alias="endDate",
         description="End date (YYYY-MM-DD). Default: today.",
     ),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get account activity history with optional filters.
 
     Returns dividends, trades, fees, and other account activities
     from the activities table (populated by SnapTrade sync).
+
+    Pass ``?bucket=<name>`` to restrict to a single strategy bucket
+    (long_term, swing, day, retirement, other).
     """
     try:
+        bucket = validate_bucket(bucket)
+
         # Resolve date range
         now = datetime.now(timezone.utc)
         resolved_end = end_date or now.strftime("%Y-%m-%d")
         resolved_start = start_date or (now - timedelta(days=90)).strftime("%Y-%m-%d")
 
-        # Build dynamic filters
+        # Build dynamic filters. JOIN accounts so we can filter by bucket
+        # and exclude activities from deleted (orphaned) accounts.
         conditions: list[str] = [
             "a.trade_date >= :start_date",
             "a.trade_date <= :end_date",
+            "COALESCE(acc.connection_status, 'connected') != 'deleted'",
         ]
         params: dict[str, Any] = {
             "start_date": resolved_start,
@@ -123,11 +132,24 @@ async def get_activities(
             conditions.append("UPPER(a.symbol) = UPPER(:symbol)")
             params["symbol"] = symbol
 
+        if bucket:
+            conditions.append("acc.bucket = :bucket")
+            params["bucket"] = bucket
+
         where_clause = " AND ".join(conditions)
 
-        # Count total matching rows
-        count_query = f"SELECT COUNT(*) as cnt FROM activities a WHERE {where_clause}"
-        count_rows = execute_sql(count_query, params=params, fetch_results=True)
+        # Count total matching rows — same JOIN + filter as page query.
+        # LEFT JOIN so legacy rows with orphan account_id still surface when
+        # no bucket filter is set (matches the pre-bucket behavior).
+        count_query = (
+            f"SELECT COUNT(*) as cnt FROM activities a "
+            f"LEFT JOIN accounts acc ON acc.id = a.account_id "
+            f"WHERE {where_clause}"
+        )
+        # The count query doesn't reference limit/offset; strip them so any
+        # strict driver doesn't complain about unused bind params.
+        count_params = {k: v for k, v in params.items() if k not in ("limit", "offset")}
+        count_rows = execute_sql(count_query, params=count_params, fetch_results=True)
         total = int(count_rows[0]["cnt"]) if count_rows else 0
 
         # Fetch page
@@ -149,6 +171,7 @@ async def get_activities(
                 a.institution,
                 a.option_type
             FROM activities a
+            LEFT JOIN accounts acc ON acc.id = a.account_id
             WHERE {where_clause}
             ORDER BY a.trade_date DESC, a.created_at DESC
             LIMIT :limit OFFSET :offset

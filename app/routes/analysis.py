@@ -14,6 +14,7 @@ import logging
 from fastapi import APIRouter, Query
 
 from src.analysis.orchestrator import get_portfolio_risk, get_stock_analysis
+from src.bucket import BucketQuery, validate_bucket
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,11 @@ async def stock_analysis_risk(
 @router.get("/portfolio/risk")
 async def portfolio_risk(
     refresh: bool = Query(False, description="Force fresh risk computation"),
+    bucket: str | None = BucketQuery,
 ):
-    """Portfolio-wide risk analysis (VaR, concentration, correlation)."""
-    return await get_portfolio_risk(refresh=refresh)
+    """Portfolio-wide risk analysis (VaR, concentration, correlation).
+
+    Pass ``?bucket=<name>`` to scope risk to a single strategy bucket.
+    Each bucket has its own cache entry.
+    """
+    return await get_portfolio_risk(refresh=refresh, bucket=validate_bucket(bucket))

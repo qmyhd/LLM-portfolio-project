@@ -19,6 +19,7 @@ from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
 from src.db import execute_sql
 from src.market_data_service import _CRYPTO_SYMBOLS
 from src.price_service import get_latest_close, get_ohlcv, get_previous_close
@@ -247,14 +248,21 @@ class StockActivitiesResponse(BaseModel):
 @router.get("/{ticker}", response_model=StockProfileCurrent)
 async def get_stock_profile(
     ticker: str = Path(..., description="Stock ticker symbol"),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get stock hub profile with price, position, sentiment and label metrics.
 
     Returns the rich ``StockProfileCurrent`` shape expected by the frontend
-    stock hub page.  Fields that cannot be computed yet are returned as null.
+    stock hub page. Fields that cannot be computed yet are returned as null.
+
+    Pass ``?bucket=<name>`` to scope position metrics and order counts to
+    a single strategy bucket. Sentiment, mention counts, label counts, and
+    company metadata are stock-wide and unaffected by the bucket filter.
     """
     symbol = _validate_ticker(ticker)
+    bucket = validate_bucket(bucket)
+    bucket_clause, bucket_params = bucket_filter_sql(bucket, alias="acc")
 
     try:
         # ---- 1. Current / previous close -----------------------------------
@@ -308,38 +316,58 @@ async def get_stock_profile(
             )
 
         # ---- 3. Position metrics -------------------------------------------
+        # Aggregate across all accounts (or across bucket-scoped accounts) so
+        # quantity and average cost reflect the whole position, not a single
+        # account row.
         pos = execute_sql(
-            """
-            SELECT quantity, average_buy_price
-            FROM positions WHERE symbol = :s AND quantity > 0 LIMIT 1
+            f"""
+            SELECT
+                SUM(p.quantity) AS quantity,
+                CASE WHEN SUM(p.quantity) > 0
+                    THEN SUM(p.quantity * p.average_buy_price) / SUM(p.quantity)
+                    ELSE NULL
+                END AS average_buy_price
+            FROM positions p
+            LEFT JOIN accounts acc ON acc.id = p.account_id
+            WHERE UPPER(p.symbol) = :s
+              AND p.quantity > 0
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             """,
-            params={"s": symbol},
+            params={"s": symbol, **bucket_params},
             fetch_results=True,
         )
         pos_qty = pos_val = avg_buy = unr_pnl = unr_pnl_pct = None
         if pos:
             pd_ = dict(pos[0]._mapping) if hasattr(pos[0], "_mapping") else dict(pos[0])  # type: ignore[arg-type]
             pos_qty = float(pd_["quantity"] or 0)
-            avg_buy = float(pd_["average_buy_price"] or 0)
-            pos_val = round(pos_qty * latest, 2)
-            cost = pos_qty * avg_buy
-            unr_pnl = round(pos_val - cost, 2)
-            unr_pnl_pct = round((unr_pnl / cost) * 100, 2) if cost else None
+            avg_buy = float(pd_["average_buy_price"] or 0) if pd_.get("average_buy_price") is not None else 0
+            if pos_qty > 0:
+                pos_val = round(pos_qty * latest, 2)
+                cost = pos_qty * avg_buy
+                unr_pnl = round(pos_val - cost, 2)
+                unr_pnl_pct = round((unr_pnl / cost) * 100, 2) if cost else None
+            else:
+                pos_qty = None  # No actual position; null out so the UI shows "not held"
 
         # ---- 4. Order counts -----------------------------------------------
         ord_stats = execute_sql(
-            """
+            f"""
             SELECT
                 COUNT(*)                                  AS total,
-                COUNT(*) FILTER (WHERE UPPER(action)='BUY')  AS buys,
-                COUNT(*) FILTER (WHERE UPPER(action)='SELL') AS sells,
-                AVG(filled_quantity)                        AS avg_size,
-                MIN(time_executed)                         AS first_trade,
-                MAX(time_executed)                         AS last_trade
-            FROM orders
-            WHERE UPPER(symbol) = :s AND UPPER(status) IN ('EXECUTED', 'FILLED')
+                COUNT(*) FILTER (WHERE UPPER(o.action)='BUY')  AS buys,
+                COUNT(*) FILTER (WHERE UPPER(o.action)='SELL') AS sells,
+                AVG(o.filled_quantity)                        AS avg_size,
+                MIN(o.time_executed)                         AS first_trade,
+                MAX(o.time_executed)                         AS last_trade
+            FROM orders o
+            LEFT JOIN accounts acc ON acc.id = o.account_id
+            WHERE UPPER(o.symbol) = :s
+              AND UPPER(o.status) IN ('EXECUTED', 'FILLED')
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
             """,
-            params={"s": symbol},
+            params={"s": symbol, **bucket_params},
             fetch_results=True,
         )
         od = (
@@ -709,16 +737,22 @@ async def get_stock_ohlcv(
         "1M",
         description="Time period: 1W, 2W, 1M, 3M, 6M, 1Y, 2Y, YTD, MAX",
     ),
+    bucket: str | None = BucketQuery,
 ):
     """
     Get OHLCV chart data for a stock.
 
     Returns deterministic, date-ascending bars suitable for TradingView /
-    lightweight-charts.  Bars always sorted oldest → newest.
+    lightweight-charts. Bars always sorted oldest → newest.
+
+    Pass ``?bucket=<name>`` to restrict trade-marker overlays to a single
+    strategy bucket. The price bars themselves are stock-wide.
 
     Response shape matches frontend ``types/api.ts`` ``OHLCVSeries``.
     """
     symbol = _validate_ticker(ticker)
+    bucket = validate_bucket(bucket)
+    bucket_clause, bucket_params = bucket_filter_sql(bucket, alias="acc")
 
     # Validate period
     today = date.today()
@@ -768,21 +802,24 @@ async def get_stock_ohlcv(
         # Guarantee ascending date order
         bars.sort(key=lambda b: b.date)
 
-        # Get orders for chart overlay
+        # Get orders for chart overlay (bucket-filtered when requested).
         orders_data = execute_sql(
-            """
+            f"""
             SELECT
-                DATE(time_executed) as date,
-                action as side,
-                execution_price as price,
-                filled_quantity as quantity
-            FROM orders
-            WHERE UPPER(symbol) = :symbol
-              AND time_executed >= :start_date
-              AND UPPER(status) IN ('EXECUTED', 'FILLED')
-            ORDER BY time_executed
+                DATE(o.time_executed) as date,
+                o.action as side,
+                o.execution_price as price,
+                o.filled_quantity as quantity
+            FROM orders o
+            LEFT JOIN accounts acc ON acc.id = o.account_id
+            WHERE UPPER(o.symbol) = :symbol
+              AND o.time_executed >= :start_date
+              AND UPPER(o.status) IN ('EXECUTED', 'FILLED')
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
+            ORDER BY o.time_executed
             """,
-            params={"symbol": symbol, "start_date": start_date.isoformat()},
+            params={"symbol": symbol, "start_date": start_date.isoformat(), **bucket_params},
             fetch_results=True,
         )
 
@@ -831,28 +868,44 @@ async def get_stock_activities(
     ticker: str = Path(..., description="Stock ticker symbol"),
     limit: int = Query(50, ge=1, le=200, description="Number of activities"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
+    bucket: str | None = BucketQuery,
 ):
-    """Get trade and dividend activity history for a specific stock."""
+    """Get trade and dividend activity history for a specific stock.
+
+    Pass ``?bucket=<name>`` to restrict to a single strategy bucket.
+    """
     clean = _validate_ticker(ticker)
+    bucket = validate_bucket(bucket)
+    bucket_clause, bucket_params = bucket_filter_sql(bucket, alias="acc")
 
     try:
-        count_q = """
+        count_q = f"""
             SELECT COUNT(*) as cnt
-            FROM activities
-            WHERE UPPER(symbol) = UPPER(:ticker)
+            FROM activities a
+            LEFT JOIN accounts acc ON acc.id = a.account_id
+            WHERE UPPER(a.symbol) = UPPER(:ticker)
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
         """
-        count_rows = execute_sql(count_q, params={"ticker": clean}, fetch_results=True)
+        count_rows = execute_sql(
+            count_q, params={"ticker": clean, **bucket_params}, fetch_results=True
+        )
         total = int(count_rows[0]["cnt"]) if count_rows else 0
 
-        query = """
-            SELECT id, activity_type, trade_date, price, units, amount, fee, description
-            FROM activities
-            WHERE UPPER(symbol) = UPPER(:ticker)
-            ORDER BY trade_date DESC, created_at DESC
+        query = f"""
+            SELECT a.id, a.activity_type, a.trade_date, a.price, a.units, a.amount, a.fee, a.description
+            FROM activities a
+            LEFT JOIN accounts acc ON acc.id = a.account_id
+            WHERE UPPER(a.symbol) = UPPER(:ticker)
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
+            ORDER BY a.trade_date DESC, a.created_at DESC
             LIMIT :limit OFFSET :offset
         """
         rows = execute_sql(
-            query, params={"ticker": clean, "limit": limit, "offset": offset}, fetch_results=True
+            query,
+            params={"ticker": clean, "limit": limit, "offset": offset, **bucket_params},
+            fetch_results=True,
         ) or []
 
         activities = []

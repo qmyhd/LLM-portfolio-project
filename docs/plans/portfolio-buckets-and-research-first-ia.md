@@ -1,5 +1,17 @@
 # Portfolio Buckets + Research-First IA — Implementation Plan
 
+> **Status (2026-05-19): Phases 0-4 implemented (uncommitted). Phases 5-6 deferred.**
+>
+> Shipped:
+> - **Phase 0** — `schema/069_account_buckets.sql` adds `accounts.bucket` enum, `schema/070_risk_cache_bucket.sql` adds bucket to `portfolio_risk_cache` PK.
+> - **Phase 1** — `src/bucket.py` helpers + `?bucket=` filter on every data endpoint (positions, movers, sparklines, risk, orders, activities, trades, stock profile, OHLCV overlay, stock activities, chat). Uses LEFT JOIN so legacy orphan-account rows still surface when no bucket filter is set. `src/analysis/orchestrator.py` `get_portfolio_risk` is bucket-aware; cache keyed by bucket.
+> - **Phase 2** — `PATCH /connections/{id}/bucket` backend endpoint + Settings UI dropdown with optimistic update.
+> - **Phase 3** — Sidebar split into Research / Portfolio groups; `/page.tsx` is the new research home (ideas feed + quick-jump tiles); positions/orders/activity moved under `/portfolio/*` via `git mv`; permanent redirects in `next.config.mjs` keep old URLs working.
+> - **Phase 4** — `BucketContext` + `BucketProvider` + `useBucket` + `withBucket`; `BucketSwitcher` tab strip; URL is source of truth via `?bucket=`; portfolio layout and stock-detail layout both wrap children in the provider; all data hooks read the bucket and include it in SWR keys.
+>
+> Deferred: Phase 5 (per-bucket equity curves) and Phase 6 (bucket-aware multi-agent analysis) — both require new endpoints and analysis-layer changes.
+
+
 ## Vision
 
 Separate the site into two top-level concerns:
