@@ -90,7 +90,16 @@ def _score_discord_ideas(ideas: list[IdeaData]) -> tuple[str, float, dict]:
             bearish_count += 1
 
     if total_weight == 0:
-        return "neutral", 0.0, {"idea_count": len(ideas), "bullish_count": 0, "bearish_count": 0}
+        # Keep the metrics dict shape consistent with the main return below
+        # so callers (and tests) can rely on these keys always being present.
+        return "neutral", 0.0, {
+            "idea_count": len(ideas),
+            "bullish_count": 0,
+            "bearish_count": 0,
+            "bullish_pct": 0.0,
+            "avg_confidence": 0.0,
+            "weighted_score": 0.0,
+        }
 
     score = weighted_sum / total_weight  # -1 to +1
 
