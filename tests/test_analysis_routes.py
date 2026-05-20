@@ -63,7 +63,9 @@ def test_get_stock_analysis_refresh(client):
         resp = client.get("/stocks/AAPL/analysis?refresh=true")
 
     assert resp.status_code == 200
-    mock_fn.assert_called_once_with("AAPL", refresh=True, agents=None)
+    # bucket=None is the unfiltered default; routes pass it explicitly now
+    # so the orchestrator caches under bucket='all'.
+    mock_fn.assert_called_once_with("AAPL", refresh=True, agents=None, bucket=None)
 
 
 def test_get_stock_analysis_technical(client):
@@ -86,7 +88,9 @@ def test_get_stock_analysis_technical(client):
         resp = client.get("/stocks/TSLA/analysis/technical")
 
     assert resp.status_code == 200
-    mock_fn.assert_called_once_with("TSLA", refresh=False, agents=["technical"])
+    mock_fn.assert_called_once_with(
+        "TSLA", refresh=False, agents=["technical"], bucket=None,
+    )
 
 
 def test_get_portfolio_risk(client):

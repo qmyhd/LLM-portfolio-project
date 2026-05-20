@@ -11,7 +11,7 @@ Monitor at: `github.com/qmyhd/LLM-portfolio-project/actions`
 ## Manual Deploy (fallback)
 
 ```bash
-ssh -i ~/.ssh/backfillkey.pem ubuntu@18.210.90.214
+ssh -i ~/.ssh/new-backfillkey.pem ubuntu@18.210.90.214
 cd /home/ubuntu/llm-portfolio
 sudo bash scripts/deploy_ec2.sh
 ```
@@ -19,7 +19,7 @@ sudo bash scripts/deploy_ec2.sh
 ## Full Manual Redeploy (schema migrations, systemd changes)
 
 ```bash
-ssh -i ~/.ssh/backfillkey.pem ubuntu@18.210.90.214
+ssh -i ~/.ssh/new-backfillkey.pem ubuntu@18.210.90.214
 cd /home/ubuntu/llm-portfolio
 git pull origin main
 source .venv/bin/activate

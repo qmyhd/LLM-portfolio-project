@@ -48,7 +48,9 @@ Every push to `main` triggers a GitHub Actions workflow (`.github/workflows/depl
 If auto-deploy fails or you need to deploy manually:
 
 ```bash
-ssh -i ~/.ssh/backfillkey.pem ubuntu@18.210.90.214
+# Note: key was rotated; the current key is `new-backfillkey.pem`.
+# If you still have the old `backfillkey.pem` on disk, that one's stale.
+ssh -i ~/.ssh/new-backfillkey.pem ubuntu@18.210.90.214
 cd /home/ubuntu/llm-portfolio
 sudo bash scripts/deploy_ec2.sh
 ```

@@ -298,10 +298,11 @@ class TestRefineIdea:
         assert "thesis" in data["suggestedTags"]
         assert data["changesSummary"] == refine_result["changesSummary"]
 
+    @patch("app.routes.ideas.transaction")
     @patch("app.routes.ideas.compute_content_hash", return_value="newhash")
     @patch("app.routes.ideas.execute_sql")
-    def test_refine_with_apply(self, mock_sql, mock_hash, client):
-        """Refine with apply=true updates the idea."""
+    def test_refine_with_apply(self, mock_sql, mock_hash, mock_transaction, client):
+        """Refine with apply=true updates the idea inside an advisory-locked transaction."""
         import json
 
         mock_sql.return_value = [_mock_row({
@@ -312,6 +313,13 @@ class TestRefineIdea:
             "tags": [],
             "status": "draft",
         })]
+
+        # The apply=True path now uses `with transaction() as conn:` and
+        # conn.execute(text(...), params). Mock the context manager so the
+        # UPDATE goes through, and capture the calls so we can assert.
+        mock_conn = MagicMock()
+        mock_transaction.return_value.__enter__.return_value = mock_conn
+        mock_transaction.return_value.__exit__.return_value = False
 
         refine_result = {
             "refinedContent": "Refined AAPL thesis",
@@ -345,11 +353,19 @@ class TestRefineIdea:
             resp = client.post(f"/ideas/{SAMPLE_UUID}/refine?apply=true")
 
         assert resp.status_code == 200
-        # Verify UPDATE was called (second execute_sql call)
-        assert mock_sql.call_count >= 2
-        update_call = mock_sql.call_args_list[-1]
-        assert "UPDATE user_ideas" in update_call[0][0]
-        assert update_call[1]["params"]["content"] == "Refined AAPL thesis"
+        # The transaction block runs two conn.execute calls: the advisory
+        # lock acquisition, then the UPDATE. Find the UPDATE call.
+        assert mock_conn.execute.call_count >= 2
+        update_calls = [
+            c for c in mock_conn.execute.call_args_list
+            if "UPDATE user_ideas" in str(c.args[0])
+        ]
+        assert len(update_calls) == 1, (
+            f"Expected exactly one UPDATE user_ideas call, got "
+            f"{len(update_calls)} (all calls: {mock_conn.execute.call_args_list})"
+        )
+        update_params = update_calls[0].args[1]
+        assert update_params["content"] == "Refined AAPL thesis"
 
 
 # =========================================================================
