@@ -543,19 +543,68 @@ async def get_stock_trades(
 async def get_recent_trades(
     limit: int = Query(20, ge=1, le=100, description="Number of recent trades"),
     days: int = Query(30, ge=1, le=365, description="Lookback window in days"),
+    types: str | None = Query(
+        None,
+        description=(
+            "Comma-separated activity types to include, e.g. 'BUY,SELL' "
+            "(default), 'BUY,SELL,DIVIDEND,FEE,SPLIT', or 'all' for every "
+            "activity type. Orders are always BUY/SELL by definition; this "
+            "filter primarily affects which activities rows surface."
+        ),
+    ),
     bucket: str | None = BucketQuery,
 ):
     """
-    Get recent trades across all stocks for the dashboard.
+    Get recent trades across all stocks for the dashboard / activity feed.
 
     Merges activities + orders from the lookback window, deduplicates,
     and enriches with position data. Pass ``?bucket=<name>`` to scope
-    the feed to a single strategy bucket.
+    the feed to a single strategy bucket. Pass ``?types=all`` to include
+    dividends, fees, splits etc. — useful for the dedicated Activity page.
     """
     try:
         cutoff = (datetime.now(UTC) - timedelta(days=days)).strftime("%Y-%m-%d")
         bucket = validate_bucket(bucket)
         bucket_clause, bucket_params = bucket_filter_sql(bucket, alias="acc")
+
+        # Parse the types filter. 'all' or empty list (after splitting) means
+        # no activity_type restriction. Default to BUY,SELL for back-compat
+        # with the dashboard widget.
+        if types is None:
+            type_filter_sql = " AND UPPER(a.activity_type) IN ('BUY', 'SELL')"
+            type_params: dict[str, str] = {}
+            order_type_filter_sql = " AND UPPER(o.action) IN ('BUY', 'SELL')"
+        elif types.strip().lower() == "all":
+            # No filter on activity_type — everything goes through. Orders
+            # only have BUY/SELL/etc. actions so they always pass.
+            type_filter_sql = ""
+            type_params = {}
+            order_type_filter_sql = ""
+        else:
+            wanted = [t.strip().upper() for t in types.split(",") if t.strip()]
+            if not wanted:
+                type_filter_sql = ""
+                type_params = {}
+                order_type_filter_sql = ""
+            else:
+                placeholders = ",".join(f":atype_{i}" for i in range(len(wanted)))
+                type_filter_sql = f" AND UPPER(a.activity_type) IN ({placeholders})"
+                type_params = {f"atype_{i}": v for i, v in enumerate(wanted)}
+                # Orders only have BUY/SELL meaningfully — include only when
+                # the caller asked for them.
+                buy_sell_wanted = [w for w in wanted if w in ("BUY", "SELL")]
+                if buy_sell_wanted:
+                    order_placeholders = ",".join(
+                        f":otype_{i}" for i in range(len(buy_sell_wanted))
+                    )
+                    order_type_filter_sql = (
+                        f" AND UPPER(o.action) IN ({order_placeholders})"
+                    )
+                    for i, v in enumerate(buy_sell_wanted):
+                        type_params[f"otype_{i}"] = v
+                else:
+                    # Caller wants DIVIDEND/FEE only — no orders should match
+                    order_type_filter_sql = " AND FALSE"
 
         # 1. Fetch recent activities (exclude deleted accounts)
         activities_rows = execute_sql(
@@ -574,13 +623,13 @@ async def get_recent_trades(
             JOIN accounts acc ON acc.id = a.account_id
             WHERE a.trade_date >= :cutoff
               AND a.symbol IS NOT NULL
-              AND UPPER(a.activity_type) IN ('BUY', 'SELL')
+              {type_filter_sql}
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
               {bucket_clause}
             ORDER BY a.trade_date DESC
             LIMIT :fetch_limit
             """,
-            params={"cutoff": cutoff, "fetch_limit": limit + 100, **bucket_params},
+            params={"cutoff": cutoff, "fetch_limit": limit + 100, **bucket_params, **type_params},
             fetch_results=True,
         ) or []
 
@@ -590,7 +639,9 @@ async def get_recent_trades(
             rd["source"] = "activity"
             activities.append(rd)
 
-        # 2. Fetch recent orders (exclude deleted accounts)
+        # 2. Fetch recent orders (exclude deleted accounts). Orders are
+        #    always BUY/SELL semantically; the `types` filter only excludes
+        #    them when the caller specifically asked for non-trade types.
         orders_rows = execute_sql(
             f"""
             SELECT
@@ -608,13 +659,18 @@ async def get_recent_trades(
             WHERE o.time_executed >= :cutoff
               AND o.status IN ('EXECUTED', 'FILLED')
               AND o.time_executed IS NOT NULL
-              AND UPPER(o.action) IN ('BUY', 'SELL')
+              {order_type_filter_sql}
               AND COALESCE(acc.connection_status, 'connected') != 'deleted'
               {bucket_clause}
             ORDER BY o.time_executed DESC
             LIMIT :fetch_limit
             """,
-            params={"cutoff": cutoff, "fetch_limit": limit + 100, **bucket_params},
+            params={
+                "cutoff": cutoff,
+                "fetch_limit": limit + 100,
+                **bucket_params,
+                **type_params,
+            },
             fetch_results=True,
         ) or []
 
