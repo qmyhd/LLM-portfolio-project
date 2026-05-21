@@ -53,6 +53,28 @@ class MessagesResponse(BaseModel):
     ticker: str
     messages: list[MessageItem]
     total: int
+
+
+class FeedItem(BaseModel):
+    """One recent parsed idea, suitable for a home-page feed card."""
+
+    id: int
+    messageId: str
+    ticker: Optional[str] = None
+    direction: str  # bullish | bearish | neutral
+    ideaText: str
+    author: str
+    channel: str
+    createdAt: Optional[str] = None
+    labels: list[str]
+    confidence: Optional[float] = None
+
+
+class FeedResponse(BaseModel):
+    """Recent parsed-idea feed across all tickers."""
+
+    items: list[FeedItem]
+    trendingTickers: list[str]  # unique tickers in the feed, ordered by recency
     nextCursor: Optional[int] = None
 
 
@@ -205,3 +227,78 @@ async def get_sentiment_messages(
     except Exception as e:
         logger.error(f"Error fetching messages for {symbol}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/feed", response_model=FeedResponse)
+async def get_sentiment_feed(
+    limit: int = Query(30, ge=1, le=100, description="Max parsed ideas to return"),
+    days: int = Query(30, ge=1, le=365, description="Lookback window in days"),
+):
+    """Recent parsed-idea feed across all tickers — powers the research home page.
+
+    Returns the most recent rows from ``discord_parsed_ideas`` joined to
+    ``discord_messages`` for author/channel context. Used by the home
+    page to surface "what's been said lately" without the user having to
+    pick a ticker first.
+
+    Also returns the unique tickers seen in the window (most-recent first)
+    so the UI can show a "trending tickers" chip strip in place of the
+    static watchlist.
+    """
+    try:
+        rows = execute_sql(
+            """
+            SELECT
+                dpi.id,
+                dpi.message_id,
+                dpi.primary_symbol,
+                dpi.direction,
+                dpi.confidence,
+                dpi.idea_text,
+                dpi.labels,
+                dm.author,
+                dm.channel,
+                dm.created_at
+            FROM discord_parsed_ideas dpi
+            LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
+            WHERE dm.created_at > NOW() - (:days || ' days')::INTERVAL
+              AND dpi.idea_text IS NOT NULL
+              AND dpi.idea_text != ''
+            ORDER BY dm.created_at DESC NULLS LAST
+            LIMIT :limit
+            """,
+            params={"days": str(days), "limit": limit},
+            fetch_results=True,
+        ) or []
+
+        items: list[FeedItem] = []
+        seen_tickers: list[str] = []
+        for r in rows:
+            d = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)
+            ticker = d.get("primary_symbol")
+            if ticker and ticker not in seen_tickers:
+                seen_tickers.append(ticker)
+            items.append(
+                FeedItem(
+                    id=int(d["id"]),
+                    messageId=str(d["message_id"]),
+                    ticker=ticker,
+                    direction=(d.get("direction") or "neutral").lower(),
+                    ideaText=d.get("idea_text") or "",
+                    author=d.get("author") or "",
+                    channel=d.get("channel") or "",
+                    createdAt=str(d["created_at"]) if d.get("created_at") else None,
+                    labels=list(d.get("labels") or []),
+                    confidence=(
+                        float(d["confidence"]) if d.get("confidence") is not None else None
+                    ),
+                )
+            )
+
+        # Cap trending tickers to a reasonable strip count
+        return FeedResponse(items=items, trendingTickers=seen_tickers[:12])
+
+    except Exception as e:
+        logger.error(f"Error fetching sentiment feed: {e}", exc_info=True)
+        # Return empty rather than 500 so the home page degrades gracefully
+        return FeedResponse(items=[], trendingTickers=[])
