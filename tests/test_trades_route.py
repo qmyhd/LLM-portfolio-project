@@ -320,7 +320,9 @@ class TestGetRecentTrades:
             ],
             # 2. orders
             [],
-            # 3. all positions
+            # 3. older-history-for-basis (empty in tests — no pre-window trades)
+            [],
+            # 4. all positions
             [
                 _make_position_row(symbol="AAPL", quantity=100, average_buy_price=145.0, current_price=155.0),
                 _make_position_row(symbol="TSLA", quantity=10, average_buy_price=350.0, current_price=390.0),
@@ -351,7 +353,9 @@ class TestGetRecentTrades:
                 symbol="AAPL", side="BUY", amount=1500.0,
                 executed_at="2026-02-28 10:30:00",
             )],
-            # 3. all positions
+            # 3. older-history-for-basis
+            [],
+            # 4. all positions
             [],
         ]
 
@@ -368,6 +372,8 @@ class TestGetRecentTrades:
         mock_sql.side_effect = [
             [],  # activities
             [],  # orders
+            # No older-history query is made when there are no symbols in page,
+            # so positions comes right after.
             [],  # all positions
         ]
 
@@ -393,6 +399,7 @@ class TestGetRecentTrades:
         mock_sql.side_effect = [
             activities,  # activities
             [],  # orders
+            [],  # older-history-for-basis
             [],  # all positions
         ]
 
@@ -507,3 +514,58 @@ class TestHelperFunctions:
         assert len(result) == 2
         sources = {r["source"] for r in result}
         assert sources == {"activity", "order"}
+
+    def test_is_option_row(self):
+        """Option contracts are detected from their description text."""
+        from app.routes.trades import _is_option_row
+
+        # Real shapes from the NVDA activities table
+        assert _is_option_row({
+            "description": "2024-05-17 00:00:00 LONG CALL 1.000 units of NVDA @ $123.00 (OPEN)"
+        })
+        assert _is_option_row({
+            "description": "2024-04-26 00:00:00 LONG CALL 1.000 units of NVDA @ $83.00 (CLOSE)"
+        })
+        # Other option variants
+        assert _is_option_row({"description": "SHORT PUT 2.000 units of TSLA @ $200.00"})
+        assert _is_option_row({"description": "long call open"})  # case-insensitive
+
+        # Stock trades — NOT options
+        assert not _is_option_row({
+            "description": "BUY 0.009556 units of NVDA @ $523.64000000"
+        })
+        assert not _is_option_row({"description": "SELL 10 units of AAPL @ $150"})
+        assert not _is_option_row({"description": None})
+        assert not _is_option_row({"description": ""})
+        assert not _is_option_row({})
+
+    def test_compute_historical_basis_skips_options(self):
+        """Options under the same symbol don't pollute the stock basis walk.
+
+        Regression: NVDA had ~14 option contracts mixed into activities at
+        $0.10-$1.23/contract with units=1.0 each. Without this filter, the
+        running qty_held got 14 phantom shares added at near-zero cost,
+        producing realized P/L numbers in the +900% range.
+        """
+        from app.routes.trades import _compute_historical_basis
+
+        trades = [
+            {"symbol": "NVDA", "side": "BUY", "units": 1.0, "price": 500.0,
+             "executed_at": "2024-01-01", "description": "BUY 1 units of NVDA @ $500"},
+            # Phantom option BUY — must NOT be added to qty_held
+            {"symbol": "NVDA", "side": "BUY", "units": 1.0, "price": 1.23,
+             "executed_at": "2024-02-01",
+             "description": "2024-05-17 LONG CALL 1.000 units of NVDA @ $123.00 (OPEN)"},
+            {"symbol": "NVDA", "side": "SELL", "units": -1.0, "price": 600.0,
+             "executed_at": "2024-03-01", "description": "SELL 1 units of NVDA @ $600"},
+        ]
+        _compute_historical_basis(trades)
+
+        # The BUY's basis_at_trade should be 500 (just that BUY, not polluted
+        # by the option's $1.23 average).
+        assert trades[0]["basis_at_trade"] == 500.0
+        # The option row should NOT be annotated.
+        assert "basis_at_trade" not in trades[1] or trades[1].get("basis_at_trade") is None
+        # The SELL should compute against the $500 basis (correctly), not the
+        # polluted ~$250 average that would result from including the option.
+        assert trades[2]["basis_at_trade"] == 500.0

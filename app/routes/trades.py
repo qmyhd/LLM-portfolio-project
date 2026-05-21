@@ -202,6 +202,36 @@ def _trade_sort_key(t: dict) -> str:
     return str(t.get("executed_at") or "")
 
 
+# Option-contract description markers. SnapTrade rolls option trades into
+# the same activities table as shares with `symbol = <underlying>` and
+# `activity_type IN ('BUY', 'SELL')`; the only reliable signal that a row
+# is an option (not 1 share of stock) is the description text, which
+# looks like:
+#   "2024-05-17 00:00:00 LONG CALL 1.000 units of NVDA @ $123.00 (OPEN)"
+# Without this filter, every option contract gets credited to the
+# underlying's running stock basis as 1 share at the contract premium,
+# tanking qty_held and producing nonsensical realized P/L.
+_OPTION_DESC_MARKERS = (
+    "LONG CALL",
+    "SHORT CALL",
+    "LONG PUT",
+    "SHORT PUT",
+    "(OPEN)",
+    "(CLOSE)",
+)
+
+
+def _is_option_row(trade: dict) -> bool:
+    """True when an activity row looks like an option contract (not stock).
+
+    Used to keep option trades out of the per-symbol stock basis walk.
+    """
+    desc = (trade.get("description") or "").upper()
+    if not desc:
+        return False
+    return any(marker in desc for marker in _OPTION_DESC_MARKERS)
+
+
 def _compute_historical_basis(trades: list[dict]) -> None:
     """Annotate each trade in-place with `basis_at_trade` (weighted-avg cost
     per share at the moment the trade occurred), computed by walking
@@ -213,8 +243,16 @@ def _compute_historical_basis(trades: list[dict]) -> None:
           right before the sale, and total_cost is reduced proportionally
           so the remaining shares keep that same avg cost.
 
-    Non-share rows (DIVIDEND/FEE/SPLIT) are skipped. Trades missing price
-    or units are skipped (basis_at_trade stays None).
+    Non-share rows (DIVIDEND/FEE/SPLIT/OPTION) are skipped. Trades missing
+    price or units are skipped (basis_at_trade stays None).
+
+    Known limitation: pre/post stock-split trades are walked at their raw
+    units and prices. SnapTrade does not emit a SPLIT activity, so the
+    walk has no way to know a 10:1 split happened on (e.g.) 2024-06-10
+    for NVDA — pre-split units (small fractions) and post-split units
+    (10x larger) end up summed together. Fixing this requires fetching
+    per-symbol split history from yfinance/Databento and synthesizing the
+    adjustment. Tracked as a follow-up.
 
     This is what makes per-trade realized P/L on closed-out or
     sold-then-rebought positions meaningful — using the *current* positions
@@ -239,6 +277,11 @@ def _compute_historical_basis(trades: list[dict]) -> None:
             if units_raw is None or units_raw == 0 or price_raw is None:
                 # Dividends, fees, splits, or trades with missing data —
                 # don't update the running basis and don't annotate.
+                continue
+            if _is_option_row(t):
+                # Option contracts share the same symbol+activity_type as
+                # stock trades but represent a derivative — skip so they
+                # don't pollute the underlying's running basis.
                 continue
             units = abs(units_raw)
             if side == "BUY":
@@ -297,13 +340,24 @@ def _enrich_trade(
     trade_price = _safe_float_optional(trade.get("price"))
     trade_units = _safe_float_optional(trade.get("units"))
     historical_basis = _safe_float_optional(trade.get("basis_at_trade"))
+    is_option = _is_option_row(trade)
 
-    if side == "SELL" and trade_price is not None and trade_units is not None:
-        basis = historical_basis if historical_basis is not None else avg_cost
+    if side == "SELL" and trade_price is not None and trade_units is not None and not is_option:
+        # Pick the basis. Prefer the historical walk; fall back to the
+        # positions table's current avg_cost. In EITHER case sanity-check
+        # the price/basis ratio: a 10:1 stock split between BUY and SELL
+        # (NVDA on 2024-06-10, e.g.) leaves basis scaled wrong by 10x
+        # because the walk doesn't synthesize split events. Rather than
+        # publish a phantom +900% or -90% realized P/L, omit it.
+        basis = historical_basis if (historical_basis is not None and historical_basis > 0) else None
+        if basis is None and avg_cost is not None and avg_cost > 0:
+            basis = avg_cost
         if basis is not None and basis > 0:
-            realized_pnl = round((trade_price - basis) * abs(trade_units), 2)
-            realized_pnl_pct = round((trade_price - basis) / basis * 100, 2)
-    elif side == "BUY" and trade_units is not None and current_price:
+            ratio = trade_price / basis
+            if 0.1 <= ratio <= 10:
+                realized_pnl = round((trade_price - basis) * abs(trade_units), 2)
+                realized_pnl_pct = round((trade_price - basis) / basis * 100, 2)
+    elif side == "BUY" and trade_units is not None and current_price and not is_option:
         # For BUY, "unrealized P/L on this lot" uses the trade's own price
         # as the cost basis (this lot was bought at this price). Note this
         # assumes the lot is still held — fully-or-partially-sold lots
@@ -326,9 +380,18 @@ def _enrich_trade(
         tradeDate=str(trade["executed_at"]) if trade.get("executed_at") else None,
         source=trade.get("source", "unknown"),
         description=trade.get("description"),
-        currentPrice=round(current_price, 2) if current_price else None,
-        avgCost=round(historical_basis, 2) if historical_basis is not None else (round(avg_cost, 2) if avg_cost else None),
-        totalShares=round(total_shares, 4) if total_shares else None,
+        currentPrice=round(current_price, 2) if current_price and not is_option else None,
+        # On option rows, the underlying's avg_cost is misleading — omit.
+        avgCost=(
+            None
+            if is_option
+            else (
+                round(historical_basis, 2)
+                if historical_basis is not None
+                else (round(avg_cost, 2) if avg_cost else None)
+            )
+        ),
+        totalShares=round(total_shares, 4) if total_shares and not is_option else None,
         marketValue=round(market_value, 2) if market_value else None,
         portfolioPct=portfolio_pct,
         realizedPnl=realized_pnl,
@@ -682,6 +745,54 @@ async def get_recent_trades(
 
         # 3. Merge and deduplicate
         merged = _merge_and_dedup(activities, orders)
+
+        # 3b. Annotate each trade with its weighted-avg basis at the moment
+        #     it occurred. Without this, `_enrich_trade` falls back to the
+        #     CURRENT positions.avg_cost — which is already split-adjusted
+        #     by SnapTrade — and computes realized P/L on pre-split SELLs
+        #     against a tiny post-split basis (the classic +900% NVDA
+        #     phantom gain). We need the full per-symbol history to compute
+        #     basis correctly, so refetch the older trades that fall
+        #     outside the activity window.
+        symbols_in_page = {(t.get("symbol") or "").upper() for t in merged}
+        symbols_in_page.discard("")
+        if symbols_in_page:
+            placeholders = ",".join(f":sym_{i}" for i in range(len(symbols_in_page)))
+            sym_params = {f"sym_{i}": s for i, s in enumerate(symbols_in_page)}
+            older_rows = execute_sql(
+                f"""
+                SELECT
+                    a.id,
+                    a.symbol,
+                    UPPER(a.activity_type) AS side,
+                    a.price,
+                    a.units,
+                    COALESCE(a.amount, 0) AS amount,
+                    COALESCE(a.fee, 0) AS fee,
+                    a.trade_date AS executed_at,
+                    a.description
+                FROM activities a
+                JOIN accounts acc ON acc.id = a.account_id
+                WHERE a.trade_date < :cutoff
+                  AND UPPER(a.symbol) IN ({placeholders})
+                  AND UPPER(a.activity_type) IN ('BUY', 'SELL')
+                  AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+                  {bucket_clause}
+                ORDER BY a.trade_date ASC
+                LIMIT 5000
+                """,
+                params={"cutoff": cutoff, **sym_params, **bucket_params},
+                fetch_results=True,
+            ) or []
+            history_for_basis: list[dict] = []
+            for row in older_rows:
+                rd = _row_to_dict(row)
+                rd["source"] = "activity"
+                history_for_basis.append(rd)
+            # Walk the full history (older + current window). The function
+            # annotates `basis_at_trade` in-place on the merged dicts that
+            # belong to `merged`.
+            _compute_historical_basis(history_for_basis + merged)
 
         # 4. Trim to limit
         page = merged[:limit]
