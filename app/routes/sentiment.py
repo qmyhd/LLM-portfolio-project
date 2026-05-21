@@ -7,7 +7,7 @@ Endpoints:
 """
 
 import logging
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
@@ -55,26 +55,52 @@ class MessagesResponse(BaseModel):
     total: int
 
 
-class FeedItem(BaseModel):
-    """One recent parsed idea, suitable for a home-page feed card."""
+class FeedLevel(BaseModel):
+    """One price level extracted by the NLP parser (entry, target, stop, etc.)."""
 
-    id: int
+    kind: Optional[str] = None  # entry | target | stop | support | resistance | ...
+    value: Optional[float] = None
+    low: Optional[float] = None
+    high: Optional[float] = None
+    qualifier: Optional[str] = None  # 'above', 'around', etc.
+
+
+class FeedItem(BaseModel):
+    """One recent feed item — either an NLP-parsed idea or a raw Discord
+    message with auto-extracted tickers + vader sentiment.
+
+    `source` distinguishes the two:
+    - 'parsed': came from discord_parsed_ideas, has direction/labels/levels
+    - 'raw'   : came from discord_messages, has vader sentimentScore + tickers
+    """
+
+    id: str  # int for parsed, message_id for raw — both string-safe
+    source: str  # 'parsed' | 'raw'
     messageId: str
     ticker: Optional[str] = None
-    direction: str  # bullish | bearish | neutral
+    tickers: list[str] = []  # all tickers detected (raw msgs may mention several)
+    direction: str  # bullish | bearish | neutral | mixed
     ideaText: str
     author: str
     channel: str
+    channelType: Optional[str] = None  # trading | market | general
     createdAt: Optional[str] = None
-    labels: list[str]
+    labels: list[str] = []
     confidence: Optional[float] = None
+    sentimentScore: Optional[float] = None  # vader, -1..+1
+    # Trade-actionable fields (parsed only)
+    action: Optional[str] = None  # buy | sell | trim | add | watch | hold | ...
+    instrument: Optional[str] = None  # equity | option | crypto | ...
+    levels: list[FeedLevel] = []
 
 
 class FeedResponse(BaseModel):
-    """Recent parsed-idea feed across all tickers."""
+    """Recent feed across all tickers and channels."""
 
     items: list[FeedItem]
     trendingTickers: list[str]  # unique tickers in the feed, ordered by recency
+    parsedCount: int  # how many items came from discord_parsed_ideas
+    rawCount: int  # how many items came from discord_messages directly
     nextCursor: Optional[int] = None
 
 
@@ -229,76 +255,474 @@ async def get_sentiment_messages(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _parsed_direction(value: Any) -> str:
+    """Normalize parser's direction value to the front-end's vocabulary."""
+    if not value:
+        return "neutral"
+    v = str(value).lower()
+    if v in ("bullish", "bearish", "neutral", "mixed"):
+        return v
+    return "neutral"
+
+
+def _sentiment_to_direction(score: Any) -> str:
+    """Translate a vader compound score to a direction chip color.
+
+    Mirrors the same thresholds the multi-agent sentiment analyzer uses:
+    > 0.2 → bullish, < -0.2 → bearish, else neutral.
+    """
+    if score is None:
+        return "neutral"
+    try:
+        s = float(score)
+    except (TypeError, ValueError):
+        return "neutral"
+    if s > 0.2:
+        return "bullish"
+    if s < -0.2:
+        return "bearish"
+    return "neutral"
+
+
+def _parse_tickers_field(raw: Any) -> list[str]:
+    """`discord_messages.tickers_detected` is a comma-separated text column.
+    Split, uppercase, dedupe while preserving order."""
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        items = [str(t).strip().upper() for t in raw if str(t).strip()]
+    else:
+        items = [t.strip().upper() for t in str(raw).split(",") if t.strip()]
+    # Dedupe preserving order
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in items:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out
+
+
 @router.get("/feed", response_model=FeedResponse)
 async def get_sentiment_feed(
-    limit: int = Query(30, ge=1, le=100, description="Max parsed ideas to return"),
+    limit: int = Query(40, ge=1, le=200, description="Max items to return"),
     days: int = Query(30, ge=1, le=365, description="Lookback window in days"),
+    channel_type: Optional[str] = Query(
+        None,
+        description=(
+            "Filter by channel type: 'trading', 'market', 'general', or omit for all. "
+            "Matches the type tag assigned at ingest time."
+        ),
+    ),
+    source: Optional[str] = Query(
+        None,
+        description=(
+            "Restrict to 'parsed' (NLP-extracted ideas only) or 'raw' "
+            "(direct Discord messages only). Default is both, merged."
+        ),
+    ),
 ):
-    """Recent parsed-idea feed across all tickers — powers the research home page.
+    """Recent feed of Discord activity — parsed ideas + raw messages, merged.
 
-    Returns the most recent rows from ``discord_parsed_ideas`` joined to
-    ``discord_messages`` for author/channel context. Used by the home
-    page to surface "what's been said lately" without the user having to
-    pick a ticker first.
+    Powers the research home page. The previous version only surfaced
+    ``discord_parsed_ideas`` rows, which meant any message stuck in
+    ``parse_status='pending'`` (the common case until the NLP batch runs)
+    didn't appear at all. This version walks ``discord_messages``
+    directly, LEFT JOINs to its parsed counterpart, and shows the parsed
+    fields when available and the raw vader sentiment + extracted tickers
+    when not.
 
-    Also returns the unique tickers seen in the window (most-recent first)
-    so the UI can show a "trending tickers" chip strip in place of the
-    static watchlist.
+    Filters:
+    - ``channel_type``: 'trading' for trading-picks, 'market' for market-news
+    - ``source``: 'parsed' to see only LLM-parsed entries, 'raw' for the rest
     """
+    # Normalize filter args
+    ct = (channel_type or "").strip().lower() or None
+    src = (source or "").strip().lower() or None
+    if src not in (None, "parsed", "raw"):
+        src = None
+
+    where_clauses = [
+        "dm.created_at > NOW() - (:days || ' days')::INTERVAL",
+        "dm.content IS NOT NULL",
+        "dm.content != ''",
+        # Drop bot announcements and slash commands — they're never useful here
+        "COALESCE(dm.is_bot, false) = false",
+        "COALESCE(dm.is_command, false) = false",
+        # Drop messages the prefilter explicitly marked as noise
+        "COALESCE(dm.parse_status, 'pending') NOT IN ('noise', 'skipped')",
+    ]
+    params: dict[str, Any] = {"days": str(days), "limit": limit}
+
+    if ct:
+        where_clauses.append("LOWER(COALESCE(dm.channel_type, '')) = :ct")
+        params["ct"] = ct
+
+    if src == "parsed":
+        where_clauses.append("dpi.id IS NOT NULL")
+    elif src == "raw":
+        where_clauses.append("dpi.id IS NULL")
+
+    where_sql = "\n          AND ".join(where_clauses)
+
     try:
         rows = execute_sql(
-            """
+            f"""
             SELECT
-                dpi.id,
-                dpi.message_id,
-                dpi.primary_symbol,
-                dpi.direction,
-                dpi.confidence,
-                dpi.idea_text,
-                dpi.labels,
+                dm.message_id,
                 dm.author,
                 dm.channel,
-                dm.created_at
-            FROM discord_parsed_ideas dpi
-            LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
-            WHERE dm.created_at > NOW() - (:days || ' days')::INTERVAL
-              AND dpi.idea_text IS NOT NULL
-              AND dpi.idea_text != ''
+                dm.channel_type,
+                dm.content,
+                dm.tickers_detected,
+                dm.sentiment_score,
+                dm.created_at,
+                dpi.id              AS parsed_id,
+                dpi.primary_symbol  AS parsed_primary_symbol,
+                dpi.symbols         AS parsed_symbols,
+                dpi.direction       AS parsed_direction,
+                dpi.action          AS parsed_action,
+                dpi.instrument      AS parsed_instrument,
+                dpi.confidence      AS parsed_confidence,
+                dpi.idea_text       AS parsed_idea_text,
+                dpi.labels          AS parsed_labels,
+                dpi.levels          AS parsed_levels
+            FROM discord_messages dm
+            LEFT JOIN discord_parsed_ideas dpi
+              ON dpi.message_id::text = dm.message_id
+             AND dpi.is_noise IS NOT TRUE
+            WHERE {where_sql}
             ORDER BY dm.created_at DESC NULLS LAST
             LIMIT :limit
             """,
-            params={"days": str(days), "limit": limit},
+            params=params,
             fetch_results=True,
         ) or []
 
         items: list[FeedItem] = []
         seen_tickers: list[str] = []
+        parsed_count = 0
+        raw_count = 0
+
         for r in rows:
             d = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)
-            ticker = d.get("primary_symbol")
-            if ticker and ticker not in seen_tickers:
-                seen_tickers.append(ticker)
+            is_parsed = d.get("parsed_id") is not None
+
+            # Decide ticker(s) for this item: prefer parsed primary_symbol,
+            # fall back to first extracted ticker from raw.
+            raw_tickers = _parse_tickers_field(d.get("tickers_detected"))
+            parsed_symbols = d.get("parsed_symbols") or []
+            primary = d.get("parsed_primary_symbol")
+            if primary:
+                primary = str(primary).upper()
+            elif raw_tickers:
+                primary = raw_tickers[0]
+            else:
+                primary = None
+
+            # All tickers for this item (used for trending strip)
+            tickers = []
+            if parsed_symbols:
+                tickers = [str(s).upper() for s in parsed_symbols if s]
+            elif raw_tickers:
+                tickers = raw_tickers
+
+            for t in tickers:
+                if t not in seen_tickers:
+                    seen_tickers.append(t)
+
+            # Direction: parser's call if available, else vader-derived
+            if is_parsed:
+                direction = _parsed_direction(d.get("parsed_direction"))
+            else:
+                direction = _sentiment_to_direction(d.get("sentiment_score"))
+
+            # Body text: prefer parser's idea_text (cleaner), else raw content
+            idea_text = (d.get("parsed_idea_text") or d.get("content") or "").strip()
+            # Trim very long raw messages for the card view; full content is
+            # still on the stock-detail Raw tab.
+            if not is_parsed and len(idea_text) > 600:
+                idea_text = idea_text[:600].rsplit(" ", 1)[0] + "…"
+
+            # Levels: parser returns JSONB list-of-dicts; normalize to FeedLevel
+            levels: list[FeedLevel] = []
+            raw_levels = d.get("parsed_levels")
+            if raw_levels:
+                try:
+                    if isinstance(raw_levels, str):
+                        import json as _json
+                        raw_levels = _json.loads(raw_levels)
+                    for lvl in raw_levels or []:
+                        if not isinstance(lvl, dict):
+                            continue
+                        levels.append(FeedLevel(
+                            kind=lvl.get("kind"),
+                            value=_safe_float(lvl.get("value")),
+                            low=_safe_float(lvl.get("low")),
+                            high=_safe_float(lvl.get("high")),
+                            qualifier=lvl.get("qualifier"),
+                        ))
+                except Exception:
+                    pass  # Bad JSON in levels → just skip
+
+            if is_parsed:
+                parsed_count += 1
+            else:
+                raw_count += 1
+
             items.append(
                 FeedItem(
-                    id=int(d["id"]),
+                    id=str(d.get("parsed_id") or d["message_id"]),
+                    source="parsed" if is_parsed else "raw",
                     messageId=str(d["message_id"]),
-                    ticker=ticker,
-                    direction=(d.get("direction") or "neutral").lower(),
-                    ideaText=d.get("idea_text") or "",
+                    ticker=primary,
+                    tickers=tickers[:5],  # cap to avoid bloating the response
+                    direction=direction,
+                    ideaText=idea_text,
                     author=d.get("author") or "",
                     channel=d.get("channel") or "",
+                    channelType=d.get("channel_type"),
                     createdAt=str(d["created_at"]) if d.get("created_at") else None,
-                    labels=list(d.get("labels") or []),
+                    labels=list(d.get("parsed_labels") or []),
                     confidence=(
-                        float(d["confidence"]) if d.get("confidence") is not None else None
+                        float(d["parsed_confidence"])
+                        if d.get("parsed_confidence") is not None
+                        else None
                     ),
+                    sentimentScore=(
+                        float(d["sentiment_score"])
+                        if d.get("sentiment_score") is not None
+                        else None
+                    ),
+                    action=d.get("parsed_action"),
+                    instrument=d.get("parsed_instrument"),
+                    levels=levels,
                 )
             )
 
-        # Cap trending tickers to a reasonable strip count
-        return FeedResponse(items=items, trendingTickers=seen_tickers[:12])
+        return FeedResponse(
+            items=items,
+            trendingTickers=seen_tickers[:12],
+            parsedCount=parsed_count,
+            rawCount=raw_count,
+        )
 
     except Exception as e:
         logger.error(f"Error fetching sentiment feed: {e}", exc_info=True)
-        # Return empty rather than 500 so the home page degrades gracefully
-        return FeedResponse(items=[], trendingTickers=[])
+        return FeedResponse(items=[], trendingTickers=[], parsedCount=0, rawCount=0)
+
+
+def _safe_float(v: Any) -> Optional[float]:
+    """Convert numeric-ish to float, returning None on bad input."""
+    if v is None:
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+# =============================================================================
+# Admin: pipeline status + reparse
+# =============================================================================
+
+
+class PipelineStatus(BaseModel):
+    """Snapshot of where Discord messages sit in the NLP pipeline."""
+
+    pending: int
+    ok: int
+    error: int
+    skipped: int
+    noise: int
+    parsedIdeas: int  # rows in discord_parsed_ideas
+    lastMessageAt: Optional[str] = None
+    lastParsedAt: Optional[str] = None
+    backlogDays: Optional[float] = None  # age of oldest pending message in days
+
+
+class ReparseRequest(BaseModel):
+    """Reparse-request body.
+
+    `messageIds` resets specific messages to ``parse_status='pending'``.
+    `resetStatuses` (alternative) resets all messages currently in the
+    listed statuses (e.g. ``['skipped', 'noise']``) so the next batch
+    picks them up. Provide one or the other; if both are present
+    ``messageIds`` wins.
+    """
+
+    messageIds: Optional[list[str]] = None
+    resetStatuses: Optional[list[str]] = None
+    sinceDays: Optional[int] = None  # only reset messages newer than N days
+
+
+class ReparseResponse(BaseModel):
+    reset: int  # how many discord_messages rows were flipped to 'pending'
+    deletedParsedIdeas: int  # how many discord_parsed_ideas rows were dropped
+    note: str  # what to do next (e.g. "next nightly batch will pick these up")
+
+
+@router.get("/status", response_model=PipelineStatus)
+async def get_sentiment_status():
+    """Pipeline status snapshot — backlog counts and last-activity times.
+
+    Useful for the admin UI / health checks: confirms the NLP batch is
+    running and surfaces unparsed backlog before it gets bad.
+    """
+    try:
+        rows = execute_sql(
+            """
+            SELECT
+                COUNT(*) FILTER (WHERE parse_status = 'pending')                 AS pending,
+                COUNT(*) FILTER (WHERE parse_status = 'ok')                      AS ok,
+                COUNT(*) FILTER (WHERE parse_status = 'error')                   AS errored,
+                COUNT(*) FILTER (WHERE parse_status = 'skipped')                 AS skipped,
+                COUNT(*) FILTER (WHERE parse_status = 'noise')                   AS noise,
+                MAX(created_at)                                                  AS last_msg_at,
+                MIN(created_at) FILTER (WHERE parse_status = 'pending')          AS oldest_pending_at
+            FROM discord_messages
+            """,
+            fetch_results=True,
+        ) or []
+        d = dict(rows[0]._mapping) if rows and hasattr(rows[0], "_mapping") else (dict(rows[0]) if rows else {})
+
+        parsed_rows = execute_sql(
+            "SELECT COUNT(*) AS n, MAX(created_at) AS last_at FROM discord_parsed_ideas",
+            fetch_results=True,
+        ) or []
+        pd = (
+            dict(parsed_rows[0]._mapping)
+            if parsed_rows and hasattr(parsed_rows[0], "_mapping")
+            else (dict(parsed_rows[0]) if parsed_rows else {})
+        )
+
+        oldest = d.get("oldest_pending_at")
+        backlog_days: Optional[float] = None
+        if oldest is not None:
+            from datetime import datetime, timezone
+            try:
+                ts = oldest if hasattr(oldest, "tzinfo") else datetime.fromisoformat(str(oldest))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                backlog_days = round((datetime.now(timezone.utc) - ts).total_seconds() / 86400, 2)
+            except Exception:
+                backlog_days = None
+
+        return PipelineStatus(
+            pending=int(d.get("pending") or 0),
+            ok=int(d.get("ok") or 0),
+            error=int(d.get("errored") or 0),
+            skipped=int(d.get("skipped") or 0),
+            noise=int(d.get("noise") or 0),
+            parsedIdeas=int(pd.get("n") or 0),
+            lastMessageAt=str(d["last_msg_at"]) if d.get("last_msg_at") else None,
+            lastParsedAt=str(pd["last_at"]) if pd.get("last_at") else None,
+            backlogDays=backlog_days,
+        )
+    except Exception as e:
+        logger.error(f"Error fetching sentiment status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+_RESETTABLE_STATUSES = frozenset({"ok", "error", "skipped", "noise", "pending"})
+
+
+@router.post("/reparse", response_model=ReparseResponse)
+async def reparse_messages(req: ReparseRequest):
+    """Flag messages back to ``parse_status='pending'`` so the next NLP
+    batch re-processes them. This endpoint does NOT run the parser
+    in-band — it just resets state. The nightly batch (or
+    ``scripts/nlp/parse_messages.py``) picks them up on the next run.
+
+    Two modes, in priority order:
+
+    1. ``messageIds=['123', '456']`` — explicit, surgical. Drops any
+       existing ``discord_parsed_ideas`` rows for those messages and
+       sets them to pending.
+    2. ``resetStatuses=['skipped', 'noise']`` — bulk. Resets every
+       message currently in one of the named statuses. Optionally
+       limited with ``sinceDays``.
+
+    Always returns the counts so the caller knows what was actually
+    affected (e.g., a typo'd messageId yields ``reset=0``).
+    """
+    # Mode 1 — explicit message IDs
+    if req.messageIds:
+        ids = [str(m).strip() for m in req.messageIds if str(m).strip()]
+        if not ids:
+            return ReparseResponse(reset=0, deletedParsedIdeas=0, note="no message ids provided")
+        # Drop any parsed ideas for these messages so the reparse starts clean
+        del_rows = execute_sql(
+            "DELETE FROM discord_parsed_ideas WHERE message_id::text = ANY(:ids) RETURNING id",
+            params={"ids": ids},
+            fetch_results=True,
+        ) or []
+        upd_rows = execute_sql(
+            """
+            UPDATE discord_messages
+               SET parse_status = 'pending',
+                   error_reason = NULL
+             WHERE message_id = ANY(:ids)
+            RETURNING message_id
+            """,
+            params={"ids": ids},
+            fetch_results=True,
+        ) or []
+        return ReparseResponse(
+            reset=len(upd_rows),
+            deletedParsedIdeas=len(del_rows),
+            note="Marked as pending — next NLP batch will reparse.",
+        )
+
+    # Mode 2 — by status
+    statuses = [str(s).strip().lower() for s in (req.resetStatuses or []) if str(s).strip()]
+    statuses = [s for s in statuses if s in _RESETTABLE_STATUSES]
+    if not statuses:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Provide either messageIds=[...] or resetStatuses=[...] (one of "
+                f"{sorted(_RESETTABLE_STATUSES)})"
+            ),
+        )
+
+    params: dict[str, Any] = {"statuses": statuses}
+    where_extra = ""
+    if req.sinceDays is not None and req.sinceDays > 0:
+        where_extra = " AND created_at > NOW() - (:days || ' days')::INTERVAL"
+        params["days"] = str(req.sinceDays)
+
+    # Drop parsed ideas only for the messages we're about to reset
+    del_rows = execute_sql(
+        f"""
+        DELETE FROM discord_parsed_ideas
+        WHERE message_id::text IN (
+            SELECT message_id FROM discord_messages
+             WHERE parse_status = ANY(:statuses){where_extra}
+        )
+        RETURNING id
+        """,
+        params=params,
+        fetch_results=True,
+    ) or []
+
+    upd_rows = execute_sql(
+        f"""
+        UPDATE discord_messages
+           SET parse_status = 'pending',
+               error_reason = NULL
+         WHERE parse_status = ANY(:statuses){where_extra}
+        RETURNING message_id
+        """,
+        params=params,
+        fetch_results=True,
+    ) or []
+
+    return ReparseResponse(
+        reset=len(upd_rows),
+        deletedParsedIdeas=len(del_rows),
+        note=(
+            f"Reset {len(upd_rows)} message(s) in status {statuses} to pending. "
+            "Next NLP batch will reparse."
+        ),
+    )

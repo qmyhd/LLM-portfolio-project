@@ -3,31 +3,60 @@ from discord.ext import commands
 from src.config import settings
 from src.logging_utils import log_message_to_database
 
-# Channel name to type mapping
-CHANNEL_NAME_TO_TYPE = {
-    "trading": "trading",
-    "trades": "trading",
-    "market": "market",
-    "market-chat": "market",
-    "general": "general",
-    "chat": "general",
-}
+# Channel-name → channel-type mapping.
+#
+# Order matters: the FIRST pattern whose substring is present in the
+# (lowercased) channel name wins. The list is ordered most-specific →
+# least-specific so e.g. "trading-picks" lands on `trading` instead of
+# being snagged by a vaguer "chat" pattern.
+#
+# We keep the typed value down to three buckets the rest of the app
+# already understands (`trading`, `market`, `general`); narrower channel
+# variants (picks, signals, news, etc.) get folded in but stay
+# distinguishable via the raw `channel` column.
+CHANNEL_NAME_TO_TYPE: tuple[tuple[str, str], ...] = (
+    # ---- trading bucket -----------------------------------------------------
+    ("trading-picks", "trading"),
+    ("trade-picks", "trading"),
+    ("trading-signals", "trading"),
+    ("trade-signals", "trading"),
+    ("trading-ideas", "trading"),
+    ("trade-ideas", "trading"),
+    ("trading-alerts", "trading"),
+    ("trade-alerts", "trading"),
+    ("picks", "trading"),
+    ("signals", "trading"),
+    ("alerts", "trading"),
+    ("trading", "trading"),
+    ("trades", "trading"),
+    # ---- market bucket ------------------------------------------------------
+    ("market-news", "market"),
+    ("news", "market"),
+    ("market-chat", "market"),
+    ("market", "market"),
+    ("macro", "market"),
+    ("earnings", "market"),
+    # ---- general bucket -----------------------------------------------------
+    ("general", "general"),
+    ("chat", "general"),
+    ("off-topic", "general"),
+)
 
 
-def get_channel_type(channel_name: str) -> str:
-    """Map channel name to channel type.
+def get_channel_type(channel_name: str | None) -> str:
+    """Map a Discord channel name to one of {trading, market, general}.
 
-    Args:
-        channel_name: Discord channel name
-
-    Returns:
-        Channel type: 'trading', 'market', or 'general'
+    The match is ordered: the first ``(pattern, type)`` whose pattern is a
+    substring of the lowercased name wins. Returns ``'general'`` when no
+    pattern matches so downstream callers always get a usable label.
     """
+    if not channel_name:
+        return "general"
     name_lower = channel_name.lower()
-    for pattern, channel_type in CHANNEL_NAME_TO_TYPE.items():
+    for pattern, channel_type in CHANNEL_NAME_TO_TYPE:
         if pattern in name_lower:
             return channel_type
-    return "general"  # Default to general
+    return "general"
 
 
 def register_events(bot: commands.Bot, twitter_client=None):
