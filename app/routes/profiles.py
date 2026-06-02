@@ -460,3 +460,62 @@ async def interview(
         raise HTTPException(status_code=502, detail="AI interview failed") from None
 
     return {"symbol": symbol, "bucket": b, "questions": questions, "followUp": follow_up}
+
+
+class SynthesizeBody(BaseModel):
+    autofill: dict = {}
+    answers: list[dict] = []
+
+
+@router.post("/stocks/{ticker}/profile/synthesize")
+async def synthesize(
+    ticker: str = Path(...),
+    body: SynthesizeBody = ...,  # noqa: B008
+    bucket: str | None = BucketQuery,
+):
+    b = _require_concrete_bucket(bucket)
+    symbol = ticker.upper()
+    base = (
+        f"SYMBOL: {symbol} ({b})\nDATA:\n{json.dumps(body.autofill)[:3000]}\n\n"
+        f"INVESTOR ANSWERS:\n{json.dumps(body.answers)[:2000]}"
+    )
+    refine_sys = (
+        "Merge the investor's answers with the factual data into a structured thesis. "
+        "Use ONLY claims supported by the answers or data — do not invent price targets. "
+        'Return ONLY JSON: {"thesis","bullCase","bearCase","catalysts":[{"text"}],'
+        '"risks":[{"text"}],"conviction":1-5,"convictionRationale","levels":{"entry","target","stop"},'
+        '"tags":[]}. No markdown.'
+    )
+    reflect_sys = (
+        "Critique the DRAFT against the DATA + ANSWERS for: (1) hallucinated levels/targets not "
+        "in the answers/data, (2) claims unsupported by the data, (3) conviction that contradicts "
+        'the thesis. Return ONLY JSON: {"issues_found": bool, "critique": "..."}.'
+    )
+    rerefine_sys = (
+        "Correct the DRAFT to fix the CRITIQUE while keeping supported content. Same JSON shape "
+        "as the refine step. No markdown."
+    )
+
+    try:
+        draft = _chat_json(_PROFILE_MODEL_SYNTH, refine_sys, base, max_tokens=900)
+        reflection = _chat_json(
+            _PROFILE_MODEL_SYNTH, reflect_sys,
+            base + "\n\nDRAFT:\n" + json.dumps(draft), max_tokens=400,
+        )
+        reflection_applied = False
+        if reflection.get("issues_found"):
+            draft = _chat_json(
+                _PROFILE_MODEL_SYNTH, rerefine_sys,
+                base + "\n\nDRAFT:\n" + json.dumps(draft)
+                + "\n\nCRITIQUE:\n" + str(reflection.get("critique", "")),
+                max_tokens=900,
+            )
+            reflection_applied = True
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail="AI returned invalid JSON") from None
+    except Exception as e:  # noqa: BLE001
+        logger.error("synthesize failed for %s: %s", symbol, e)
+        raise HTTPException(status_code=502, detail="AI synthesis failed") from None
+
+    return {"symbol": symbol, "bucket": b, "draft": draft,
+            "reflectionApplied": reflection_applied, "modelUsed": _PROFILE_MODEL_SYNTH}
