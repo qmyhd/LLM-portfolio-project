@@ -23,8 +23,10 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.track_record import compute_stock_track_record
+from src.analysis.orchestrator import get_stock_analysis
 from src.bucket import BucketQuery, validate_bucket
 from src.db import execute_sql, transaction
+from src.openbb_service import get_company_news
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -314,3 +316,76 @@ async def list_profiles(
                       "hasProfile": bool(rd.get("has_profile")), "reason": _reason(rd)})
     items.sort(key=lambda it: _rank[it["reason"]])
     return {"queue": items}
+
+
+def _ideas_digest(symbol: str) -> list[dict]:
+    rows = execute_sql(
+        """
+        SELECT dpi.direction, dpi.labels, dpi.idea_text, dm.created_at, dm.author
+        FROM discord_parsed_ideas dpi
+        LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
+        WHERE UPPER(dpi.primary_symbol) = :symbol
+        ORDER BY dm.created_at DESC NULLS LAST
+        LIMIT 10
+        """,
+        params={"symbol": symbol.upper()},
+        fetch_results=True,
+    ) or []
+    out = []
+    for r in rows:
+        rd = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)
+        out.append({
+            "direction": rd.get("direction"),
+            "labels": list(rd.get("labels") or []),
+            "text": (rd.get("idea_text") or "")[:200],
+            "author": rd.get("author"),
+        })
+    return out
+
+
+@router.post("/stocks/{ticker}/profile/autofill")
+async def autofill_profile(
+    ticker: str = Path(...),
+    bucket: str | None = BucketQuery,
+):
+    b = _require_concrete_bucket(bucket)
+    symbol = ticker.upper()
+    sources: list[str] = []
+
+    try:
+        track_record = compute_stock_track_record(symbol, b)
+        sources.append("trades")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("autofill track record failed for %s: %s", symbol, e)
+        track_record = None
+
+    catalysts: list[dict] = []
+    try:
+        news = get_company_news(symbol, limit=8) or []
+        catalysts = [{"title": n.get("title"), "date": n.get("date"),
+                      "source": n.get("source"), "url": n.get("url")} for n in news]
+        if catalysts:
+            sources.append("news")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("autofill news failed for %s: %s", symbol, e)
+
+    consensus: dict | None = None
+    try:
+        # refresh=False tolerates stale; cold cache runs the full pipeline.
+        consensus = await get_stock_analysis(symbol, refresh=False, bucket=b)
+        sources.append("analysis")
+    except Exception as e:  # noqa: BLE001
+        logger.warning("autofill analysis failed for %s: %s", symbol, e)
+
+    ideas = _ideas_digest(symbol)
+    if ideas:
+        sources.append("ideas")
+
+    return {
+        "symbol": symbol, "bucket": b,
+        "trackRecord": track_record,
+        "catalysts": catalysts,
+        "consensus": consensus,
+        "ideas": ideas,
+        "dataSources": sources,
+    }
