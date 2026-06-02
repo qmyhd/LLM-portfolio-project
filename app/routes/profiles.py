@@ -16,8 +16,9 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException, Path, Query
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -231,3 +232,85 @@ async def get_revisions(
             "createdAt": str(rd["created_at"]) if rd.get("created_at") else None,
         })
     return {"symbol": ticker.upper(), "bucket": b, "revisions": out}
+
+
+PROFILE_STALE_DAYS = int(os.getenv("PROFILE_STALE_DAYS", "90"))
+
+
+@router.get("/profiles")
+async def list_profiles(
+    bucket: str | None = BucketQuery,
+    queue: int = Query(0, description="1 = return the prioritized review queue"),
+):
+    b = validate_bucket(bucket)  # may be None ('all' view)
+    bclause = " AND COALESCE(acc.bucket, 'other') = :bucket " if b else ""
+    bparams = {"bucket": b} if b else {}
+
+    if not queue:
+        rows = execute_sql(
+            """
+            SELECT symbol, bucket, conviction, status, updated_at, reviewed_at
+            FROM stock_thesis_profiles
+            WHERE status != 'archived'
+            ORDER BY updated_at DESC
+            """,
+            fetch_results=True,
+        ) or []
+        profiles = []
+        for r in rows:
+            rd = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)
+            rd["updated_at"] = str(rd.get("updated_at")) if rd.get("updated_at") else None
+            rd["reviewed_at"] = str(rd.get("reviewed_at")) if rd.get("reviewed_at") else None
+            profiles.append(rd)
+        return {"profiles": profiles}
+
+    # Queue: held (symbol, bucket) pairs LEFT JOIN profiles, prioritized.
+    rows = execute_sql(
+        f"""
+        WITH held AS (
+            SELECT UPPER(p.symbol) AS symbol, COALESCE(acc.bucket, 'other') AS bucket
+            FROM positions p
+            LEFT JOIN accounts acc ON acc.id = p.account_id
+            WHERE p.quantity > 0
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bclause}
+            GROUP BY UPPER(p.symbol), COALESCE(acc.bucket, 'other')
+        )
+        SELECT h.symbol, h.bucket,
+               (tp.id IS NOT NULL) AS has_profile,
+               tp.reviewed_at,
+               (tp.reviewed_at IS NOT NULL
+                  AND tp.reviewed_at < NOW() - (:stale_days || ' days')::interval) AS stale,
+               EXISTS (
+                   SELECT 1 FROM activities a
+                   LEFT JOIN accounts acc2 ON acc2.id = a.account_id
+                   WHERE UPPER(a.symbol) = h.symbol
+                     AND COALESCE(acc2.bucket, 'other') = h.bucket
+                     AND (tp.reviewed_at IS NULL OR a.trade_date > tp.reviewed_at)
+               ) AS changed
+        FROM held h
+        LEFT JOIN stock_thesis_profiles tp
+          ON UPPER(tp.symbol) = h.symbol AND tp.bucket = h.bucket
+          AND tp.status != 'archived'
+        """,
+        params={"stale_days": PROFILE_STALE_DAYS, **bparams},
+        fetch_results=True,
+    ) or []
+
+    def _reason(rd: dict) -> str:
+        if not rd.get("has_profile"):
+            return "no_profile"
+        if rd.get("stale"):
+            return "stale"
+        if rd.get("changed"):
+            return "changed"
+        return "ok"
+
+    _rank = {"no_profile": 0, "stale": 1, "changed": 2, "ok": 3}
+    items = []
+    for r in rows:
+        rd = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)
+        items.append({"symbol": rd["symbol"], "bucket": rd["bucket"],
+                      "hasProfile": bool(rd.get("has_profile")), "reason": _reason(rd)})
+    items.sort(key=lambda it: _rank[it["reason"]])
+    return {"queue": items}
