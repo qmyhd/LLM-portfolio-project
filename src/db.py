@@ -532,8 +532,6 @@ def test_connection():
         # Test basic connection
         healthcheck()
 
-        database_url = get_database_url()
-
         # Get PostgreSQL connection info
         with get_connection() as conn:
             # PostgreSQL info
@@ -897,7 +895,7 @@ def initialize_database():
             cur.execute(baseline_sql)
 
             # Execute migrations in order
-            for file_num, migration_file in migration_files:
+            for _file_num, migration_file in migration_files:
                 with open(migration_file, "r", encoding="utf-8") as f:
                     migration_sql = f.read()
                 logger.info(f"Executing migration: {migration_file.name}")

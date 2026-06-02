@@ -516,7 +516,7 @@ async def get_stock_profile(
         raise
     except Exception as e:
         logger.error(f"Error fetching stock profile for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/{ticker}/ideas", response_model=IdeasResponse)
@@ -860,7 +860,7 @@ async def get_stock_ohlcv(
         logger.error(f"Error fetching OHLCV for {symbol}: {e}")
         raise HTTPException(
             status_code=500, detail=f"Failed to fetch OHLCV for {symbol}"
-        )
+        ) from e
 
 
 @router.get("/{ticker}/activities", response_model=StockActivitiesResponse)

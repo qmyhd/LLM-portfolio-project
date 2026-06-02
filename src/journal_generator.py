@@ -755,7 +755,7 @@ def create_enhanced_journal_prompt(positions_df, messages_df, prices_df):
             # Sort by most recent first
             stock_msgs = stock_msgs.sort_values("created_at", ascending=False).head(3)
             if not stock_msgs.empty:
-                for idx, row in stock_msgs.iterrows():
+                for _idx, row in stock_msgs.iterrows():
                     content = row.get("content", "")
                     tickers = row.get("tickers_detected", "")
                     if content and tickers:

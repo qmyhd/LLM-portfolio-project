@@ -58,8 +58,8 @@ def parse_sec_13f_xml(file_path: str) -> pd.DataFrame:
     # Iterate over all infoTable entries
     # Note: Some files might use different namespaces or none, but this targets the standard SEC format
     for info in root.findall("ns:infoTable", namespaces):
-        # Helper to safely get text from a child tag
-        def get_val(tag):
+        # Helper to safely get text from a child tag (bind `info` per iteration)
+        def get_val(tag, info=info):
             node = info.find(f"ns:{tag}", namespaces)
             return node.text if node is not None else None
 

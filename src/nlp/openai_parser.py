@@ -1224,7 +1224,6 @@ def process_message(
 
     # OPTIMIZATION: For single-chunk messages, triage ONCE for whole message
     # This prevents call explosion on messages that soft-split into many chunks
-    whole_message_is_noise = False
     if not skip_triage and total_chunks == 1:
         # Single chunk: normal per-chunk triage
         pass

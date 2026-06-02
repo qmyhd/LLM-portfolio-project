@@ -19,7 +19,6 @@ from uuid import UUID
 from fastapi import APIRouter, HTTPException, Path, Query
 from openai import OpenAI
 from pydantic import BaseModel, Field
-
 from sqlalchemy import text
 
 from src.db import execute_sql, transaction
@@ -38,13 +37,13 @@ class IdeaOut(BaseModel):
     """Single idea response (camelCase for frontend)."""
 
     id: str
-    symbol: Optional[str] = None
+    symbol: str | None = None
     symbols: list[str] = Field(default_factory=list)
     content: str
     source: str
     status: str
     tags: list[str] = Field(default_factory=list)
-    originMessageId: Optional[str] = None
+    originMessageId: str | None = None
     contentHash: str
     createdAt: str
     updatedAt: str
@@ -62,7 +61,7 @@ class CreateIdeaRequest(BaseModel):
     """Request body for creating an idea."""
 
     content: str
-    symbol: Optional[str] = None
+    symbol: str | None = None
     symbols: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
     status: str = "draft"
@@ -72,11 +71,11 @@ class CreateIdeaRequest(BaseModel):
 class UpdateIdeaRequest(BaseModel):
     """Request body for updating an idea (all fields optional)."""
 
-    content: Optional[str] = None
-    symbol: Optional[str] = None
-    symbols: Optional[list[str]] = None
-    tags: Optional[list[str]] = None
-    status: Optional[str] = None
+    content: str | None = None
+    symbol: str | None = None
+    symbols: list[str] | None = None
+    tags: list[str] | None = None
+    status: str | None = None
 
 
 class RefineResponse(BaseModel):
@@ -104,7 +103,7 @@ class IdeaContextResponse(BaseModel):
     """Idea with parent Discord message and surrounding context."""
 
     idea: IdeaOut
-    parentMessage: Optional[ContextMessage] = None
+    parentMessage: ContextMessage | None = None
     contextMessages: list[ContextMessage] = []
 
 
@@ -140,11 +139,11 @@ _VALID_STATUSES = {"draft", "refined", "archived"}
 
 @router.get("", response_model=IdeasListResponse)
 async def list_ideas(
-    symbol: Optional[str] = Query(None, description="Filter by primary symbol"),
-    tag: Optional[str] = Query(None, description="Filter by tag"),
-    source: Optional[str] = Query(None, description="Filter by source"),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    q: Optional[str] = Query(None, description="Full-text search on content"),
+    symbol: str | None = Query(None, description="Filter by primary symbol"),
+    tag: str | None = Query(None, description="Filter by tag"),
+    source: str | None = Query(None, description="Filter by source"),
+    status: str | None = Query(None, description="Filter by status"),
+    q: str | None = Query(None, description="Full-text search on content"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ):

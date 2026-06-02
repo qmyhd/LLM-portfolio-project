@@ -476,7 +476,6 @@ def register(bot: commands.Bot, twitter_client=None):
                     effective_limit = limit  # Use second arg as limit
 
             # Build query based on filter - only show executed/filled orders
-            executed_statuses = ("EXECUTED", "FILLED", "PARTIALLY_FILLED")
             if ticker_filter:
                 # Filter by symbol - also handle option-style symbols
                 result = execute_sql(
@@ -614,8 +613,6 @@ def register(bot: commands.Bot, twitter_client=None):
                         if avg_price and avg_price > 0
                         else 0
                     )
-                    pnl_emoji = "📈" if pnl >= 0 else "📉"
-
                     # Build title with company name if available
                     title = f"📊 {ticker_filter}"
                     if company_description:

@@ -70,8 +70,8 @@ def get_api_secret_key() -> str:
 
 
 async def require_api_key(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
-) -> Optional[str]:
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
+) -> str | None:
     """
     FastAPI dependency that validates API key authentication.
 
@@ -128,8 +128,8 @@ async def require_api_key(
 
 # Optional: Dependency that only logs but doesn't block (for monitoring)
 async def log_request(
-    credentials: Optional[HTTPAuthorizationCredentials] = Security(security),
-) -> Optional[str]:
+    credentials: HTTPAuthorizationCredentials | None = Security(security),
+) -> str | None:
     """
     Logs authentication status without blocking.
     Useful for transitioning to auth or debugging.

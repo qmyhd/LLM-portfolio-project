@@ -345,7 +345,6 @@ class SnapTradeCollector:
         )
 
         data = None
-        data_source = None
 
         # Try to extract data from different possible attributes in order of preference
         for attr in ["parsed", "body", "data", "content"]:
@@ -353,7 +352,6 @@ class SnapTradeCollector:
                 candidate_data = getattr(response, attr)
                 if candidate_data is not None:
                     data = candidate_data
-                    data_source = attr
                     logger.info(f"✅ Data extracted from response.{attr}")
                     break
 
@@ -744,8 +742,7 @@ class SnapTradeCollector:
                 if not canonical_symbol and isinstance(symbol, str):
                     canonical_symbol = symbol
 
-                # Extract quote_universal_symbol and option_symbol
-                quote_universal_symbol = order.get("quote_universal_symbol")
+                # Extract option_symbol
                 option_symbol = order.get("option_symbol")
 
                 # Extract quantities and prices
@@ -1869,8 +1866,6 @@ class SnapTradeCollector:
         mic_code = ""
         figi_code = ""
         logo_url = ""
-        is_quotable = True
-        is_tradable = True
 
         if isinstance(symbol_data, dict):
             # Navigate nested symbol structure: position.symbol.symbol

@@ -256,7 +256,6 @@ class TestMoversEndpoint:
         response = client.get("/portfolio/movers?limit=3")
         data = response.json()
         # BAD should not appear as a gainer/loser with absurd % since dayChangePct is null
-        all_symbols = [g["symbol"] for g in data["topGainers"]] + [l["symbol"] for l in data["topLosers"]]
         # If BAD appears, its dayChangePct should be null (using openPnlPct fallback)
         if data["topGainers"] or data["topLosers"]:
             items = data["topGainers"] + data["topLosers"]

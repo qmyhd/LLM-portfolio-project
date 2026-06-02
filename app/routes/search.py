@@ -22,7 +22,7 @@ class SearchResult(BaseModel):
 
     symbol: str
     name: str
-    sector: Optional[str]
+    sector: str | None
     type: str  # "stock" or "etf"
 
 

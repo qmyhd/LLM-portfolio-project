@@ -7,6 +7,7 @@ Endpoints:
 """
 
 import logging
+from datetime import UTC
 from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, Query
@@ -26,11 +27,11 @@ class SentimentSummary(BaseModel):
     ticker: str
     window: str
     totalMentions: int
-    bullishPct: Optional[float] = None
-    bearishPct: Optional[float] = None
-    neutralPct: Optional[float] = None
-    firstMentionedAt: Optional[str] = None
-    lastMentionedAt: Optional[str] = None
+    bullishPct: float | None = None
+    bearishPct: float | None = None
+    neutralPct: float | None = None
+    firstMentionedAt: str | None = None
+    lastMentionedAt: str | None = None
 
 
 class MessageItem(BaseModel):
@@ -43,7 +44,7 @@ class MessageItem(BaseModel):
     ideaText: str
     author: str
     channel: str
-    createdAt: Optional[str] = None
+    createdAt: str | None = None
     labels: list[str]
 
 
@@ -58,11 +59,11 @@ class MessagesResponse(BaseModel):
 class FeedLevel(BaseModel):
     """One price level extracted by the NLP parser (entry, target, stop, etc.)."""
 
-    kind: Optional[str] = None  # entry | target | stop | support | resistance | ...
-    value: Optional[float] = None
-    low: Optional[float] = None
-    high: Optional[float] = None
-    qualifier: Optional[str] = None  # 'above', 'around', etc.
+    kind: str | None = None  # entry | target | stop | support | resistance | ...
+    value: float | None = None
+    low: float | None = None
+    high: float | None = None
+    qualifier: str | None = None  # 'above', 'around', etc.
 
 
 class FeedItem(BaseModel):
@@ -77,20 +78,20 @@ class FeedItem(BaseModel):
     id: str  # int for parsed, message_id for raw — both string-safe
     source: str  # 'parsed' | 'raw'
     messageId: str
-    ticker: Optional[str] = None
+    ticker: str | None = None
     tickers: list[str] = []  # all tickers detected (raw msgs may mention several)
     direction: str  # bullish | bearish | neutral | mixed
     ideaText: str
     author: str
     channel: str
-    channelType: Optional[str] = None  # trading | market | general
-    createdAt: Optional[str] = None
+    channelType: str | None = None  # trading | market | general
+    createdAt: str | None = None
     labels: list[str] = []
-    confidence: Optional[float] = None
-    sentimentScore: Optional[float] = None  # vader, -1..+1
+    confidence: float | None = None
+    sentimentScore: float | None = None  # vader, -1..+1
     # Trade-actionable fields (parsed only)
-    action: Optional[str] = None  # buy | sell | trim | add | watch | hold | ...
-    instrument: Optional[str] = None  # equity | option | crypto | ...
+    action: str | None = None  # buy | sell | trim | add | watch | hold | ...
+    instrument: str | None = None  # equity | option | crypto | ...
     levels: list[FeedLevel] = []
 
 
@@ -101,7 +102,7 @@ class FeedResponse(BaseModel):
     trendingTickers: list[str]  # unique tickers in the feed, ordered by recency
     parsedCount: int  # how many items came from discord_parsed_ideas
     rawCount: int  # how many items came from discord_messages directly
-    nextCursor: Optional[int] = None
+    nextCursor: int | None = None
 
 
 @router.get("/summary", response_model=SentimentSummary)
@@ -152,7 +153,7 @@ async def get_sentiment_summary(
         )
         total = int(row.get("total") or 0)
 
-        def pct(n: int) -> Optional[float]:
+        def pct(n: int) -> float | None:
             return round(n / total * 100, 1) if total else None
 
         return SentimentSummary(
@@ -170,7 +171,7 @@ async def get_sentiment_summary(
         raise
     except Exception as e:
         logger.error(f"Error fetching sentiment summary for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 @router.get("/messages", response_model=MessagesResponse)
@@ -252,7 +253,7 @@ async def get_sentiment_messages(
 
     except Exception as e:
         logger.error(f"Error fetching messages for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 def _parsed_direction(value: Any) -> str:
@@ -307,14 +308,14 @@ def _parse_tickers_field(raw: Any) -> list[str]:
 async def get_sentiment_feed(
     limit: int = Query(40, ge=1, le=200, description="Max items to return"),
     days: int = Query(30, ge=1, le=365, description="Lookback window in days"),
-    channel_type: Optional[str] = Query(
+    channel_type: str | None = Query(
         None,
         description=(
             "Filter by channel type: 'trading', 'market', 'general', or omit for all. "
             "Matches the type tag assigned at ingest time."
         ),
     ),
-    source: Optional[str] = Query(
+    source: str | None = Query(
         None,
         description=(
             "Restrict to 'parsed' (NLP-extracted ideas only) or 'raw' "
@@ -512,7 +513,7 @@ async def get_sentiment_feed(
         return FeedResponse(items=[], trendingTickers=[], parsedCount=0, rawCount=0)
 
 
-def _safe_float(v: Any) -> Optional[float]:
+def _safe_float(v: Any) -> float | None:
     """Convert numeric-ish to float, returning None on bad input."""
     if v is None:
         return None
@@ -536,9 +537,9 @@ class PipelineStatus(BaseModel):
     skipped: int
     noise: int
     parsedIdeas: int  # rows in discord_parsed_ideas
-    lastMessageAt: Optional[str] = None
-    lastParsedAt: Optional[str] = None
-    backlogDays: Optional[float] = None  # age of oldest pending message in days
+    lastMessageAt: str | None = None
+    lastParsedAt: str | None = None
+    backlogDays: float | None = None  # age of oldest pending message in days
 
 
 class ReparseRequest(BaseModel):
@@ -551,9 +552,9 @@ class ReparseRequest(BaseModel):
     ``messageIds`` wins.
     """
 
-    messageIds: Optional[list[str]] = None
-    resetStatuses: Optional[list[str]] = None
-    sinceDays: Optional[int] = None  # only reset messages newer than N days
+    messageIds: list[str] | None = None
+    resetStatuses: list[str] | None = None
+    sinceDays: int | None = None  # only reset messages newer than N days
 
 
 class ReparseResponse(BaseModel):
@@ -597,14 +598,14 @@ async def get_sentiment_status():
         )
 
         oldest = d.get("oldest_pending_at")
-        backlog_days: Optional[float] = None
+        backlog_days: float | None = None
         if oldest is not None:
             from datetime import datetime, timezone
             try:
                 ts = oldest if hasattr(oldest, "tzinfo") else datetime.fromisoformat(str(oldest))
                 if ts.tzinfo is None:
-                    ts = ts.replace(tzinfo=timezone.utc)
-                backlog_days = round((datetime.now(timezone.utc) - ts).total_seconds() / 86400, 2)
+                    ts = ts.replace(tzinfo=UTC)
+                backlog_days = round((datetime.now(UTC) - ts).total_seconds() / 86400, 2)
             except Exception:
                 backlog_days = None
 
@@ -621,7 +622,7 @@ async def get_sentiment_status():
         )
     except Exception as e:
         logger.error(f"Error fetching sentiment status: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=str(e)) from e
 
 
 _RESETTABLE_STATUSES = frozenset({"ok", "error", "skipped", "noise", "pending"})

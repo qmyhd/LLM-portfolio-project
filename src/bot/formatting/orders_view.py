@@ -928,7 +928,6 @@ class OrderFormatter:
             Dict with title, description, color, footer, and optionally idea_field
         """
         # Title: "Bought TSLA @ $xxx.xx"
-        price_str = self.price_display.replace("$", "")  # Remove $ for cleaner title
         title = f"{self.action_display} {self.symbol} @ {self.price_display}"
 
         # Description lines

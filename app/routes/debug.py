@@ -13,8 +13,8 @@ from pydantic import BaseModel
 
 from src.db import execute_sql
 from src.market_data_service import (
-    CRYPTO_IDENTITY,
     _CRYPTO_SYMBOLS,
+    CRYPTO_IDENTITY,
     get_realtime_quotes_batch,
 )
 from src.price_service import get_latest_closes_batch
@@ -25,10 +25,10 @@ router = APIRouter()
 
 class PriceResolution(BaseModel):
     databento_hit: bool
-    databento_price: Optional[float] = None
-    yfinance_symbol: Optional[str] = None
-    yfinance_price: Optional[float] = None
-    snaptrade_price: Optional[float] = None
+    databento_price: float | None = None
+    yfinance_symbol: str | None = None
+    yfinance_price: float | None = None
+    snaptrade_price: float | None = None
     selected_source: str
     selected_price: float
 
@@ -36,10 +36,10 @@ class PriceResolution(BaseModel):
 class SymbolTraceResponse(BaseModel):
     symbol: str
     is_crypto: bool
-    canonical_quote_symbol: Optional[str] = None
-    tv_symbol: Optional[str] = None
+    canonical_quote_symbol: str | None = None
+    tv_symbol: str | None = None
     positions: list[dict[str, Any]]
-    symbols_row: Optional[dict[str, Any]] = None
+    symbols_row: dict[str, Any] | None = None
     recent_activities: list[dict[str, Any]]
     recent_orders: list[dict[str, Any]]
     price_resolution: PriceResolution
@@ -58,7 +58,7 @@ def _serialize_row(d: dict) -> dict:
 @router.get("/symbol-trace", response_model=SymbolTraceResponse)
 async def symbol_trace(
     symbol: str = Query(..., description="Ticker symbol to trace"),
-    account_id: Optional[str] = Query(None, description="Filter to specific account"),
+    account_id: str | None = Query(None, description="Filter to specific account"),
 ):
     """Trace a symbol through the entire data pipeline for debugging."""
     symbol = symbol.upper().strip()

@@ -654,7 +654,6 @@ def has_ticker_context(text: str, position: int, ticker: str) -> bool:
     # Get surrounding context (50 chars before and after)
     start = max(0, position - 50)
     end = min(len(text), position + len(ticker) + 50)
-    context = text[start:end].lower()
 
     # Check for action words before the ticker
     words_before = text[start:position].lower().split()
