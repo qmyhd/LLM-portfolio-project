@@ -131,6 +131,8 @@ class PortfolioRiskReport(BaseModel):
 
     var_95_1d: float
     var_95_5d: float
+    var_95_1d_pct: float = 0.0  # |VaR| as % of portfolio (percent-first display)
+    var_95_5d_pct: float = 0.0
     concentration_hhi: float
     diversification_ratio: float
     correlation_matrix: dict[str, dict[str, float]]
