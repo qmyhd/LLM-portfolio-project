@@ -210,6 +210,8 @@ def compute_portfolio_risk(
     return PortfolioRiskReport(
         var_95_1d=round(var_95_1d, 2),
         var_95_5d=round(var_95_5d, 2),
+        var_95_1d_pct=round(abs(var_95_1d_pct) * 100.0, 2),
+        var_95_5d_pct=round(abs(var_95_1d_pct) * 100.0 * float(np.sqrt(5)), 2),
         concentration_hhi=round(hhi, 4),
         diversification_ratio=round(diversification_ratio, 4),
         correlation_matrix=correlation_dict,

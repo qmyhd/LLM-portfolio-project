@@ -38,7 +38,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def safe_float_optional(value: Any) -> Optional[float]:
+def safe_float_optional(value: Any) -> float | None:
     """Convert value to float, returning None if None, NaN, or invalid."""
     if value is None:
         return None
@@ -58,12 +58,12 @@ class Order(BaseModel):
     orderType: str  # "market", "limit", "stop_limit"
     status: str  # "executed", "pending", "cancelled", "rejected"
     totalQuantity: float
-    executionPrice: Optional[float] = None
-    limitPrice: Optional[float] = None
-    stopPrice: Optional[float] = None
-    timeExecuted: Optional[str] = None  # ISO timestamp
-    timePlaced: Optional[str] = None  # ISO timestamp
-    notifiedAt: Optional[str] = None  # ISO timestamp
+    executionPrice: float | None = None
+    limitPrice: float | None = None
+    stopPrice: float | None = None
+    timeExecuted: str | None = None  # ISO timestamp
+    timePlaced: str | None = None  # ISO timestamp
+    notifiedAt: str | None = None  # ISO timestamp
 
 
 class OrdersResponse(BaseModel):
@@ -78,10 +78,10 @@ class OrdersResponse(BaseModel):
 async def get_orders(
     limit: int = Query(50, ge=1, le=200, description="Number of orders to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
-    status: Optional[str] = Query(
+    status: str | None = Query(
         None, description="Filter by status (filled, pending, cancelled)"
     ),
-    ticker: Optional[str] = Query(None, description="Filter by ticker symbol"),
+    ticker: str | None = Query(None, description="Filter by ticker symbol"),
     include_drip: bool = Query(False, description="Include DRIP/dividend reinvestment orders"),
     bucket: str | None = BucketQuery,
 ):

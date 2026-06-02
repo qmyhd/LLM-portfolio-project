@@ -612,4 +612,4 @@ def test_parser_regression_all_pass():
         import warnings
 
         for f in result["failures"]:
-            warnings.warn(f"Parser regression: {f['content']} - {f['failures']}")
+            warnings.warn(f"Parser regression: {f['content']} - {f['failures']}", stacklevel=2)

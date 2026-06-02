@@ -23,20 +23,18 @@ bootstrap_env()
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime, timezone
 
-from fastapi import FastAPI, Request, Depends
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import require_api_key
 from app.routes import (
     activities,
-    analysis as analysis_routes,
     chat,
     connections,
     ideas,
-    openbb as openbb_routes,
     orders,
     portfolio,
     search,
@@ -45,6 +43,12 @@ from app.routes import (
     trades,
     watchlist,
     webhook,
+)
+from app.routes import (
+    analysis as analysis_routes,
+)
+from app.routes import (
+    openbb as openbb_routes,
 )
 
 # Conditionally import debug routes
@@ -254,7 +258,7 @@ async def health_check():
 
     return {
         "status": status,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "database": "connected" if db_healthy else "disconnected",
         "version": "1.0.0",
     }

@@ -51,7 +51,7 @@ def register(bot: commands.Bot):
                     description=f"Last **{len(rows)}** tweets mentioning ${symbol}",
                 )
 
-                for i, row in enumerate(rows[:5]):  # Show max 5 in embed
+                for row in rows[:5]:  # Show max 5 in embed
                     discord_date, tweet_date, content, stock_tags, author, channel = row
                     display_content = (
                         content[:100] + "..." if len(content) > 100 else content

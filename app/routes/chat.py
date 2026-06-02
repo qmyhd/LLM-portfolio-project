@@ -10,8 +10,8 @@ import os
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Path
-from pydantic import BaseModel
 from openai import OpenAI
+from pydantic import BaseModel
 
 from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
 from src.db import execute_sql
@@ -25,7 +25,7 @@ class ChatRequest(BaseModel):
     """Chat request body."""
 
     message: str
-    context: Optional[str] = None
+    context: str | None = None
 
 
 class ChatResponse(BaseModel):
@@ -38,7 +38,7 @@ class ChatResponse(BaseModel):
 @router.post("/{ticker}/chat", response_model=ChatResponse)
 async def chat_about_stock(
     ticker: str = Path(..., description="Stock ticker symbol"),
-    request: Optional[ChatRequest] = None,
+    request: ChatRequest | None = None,
     bucket: str | None = BucketQuery,
 ):
     """
@@ -187,4 +187,4 @@ Guidelines:
 
     except Exception as e:
         logger.error(f"Error in chat for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}") from e

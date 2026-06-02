@@ -7,7 +7,7 @@ Endpoints:
 
 import logging
 import math
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any, Optional
 
 from fastapi import APIRouter, Query
@@ -31,7 +31,7 @@ def safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def safe_float_optional(value: Any) -> Optional[float]:
+def safe_float_optional(value: Any) -> float | None:
     """Convert value to float, returning None if None, NaN, or invalid."""
     if value is None:
         return None
@@ -46,20 +46,20 @@ class Activity(BaseModel):
     """Individual activity record."""
 
     id: str
-    accountId: Optional[str] = None
-    activityType: Optional[str] = None
-    tradeDate: Optional[str] = None
-    settlementDate: Optional[str] = None
+    accountId: str | None = None
+    activityType: str | None = None
+    tradeDate: str | None = None
+    settlementDate: str | None = None
     amount: float = 0.0
-    price: Optional[float] = None
-    units: Optional[float] = None
-    symbol: Optional[str] = None
-    description: Optional[str] = None
+    price: float | None = None
+    units: float | None = None
+    symbol: str | None = None
+    description: str | None = None
     currency: str = "USD"
     fee: float = 0.0
-    fxRate: Optional[float] = None
-    institution: Optional[str] = None
-    optionType: Optional[str] = None
+    fxRate: float | None = None
+    institution: str | None = None
+    optionType: str | None = None
 
 
 class ActivitiesResponse(BaseModel):
@@ -75,18 +75,18 @@ class ActivitiesResponse(BaseModel):
 async def get_activities(
     limit: int = Query(50, ge=1, le=500, description="Number of activities to return"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
-    activity_type: Optional[str] = Query(
+    activity_type: str | None = Query(
         None,
         alias="activityType",
         description="Filter by type (BUY, SELL, DIVIDEND, FEE, etc.)",
     ),
-    symbol: Optional[str] = Query(None, description="Filter by ticker symbol"),
-    start_date: Optional[str] = Query(
+    symbol: str | None = Query(None, description="Filter by ticker symbol"),
+    start_date: str | None = Query(
         None,
         alias="startDate",
         description="Start date (YYYY-MM-DD). Default: 90 days ago.",
     ),
-    end_date: Optional[str] = Query(
+    end_date: str | None = Query(
         None,
         alias="endDate",
         description="End date (YYYY-MM-DD). Default: today.",
@@ -106,7 +106,7 @@ async def get_activities(
         bucket = validate_bucket(bucket)
 
         # Resolve date range
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         resolved_end = end_date or now.strftime("%Y-%m-%d")
         resolved_start = start_date or (now - timedelta(days=90)).strftime("%Y-%m-%d")
 

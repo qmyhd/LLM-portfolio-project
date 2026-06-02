@@ -19,8 +19,15 @@ from pydantic import BaseModel
 
 from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
 from src.db import execute_sql
-from src.market_data_service import _CRYPTO_SYMBOLS, CRYPTO_IDENTITY, get_realtime_quotes_batch, get_return_metrics
-from src.price_service import get_latest_closes_batch, get_previous_closes_batch
+from src.market_data_service import (
+    _CRYPTO_SYMBOLS,
+    CRYPTO_IDENTITY,
+    get_crypto_price_series,
+    get_realtime_quotes_batch,
+    get_return_metrics,
+)
+from src.portfolio_returns import compute_return_series, period_window
+from src.price_service import get_latest_closes_batch, get_ohlcv, get_previous_closes_batch
 from src.snaptrade_collector import SnapTradeCollector
 
 logger = logging.getLogger(__name__)
@@ -1064,6 +1071,85 @@ class EquityCurveResponse(BaseModel):
     points: list[EquityPoint]
     bucket: str  # 'all' or one of the bucket enum values
     days: int
+
+
+class ReturnSeriesPoint(BaseModel):
+    """One day's cumulative % return vs the window start."""
+
+    date: str  # ISO date (YYYY-MM-DD)
+    returnPct: float
+
+
+class ReturnSeriesResponse(BaseModel):
+    """Flow-free current-holdings price-performance series for a window."""
+
+    period: str
+    asOf: str
+    periodReturnPct: float
+    points: list[ReturnSeriesPoint]
+
+
+@router.get("/return-series", response_model=ReturnSeriesResponse)
+async def get_return_series(
+    period: str = Query("1M", description="One of: 1W, 1M, 3M, YTD, 1Y, ALL"),
+    bucket: str | None = BucketQuery,
+):
+    """Flow-free % return curve for the current holdings over the window.
+
+    Holds today's quantities constant and reprices them over the period, so a
+    mid-window deposit or new buy cannot inflate the number. Equities are priced
+    from ``ohlcv_daily``; crypto from ``get_crypto_price_series``. Normalized to
+    0% at the window start. This is current-holdings performance, NOT actual
+    account history.
+    """
+    bucket = validate_bucket(bucket)
+    today = date.today()
+    start = period_window(period, today)
+
+    clause, bp = bucket_filter_sql(bucket, alias="acc")
+    rows = execute_sql(
+        f"""
+        SELECT p.symbol AS symbol,
+               SUM(p.quantity) AS quantity
+        FROM positions p
+        LEFT JOIN accounts acc ON acc.id = p.account_id
+        WHERE p.quantity > 0
+          AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+          {clause}
+        GROUP BY p.symbol
+        """,
+        params={**bp},
+        fetch_results=True,
+    ) or []
+
+    quantities: dict[str, float] = {}
+    price_series: dict[str, dict[str, float]] = {}
+    for r in rows:
+        rd = dict(r._mapping) if hasattr(r, "_mapping") else dict(r)  # type: ignore[arg-type]
+        sym = str(rd["symbol"]).upper().strip()
+        qty = float(rd["quantity"] or 0)
+        if qty <= 0:
+            continue
+        quantities[sym] = qty
+
+        if sym in _CRYPTO_SYMBOLS:
+            series = get_crypto_price_series(sym, start, today)
+        else:
+            df = get_ohlcv(sym, start, today)
+            series = {}
+            if not df.empty:
+                for idx, row in df.iterrows():
+                    series[idx.date().isoformat()] = float(row["Close"])
+        if series:
+            price_series[sym] = series
+
+    points, period_return = compute_return_series(quantities, price_series)
+    return ReturnSeriesResponse(
+        period=period.upper(),
+        asOf=today.isoformat(),
+        periodReturnPct=period_return,
+        points=[ReturnSeriesPoint(date=p["date"], returnPct=p["returnPct"]) for p in points],
+    )
 
 
 @router.get("/equity-curve", response_model=EquityCurveResponse)

@@ -33,7 +33,7 @@ class WatchlistItem(BaseModel):
     change: float
     changePercent: float
     volume: int
-    updatedAt: Optional[str] = None  # Date of the latest OHLCV record (YYYY-MM-DD)
+    updatedAt: str | None = None  # Date of the latest OHLCV record (YYYY-MM-DD)
     source: str = "databento"  # Price data source
 
 

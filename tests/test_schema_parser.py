@@ -49,7 +49,7 @@ class TestReDoSVulnerabilityFix:
         malicious_sql = f"DO $$ BEGIN {malicious_content} END $$;"
 
         start = time.time()
-        result = parser._extract_from_do_blocks(malicious_sql)
+        parser._extract_from_do_blocks(malicious_sql)
         elapsed = time.time() - start
 
         assert elapsed < 1.0, f"Parsing took {elapsed}s - possible ReDoS vulnerability"

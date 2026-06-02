@@ -11,6 +11,7 @@ This module is NOT the primary price source.  ``src/price_service.py``
 
 import logging
 import threading
+from datetime import date, timedelta
 from typing import Optional
 
 from cachetools import TTLCache
@@ -33,6 +34,9 @@ _returns_lock = threading.Lock()
 
 _search_cache = TTLCache(maxsize=200, ttl=3_600)  # 1 h
 _search_lock = threading.Lock()
+
+_crypto_series_cache = TTLCache(maxsize=200, ttl=3_600)  # 1 h
+_crypto_series_lock = threading.Lock()
 
 # Known crypto tickers that need -USD suffix for yfinance
 _CRYPTO_SYMBOLS = frozenset(
@@ -175,6 +179,47 @@ def get_return_metrics(symbol: str) -> Optional[dict]:
     except Exception as e:
         logger.warning("yfinance return metrics failed for %s: %s", symbol, e)
         return None
+
+
+@hardened_retry(max_retries=2, delay=1)
+def _fetch_crypto_price_series(symbol: str, start: date, end: date) -> dict[str, float]:
+    import yfinance as yf
+
+    ticker = yf.Ticker(_yf_symbol(symbol))
+    # yfinance treats `end` as exclusive; add a day so `end` is included.
+    hist = ticker.history(
+        start=start.isoformat(),
+        end=(end + timedelta(days=1)).isoformat(),
+        interval="1d",
+    )
+    if hist is None or hist.empty:
+        return {}
+    out: dict[str, float] = {}
+    for ts, close in hist["Close"].items():
+        out[ts.date().isoformat()] = float(close)
+    return out
+
+
+def get_crypto_price_series(symbol: str, start: date, end: date) -> dict[str, float]:
+    """Daily close series for a crypto symbol over [start, end] inclusive.
+
+    Returns ``{iso_date: close}``; an empty dict on any failure (never raises),
+    consistent with the rest of this module.
+    """
+    symbol = symbol.upper().strip()
+    key = (symbol, start.isoformat(), end.isoformat())
+    with _crypto_series_lock:
+        cached = _crypto_series_cache.get(key)
+        if cached is not None:
+            return cached
+    try:
+        result = _fetch_crypto_price_series(symbol, start, end)
+    except Exception as e:
+        logger.warning("crypto price series failed for %s: %s", symbol, e)
+        return {}
+    with _crypto_series_lock:
+        _crypto_series_cache[key] = result
+    return result
 
 
 def search_symbols(query: str) -> list[dict]:

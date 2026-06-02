@@ -460,6 +460,6 @@ class TestMovers:
         assert data["source"] == "intraday"
         # AAPL gained, TSLA lost
         gainer_symbols = [g["symbol"] for g in data["topGainers"]]
-        loser_symbols = [l["symbol"] for l in data["topLosers"]]
+        loser_symbols = [s["symbol"] for s in data["topLosers"]]
         assert "AAPL" in gainer_symbols
         assert "TSLA" in loser_symbols
