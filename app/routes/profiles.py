@@ -19,6 +19,7 @@ import logging
 import os
 
 from fastapi import APIRouter, HTTPException, Path, Query
+from openai import OpenAI
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -389,3 +390,73 @@ async def autofill_profile(
         "ideas": ideas,
         "dataSources": sources,
     }
+
+
+_PROFILE_MODEL_LIGHT = os.getenv("OPENAI_MODEL_PROFILE_LIGHT", "gpt-5-mini")
+_PROFILE_MODEL_SYNTH = os.getenv("OPENAI_MODEL_PROFILE_SYNTH", "gpt-5-mini")
+
+
+def _strip_fences(raw: str) -> str:
+    raw = raw.strip()
+    if raw.startswith("```"):
+        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+    if raw.endswith("```"):
+        raw = raw[:-3]
+    return raw.strip()
+
+
+def _chat_json(model: str, system: str, user: str, max_tokens: int = 700) -> dict:
+    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    completion = client.chat.completions.create(
+        model=model,
+        messages=[{"role": "system", "content": system}, {"role": "user", "content": user}],
+        max_tokens=max_tokens, temperature=0.3,
+    )
+    return json.loads(_strip_fences(completion.choices[0].message.content or "{}"))
+
+
+class InterviewBody(BaseModel):
+    autofill: dict = {}
+    answers: list[dict] = []  # [{field, question, answer}]
+
+
+@router.post("/stocks/{ticker}/profile/interview")
+async def interview(
+    ticker: str = Path(...),
+    body: InterviewBody = ...,  # noqa: B008
+    bucket: str | None = BucketQuery,
+):
+    b = _require_concrete_bucket(bucket)
+    symbol = ticker.upper()
+    follow_up = bool(body.answers)
+
+    if not follow_up:
+        system = (
+            "You interview an investor to capture the SUBJECTIVE parts of their thesis for a "
+            "stock. Given factual data, produce 3-5 targeted questions. Return ONLY JSON: "
+            '{"questions":[{"field": "thesis|sell_trigger|conviction|catalyst|risk", '
+            '"question": "..."}]}. No markdown.'
+        )
+        user = f"SYMBOL: {symbol} ({b})\nDATA:\n{json.dumps(body.autofill)[:3000]}"
+    else:
+        system = (
+            "You already asked questions and received answers. Inspect them against the data. "
+            "If an answer is thin or CONTRADICTS the track record (e.g. bullish thesis but the "
+            "trades show repeated selling), return 1-2 targeted follow-up questions; otherwise "
+            'return an empty list. Return ONLY JSON: {"questions":[{"field":"...","question":"..."}]}.'
+        )
+        user = (
+            f"SYMBOL: {symbol} ({b})\nDATA:\n{json.dumps(body.autofill)[:2000]}\n\n"
+            f"ANSWERS:\n{json.dumps(body.answers)[:2000]}"
+        )
+
+    try:
+        result = _chat_json(_PROFILE_MODEL_LIGHT, system, user, max_tokens=600)
+        questions = result.get("questions", [])
+    except json.JSONDecodeError:
+        questions = []
+    except Exception as e:  # noqa: BLE001
+        logger.error("interview failed for %s: %s", symbol, e)
+        raise HTTPException(status_code=502, detail="AI interview failed") from None
+
+    return {"symbol": symbol, "bucket": b, "questions": questions, "followUp": follow_up}
