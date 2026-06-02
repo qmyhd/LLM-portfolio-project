@@ -177,15 +177,19 @@ def _assemble_input(
     except Exception:
         logger.warning("Failed to fetch news for %s", ticker_upper, exc_info=True)
 
-    # 4. Discord parsed ideas
+    # 4. Discord parsed ideas (primary_symbol + join — discord_parsed_ideas has
+    #    no ticker/created_at/author columns; author/created_at live on
+    #    discord_messages, matching the working chat.py query).
     try:
         idea_rows = execute_sql(
             """
-            SELECT direction, confidence, labels, idea_text, created_at, author
-            FROM discord_parsed_ideas
-            WHERE UPPER(ticker) = :ticker
-            AND created_at > NOW() - INTERVAL '30 days'
-            ORDER BY created_at DESC
+            SELECT dpi.direction, dpi.confidence, dpi.labels, dpi.idea_text,
+                   dm.created_at, dm.author
+            FROM discord_parsed_ideas dpi
+            LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
+            WHERE UPPER(dpi.primary_symbol) = :ticker
+              AND dm.created_at > NOW() - INTERVAL '30 days'
+            ORDER BY dm.created_at DESC
             LIMIT 50
             """,
             params={"ticker": ticker_upper},
