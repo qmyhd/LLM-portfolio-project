@@ -114,3 +114,33 @@ async def test_run_without_author_ids_skips_resolver():
     with patch("src.analysis.sentiment.CredibilityResolver.for_ideas", side_effect=AssertionError("should not be called")):
         result = await run(inp)  # must NOT raise / must not call for_ideas
     assert "credibility" in result.metrics["discord_ideas"]
+
+
+@pytest.mark.anyio
+async def test_run_exposes_top_level_credibility():
+    """Spec §7: the breakdown must be at top-level metrics["credibility"] for
+    API/frontend consumers, mirrored from the discord_ideas source."""
+    from unittest.mock import MagicMock, patch
+    ideas = [_idea("long", 0.8, "111"), _idea("short", 0.6, "222")]
+    inp = AnalysisInput(ticker="LMT", ohlcv=[], ideas=ideas, news=[], portfolio_value=0.0)
+    fake = MagicMock()
+    fake.multiplier.return_value = CredibilityResult(multiplier=1.0)
+    with patch("src.analysis.sentiment.CredibilityResolver.for_ideas", return_value=fake):
+        result = await run(inp)
+
+    assert "credibility" in result.metrics
+    cred = result.metrics["credibility"]
+    assert {"baseline_score", "adjusted_score", "delta", "contributors"}.issubset(cred.keys())
+    # Top-level mirror is the same payload as the source-level copy.
+    assert cred == result.metrics["discord_ideas"]["credibility"]
+    # discord_ideas weighted_score remains the adjusted Discord-ideas score.
+    assert result.metrics["discord_ideas"]["weighted_score"] == cred["adjusted_score"]
+
+
+@pytest.mark.anyio
+async def test_run_top_level_credibility_present_even_with_no_ideas():
+    """metrics["credibility"] must always exist for consumers, even with no ideas."""
+    inp = AnalysisInput(ticker="LMT", ohlcv=[], ideas=[], news=[], portfolio_value=0.0)
+    result = await run(inp)
+    assert "credibility" in result.metrics
+    assert result.metrics["credibility"]["delta"] == 0.0

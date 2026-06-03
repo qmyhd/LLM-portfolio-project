@@ -276,6 +276,14 @@ async def run(input: AnalysisInput) -> AnalystSignal:
     for name, (sig, conf, metrics) in sources.items():
         all_metrics[name] = {"signal": sig, "confidence": conf, **metrics}
 
+    # Surface the credibility breakdown at the top level for API/frontend
+    # consumers (spec §7). It originates in the discord_ideas source; the
+    # nested copy under all_metrics["discord_ideas"] is kept for source-level
+    # debugging.
+    cred = all_metrics.get("discord_ideas", {}).get("credibility")
+    if cred is not None:
+        all_metrics["credibility"] = cred
+
     parts = [f"{name}={sig}({conf:.0%})" for name, (sig, conf, _) in sources.items()]
     reasoning = f"{overall_signal} ({overall_confidence:.0%}): " + ", ".join(parts)
 
