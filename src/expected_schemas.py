@@ -430,6 +430,87 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "primary_keys": ["id"],
         "description": "Append-only snapshot history for stock_thesis_profiles (migration 072)",
     },
+    "people": {
+        "required_fields": {
+            "id": "integer",
+            "full_name": "text",
+            "display_name": "text",
+            "role": "text",
+            "bio": "text",
+            "notes": "text",
+            "status": "text",
+            "created_at": "timestamptz",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ["id"],
+        "description": "Curated person/source profile entity (migration 073)",
+    },
+    "person_revisions": {
+        "required_fields": {
+            "id": "integer",
+            "person_id": "integer",
+            "snapshot_json": "json",
+            "created_at": "timestamptz",
+        },
+        "primary_keys": ["id"],
+        "description": "Append-only snapshot history for people (migration 073)",
+    },
+    "credibility_categories": {
+        "required_fields": {
+            "slug": "text",
+            "label": "text",
+            "description": "text",
+            "sort_order": "integer",
+        },
+        "primary_keys": ["slug"],
+        "description": "Editable credibility category taxonomy (migration 073)",
+    },
+    "person_category_tiers": {
+        "required_fields": {
+            "id": "integer",
+            "person_id": "integer",
+            "category_slug": "text",
+            "tier": "text",
+            "muted": "boolean",
+            "rationale": "text",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ["id"],
+        "description": "Per-(person, category) S/A/B/C/D tier (migration 073)",
+    },
+    "source_identities": {
+        "required_fields": {
+            "id": "integer",
+            "person_id": "integer",
+            "platform": "text",
+            "platform_user_id": "text",
+            "handle": "text",
+            "match_status": "text",
+            "created_at": "timestamptz",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ["id"],
+        "description": "Stable platform identities mapped to people, flag-don't-merge (migration 073)",
+    },
+    "tier_multipliers": {
+        "required_fields": {
+            "tier": "text",
+            "multiplier": "numeric",
+        },
+        "primary_keys": ["tier"],
+        "description": "Tier -> numeric multiplier curve (migration 073)",
+    },
+    "stock_topic_tags": {
+        "required_fields": {
+            "id": "integer",
+            "symbol": "text",
+            "category_slug": "text",
+            "weight": "numeric",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ["id"],
+        "description": "Per-stock weighted topic tags for credibility routing (migration 073)",
+    },
 }
 
 # Schema metadata for reference
