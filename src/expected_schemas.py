@@ -511,6 +511,31 @@ EXPECTED_SCHEMAS: Dict[str, Dict[str, Any]] = {
         "primary_keys": ["id"],
         "description": "Per-stock weighted topic tags for credibility routing (migration 073)",
     },
+    "video_quotes": {
+        "required_fields": {
+            "id": "integer",
+            "video_id": "text",
+            "video_url": "text",
+            "video_title": "text",
+            "channel_name": "text",
+            "channel_url": "text",
+            "quote_text": "text",
+            "start_seconds": "numeric",
+            "end_seconds": "numeric",
+            "person_id": "integer",
+            "category_slug": "text",
+            "ticker": "text",
+            "stock_thesis_profile_id": "integer",
+            "thesis_note": "text",
+            "tags": "array",
+            "notes": "text",
+            "status": "text",
+            "saved_at": "timestamptz",
+            "updated_at": "timestamptz",
+        },
+        "primary_keys": ["id"],
+        "description": "Video research saved quote excerpts from YouTube (migration 074)",
+    },
 }
 
 # Schema metadata for reference
