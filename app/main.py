@@ -36,6 +36,7 @@ from app.routes import (
     connections,
     ideas,
     orders,
+    people,
     portfolio,
     profiles,
     search,
@@ -218,6 +219,11 @@ app.include_router(
 app.include_router(
     profiles.router,
     tags=["Profiles"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    people.router,
+    tags=["People"],
     dependencies=[Depends(require_api_key)],
 )
 
