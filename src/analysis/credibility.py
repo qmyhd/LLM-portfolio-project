@@ -89,7 +89,7 @@ class CredibilityResolver:
         self._tiers = tiers
 
     @classmethod
-    def for_ideas(cls, symbol: str, author_ids: list[str]) -> "CredibilityResolver":
+    def for_ideas(cls, symbol: str, author_ids: list[str]) -> CredibilityResolver:
         mults: dict[str, float] = {}
         tags: dict[str, float] = {}
         identity: dict[str, tuple[int, Optional[str]]] = {}
