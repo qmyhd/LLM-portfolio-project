@@ -10,6 +10,7 @@ Kept free of FastAPI / pydantic / DB imports so it is trivially unit-testable.
 
 from __future__ import annotations
 
+import math
 from datetime import date, timedelta
 
 
@@ -51,6 +52,23 @@ def _ffill_on_grid(series: dict[str, float], grid: list[str]) -> list[float | No
     return out
 
 
+def _positive_close(series: dict[str, float], *, last: bool) -> float | None:
+    """First (or last) finite, positive close in a date-sorted series, else None.
+
+    Used for the baseline and the weight's latest price so a leading 0/NaN
+    close (which yfinance and sparse data routinely produce) doesn't make the
+    whole holding flat-line at 0% or blow up the weights.
+    """
+    dates = sorted(series)
+    if last:
+        dates = list(reversed(dates))
+    for d in dates:
+        v = series[d]
+        if isinstance(v, (int, float)) and math.isfinite(v) and v > 0:
+            return float(v)
+    return None
+
+
 def compute_return_series(
     quantities: dict[str, float],
     price_series: dict[str, dict[str, float]],
@@ -66,19 +84,30 @@ def compute_return_series(
         {"date": iso_date, "returnPct": pct} ascending by date, and
         period_return_pct is the last point's value (0.0 if empty).
     """
-    included = [s for s, q in quantities.items() if q > 0 and price_series.get(s)]
+    # Only symbols that are held, have price data, and have a finite positive
+    # baseline + latest price participate. Using the first/last POSITIVE close
+    # (not raw first/last) prevents a leading 0/NaN from zeroing the series.
+    candidates = [s for s, q in quantities.items() if q > 0 and price_series.get(s)]
+    baselines: dict[str, float] = {}
+    last_price: dict[str, float] = {}
+    included: list[str] = []
+    for s in candidates:
+        base = _positive_close(price_series[s], last=False)
+        latest = _positive_close(price_series[s], last=True)
+        if base is None or latest is None:
+            continue
+        baselines[s] = base
+        last_price[s] = latest
+        included.append(s)
     if not included:
         return [], 0.0
 
-    # Fixed weights from current holdings: qty * latest price in the window.
-    last_price = {s: price_series[s][max(price_series[s])] for s in included}
+    # Fixed weights from current holdings: qty * latest (positive) price.
     raw_weights = {s: quantities[s] * last_price[s] for s in included}
     total = sum(raw_weights.values())
     if total <= 0:
         return [], 0.0
     weights = {s: raw_weights[s] / total for s in included}
-
-    baselines = {s: price_series[s][min(price_series[s])] for s in included}
 
     grid_set: set[str] = set()
     for s in included:
@@ -94,7 +123,9 @@ def compute_return_series(
         for s in included:
             p = ffilled[s][idx]
             base = baselines[s]
-            if p is None or base <= 0:
+            # Treat missing / non-finite / non-positive prices as "no data" for
+            # that day so a 0/NaN close contributes nothing (not a -100% spike).
+            if p is None or not math.isfinite(p) or p <= 0:
                 continue
             num += weights[s] * (p / base - 1.0)
             wsum += weights[s]

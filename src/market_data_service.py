@@ -10,6 +10,7 @@ This module is NOT the primary price source.  ``src/price_service.py``
 """
 
 import logging
+import math
 import threading
 from datetime import date, timedelta
 from typing import Optional
@@ -196,7 +197,13 @@ def _fetch_crypto_price_series(symbol: str, start: date, end: date) -> dict[str,
         return {}
     out: dict[str, float] = {}
     for ts, close in hist["Close"].items():
-        out[ts.date().isoformat()] = float(close)
+        c = float(close)
+        if not math.isfinite(c):
+            # Drop NaN/inf closes (yfinance returns them for incomplete/sparse
+            # days) — mirrors the equity path's dropna. A NaN otherwise zeroes
+            # the whole return-series or emits invalid JSON.
+            continue
+        out[ts.date().isoformat()] = c
     return out
 
 

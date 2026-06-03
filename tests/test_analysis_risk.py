@@ -81,3 +81,21 @@ def test_portfolio_risk_report() -> None:
     assert isinstance(report, PortfolioRiskReport)
     assert report.var_95_1d > 0
     assert "Technology" in report.sector_exposure
+
+
+def test_portfolio_risk_empty_returns_arrays() -> None:
+    """Tickers present but with zero-length return arrays must not crash.
+
+    min_len would be 0, making np.percentile([]) raise and the DataFrame
+    construction fail on ragged arrays. Should fall back to a neutral report.
+    """
+    report = compute_portfolio_risk(
+        returns_data={"AAPL": np.array([]), "MSFT": np.array([1.0, 2.0])},
+        weights={"AAPL": 0.5, "MSFT": 0.5},
+        sector_map={"AAPL": "Technology", "MSFT": "Technology"},
+        total_value=100000.0,
+    )
+    assert isinstance(report, PortfolioRiskReport)
+    assert report.var_95_1d == 0.0
+    assert report.var_95_5d == 0.0
+    assert report.correlation_matrix == {}
