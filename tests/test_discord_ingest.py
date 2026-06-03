@@ -46,7 +46,7 @@ class TestComputeContentHash:
     def test_known_value(self):
         """Spot-check against known SHA-256 of normalised 'hello world'."""
         import hashlib
-        expected = hashlib.sha256("hello world".encode()).hexdigest()
+        expected = hashlib.sha256(b"hello world").hexdigest()
         assert compute_content_hash("Hello  World") == expected
 
     def test_newlines_collapsed(self):
