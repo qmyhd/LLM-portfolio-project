@@ -232,7 +232,19 @@ async def run(input: AnalysisInput) -> AnalystSignal:
     SIGNAL_MAP = {"bullish": 1.0, "neutral": 0.0, "bearish": -1.0}
 
     sources: dict[str, tuple[str, float, dict]] = {}
-    sources["discord_ideas"] = _score_discord_ideas(input.ideas)
+
+    # Build the credibility resolver once per run, only when there are
+    # attributable authors. Fully fail-safe: any issue -> score without it.
+    resolver = None
+    author_ids = [idea.author_id for idea in input.ideas if idea.author_id]
+    if author_ids:
+        try:
+            resolver = CredibilityResolver.for_ideas(input.ticker, author_ids)
+        except Exception:
+            logger.warning("Credibility resolver unavailable; scoring without it", exc_info=True)
+            resolver = None
+
+    sources["discord_ideas"] = _score_discord_ideas(input.ideas, symbol=input.ticker, resolver=resolver)
     sources["discord_sentiment"] = _score_discord_sentiment(input.ideas)
     sources["news"] = _score_news(input.news)
 

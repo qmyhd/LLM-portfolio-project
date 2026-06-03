@@ -80,3 +80,37 @@ def test_metrics_credibility_shape():
     _, _, m = _score_discord_ideas(ideas, symbol="AAPL", resolver=_Resolver({}))
     cred = m["credibility"]
     assert {"baseline_score", "adjusted_score", "delta", "contributors"}.issubset(cred.keys())
+
+
+@pytest.mark.anyio
+async def test_run_calls_for_ideas_with_ticker_and_author_ids():
+    from unittest.mock import MagicMock, patch
+    ideas = [_idea("long", 0.8, "111"), _idea("bullish", 0.7, "222")]
+    inp = AnalysisInput(ticker="LMT", ohlcv=[], ideas=ideas, news=[], portfolio_value=0.0)
+    fake = MagicMock()
+    fake.multiplier.return_value = CredibilityResult(multiplier=1.0)
+    with patch("src.analysis.sentiment.CredibilityResolver.for_ideas", return_value=fake) as for_ideas:
+        result = await run(inp)
+    for_ideas.assert_called_once_with("LMT", ["111", "222"])
+    assert "credibility" in result.metrics["discord_ideas"]
+
+
+@pytest.mark.anyio
+async def test_run_resolver_failure_falls_back_to_neutral():
+    from unittest.mock import patch
+    ideas = [_idea("long", 0.8, "111")]
+    inp = AnalysisInput(ticker="LMT", ohlcv=[], ideas=ideas, news=[], portfolio_value=0.0)
+    with patch("src.analysis.sentiment.CredibilityResolver.for_ideas", side_effect=RuntimeError("boom")):
+        result = await run(inp)  # must NOT raise
+    assert result.metrics["discord_ideas"]["credibility"]["delta"] == 0.0
+
+
+@pytest.mark.anyio
+async def test_run_without_author_ids_skips_resolver():
+    from unittest.mock import patch
+    # ideas with NO author_id -> resolver must not even be built (no DB touch).
+    ideas = [_idea("long", 0.8, "")]
+    inp = AnalysisInput(ticker="LMT", ohlcv=[], ideas=ideas, news=[], portfolio_value=0.0)
+    with patch("src.analysis.sentiment.CredibilityResolver.for_ideas", side_effect=AssertionError("should not be called")):
+        result = await run(inp)  # must NOT raise / must not call for_ideas
+    assert "credibility" in result.metrics["discord_ideas"]
