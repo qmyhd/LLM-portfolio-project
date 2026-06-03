@@ -57,3 +57,36 @@ def parse_channel_key(author_url: str | None) -> str | None:
     if parts[0].startswith("@"):
         return parts[0]
     return None
+
+
+def _get_transcript_raw(video_id: str) -> list[dict]:
+    """Thin call to youtube-transcript-api, isolated for mocking + version adaptation.
+
+    Returns a list of {text, start, duration}. If the installed library version
+    exposes a different surface than the call below, adapt ONLY this function
+    (keep the return shape) — the spike in Step 5 confirms the actual surface.
+    """
+    from youtube_transcript_api import YouTubeTranscriptApi
+
+    # youtube-transcript-api >=1.0 replaced the static get_transcript(...) with an
+    # instance API: YouTubeTranscriptApi().fetch(video_id) -> FetchedTranscript,
+    # which exposes .to_raw_data() yielding {text, start, duration} dicts.
+    fetched = YouTubeTranscriptApi().fetch(video_id, languages=["en", "en-US"])
+    return fetched.to_raw_data()
+
+
+def fetch_transcript(video_id: str) -> tuple[bool, list[dict], str | None]:
+    """(available, segments, reason). Never raises."""
+    try:
+        raw = _get_transcript_raw(video_id) or []
+        segs = [
+            {"text": s.get("text", ""), "start": float(s.get("start", 0.0)),
+             "duration": float(s.get("duration", 0.0))}
+            for s in raw
+        ]
+        if not segs:
+            return False, [], "empty transcript"
+        return True, segs, None
+    except Exception as e:  # noqa: BLE001 — degrade, never raise
+        logger.info("transcript unavailable for %s: %s", video_id, e.__class__.__name__)
+        return False, [], e.__class__.__name__

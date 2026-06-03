@@ -25,3 +25,19 @@ def test_parse_channel_key_handle_best_effort():
 def test_parse_channel_key_none():
     assert parse_channel_key(None) is None
     assert parse_channel_key("https://www.youtube.com/") is None
+
+
+def test_fetch_transcript_success(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.setattr(yt, "_get_transcript_raw",
+                        lambda vid: [{"text": "hello", "start": 1.0, "duration": 2.0}])
+    ok, segs, reason = yt.fetch_transcript("abc")
+    assert ok is True and segs[0]["text"] == "hello" and reason is None
+
+def test_fetch_transcript_unavailable(monkeypatch):
+    import src.youtube as yt
+    def _boom(vid):
+        raise RuntimeError("TranscriptsDisabled")
+    monkeypatch.setattr(yt, "_get_transcript_raw", _boom)
+    ok, segs, reason = yt.fetch_transcript("abc")
+    assert ok is False and segs == [] and isinstance(reason, str)
