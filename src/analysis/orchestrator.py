@@ -40,6 +40,25 @@ CRYPTO_TTL_HOURS = 1
 PORTFOLIO_RISK_TTL_HOURS = 2
 
 
+def _assemble_ideas(idea_rows) -> list[IdeaData]:
+    """Build IdeaData objects from idea query rows (carrying stable author_id)."""
+    ideas: list[IdeaData] = []
+    for row in idea_rows:
+        m = row._mapping if hasattr(row, "_mapping") else row
+        ideas.append(
+            IdeaData(
+                direction=m.get("direction", "neutral") or "neutral",
+                confidence=float(m.get("confidence", 0.5) or 0.5),
+                labels=m.get("labels", []) or [],
+                idea_text=m.get("idea_text", "") or "",
+                created_at=str(m.get("created_at", "")),
+                author=m.get("author", "") or "",
+                author_id=str(m.get("author_id") or ""),
+            )
+        )
+    return ideas
+
+
 def _is_crypto(ticker: str) -> bool:
     """Check if ticker is a cryptocurrency."""
     try:
@@ -184,7 +203,7 @@ def _assemble_input(
         idea_rows = execute_sql(
             """
             SELECT dpi.direction, dpi.confidence, dpi.labels, dpi.idea_text,
-                   dm.created_at, dm.author
+                   dm.created_at, dm.author, dm.author_id
             FROM discord_parsed_ideas dpi
             LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
             WHERE UPPER(dpi.primary_symbol) = :ticker
@@ -195,18 +214,7 @@ def _assemble_input(
             params={"ticker": ticker_upper},
             fetch_results=True,
         )
-        for row in idea_rows:
-            m = row._mapping if hasattr(row, "_mapping") else row
-            ideas_list.append(
-                IdeaData(
-                    direction=m.get("direction", "neutral") or "neutral",
-                    confidence=float(m.get("confidence", 0.5) or 0.5),
-                    labels=m.get("labels", []) or [],
-                    idea_text=m.get("idea_text", "") or "",
-                    created_at=str(m.get("created_at", "")),
-                    author=m.get("author", "") or "",
-                )
-            )
+        ideas_list = _assemble_ideas(idea_rows)
         if ideas_list:
             data_sources.append(f"Discord NLP ({len(ideas_list)} ideas)")
     except Exception:
