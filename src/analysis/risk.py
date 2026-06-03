@@ -116,6 +116,21 @@ async def run(input: AnalysisInput) -> AnalystSignal:
     )
 
 
+def _empty_portfolio_risk_report() -> PortfolioRiskReport:
+    """Neutral report when there is nothing to compute (no tickers / no data)."""
+    return PortfolioRiskReport(
+        var_95_1d=0.0,
+        var_95_5d=0.0,
+        concentration_hhi=0.0,
+        diversification_ratio=0.0,
+        correlation_matrix={},
+        top_risk_contributors=[],
+        sector_exposure={},
+        computed_at=datetime.now(tz=timezone.utc),
+        data_sources=[],
+    )
+
+
 def compute_portfolio_risk(
     returns_data: dict[str, np.ndarray],
     weights: dict[str, float],
@@ -136,21 +151,14 @@ def compute_portfolio_risk(
     tickers = list(returns_data.keys())
 
     if not tickers:
-        now = datetime.now(tz=timezone.utc)
-        return PortfolioRiskReport(
-            var_95_1d=0.0,
-            var_95_5d=0.0,
-            concentration_hhi=0.0,
-            diversification_ratio=0.0,
-            correlation_matrix={},
-            top_risk_contributors=[],
-            sector_exposure={},
-            computed_at=now,
-            data_sources=[],
-        )
+        return _empty_portfolio_risk_report()
 
-    # Align returns to same length (use shortest)
+    # Align returns to same length (use shortest). If any series is empty the
+    # shortest length is 0, which makes np.percentile([]) raise and the
+    # DataFrame construction fail on ragged arrays — bail to a neutral report.
     min_len = min(len(r) for r in returns_data.values())
+    if min_len == 0:
+        return _empty_portfolio_risk_report()
     aligned = {t: r[-min_len:] for t, r in returns_data.items()}
 
     # Build returns DataFrame
