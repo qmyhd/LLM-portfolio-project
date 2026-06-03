@@ -144,3 +144,84 @@ def test_resolve_db_error_does_not_500(mock_oembed, mock_tx, mock_sql, client):
     r = client.post("/videos/resolve", json={"url": VALID})
     assert r.status_code == 200  # speaker resolution failure must not 500
     assert r.json()["suggestedPersonId"] is None
+
+
+# --------------------------- Phase D: quote CRUD --------------------------- #
+
+def _quote_body(**over):
+    b = {"videoId": "vid1", "videoUrl": "https://youtu.be/vid1",
+         "quoteText": "hello world", "startSeconds": 12.5}
+    b.update(over)
+    return b
+
+
+_QUOTE_ROW = {
+    "id": 1, "video_id": "v", "video_url": "u", "video_title": None, "channel_name": None,
+    "channel_url": None, "quote_text": "t", "start_seconds": 1.0, "end_seconds": None,
+    "person_id": 7, "category_slug": "macro", "ticker": None, "stock_thesis_profile_id": None,
+    "thesis_note": None, "tags": [], "notes": None, "status": "active",
+    "saved_at": "2026-06-03T00:00:00+00:00", "updated_at": "2026-06-03T00:00:00+00:00",
+    "person_name": "Sachs", "category_label": "Macro",
+}
+
+
+@patch("app.routes.videos.transaction")
+def test_create_quote(mock_tx, client):
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = (1,)
+    mock_tx.return_value.__enter__.return_value = conn
+    r = client.post("/quotes", json=_quote_body(categorySlug="markets", ticker="aapl", tags=["macro"]))
+    assert r.status_code == 200
+    assert r.json()["id"] == 1
+    bound = conn.execute.call_args.args[1]
+    assert bound["quote_text"] == "hello world"
+    assert bound["video_id"] == "vid1"
+    assert float(bound["start_seconds"]) == 12.5
+    assert bound["tags"] == ["macro"]
+
+
+@patch("app.routes.videos.transaction")
+def test_create_quote_defaults_tags_empty(mock_tx, client):
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = (2,)
+    mock_tx.return_value.__enter__.return_value = conn
+    r = client.post("/quotes", json=_quote_body())
+    assert r.status_code == 200
+    assert conn.execute.call_args.args[1]["tags"] == []
+
+
+@patch("app.routes.videos.execute_sql")
+def test_list_quotes_defaults_active(mock_sql, client):
+    mock_sql.return_value = []
+    client.get("/quotes")
+    call = mock_sql.call_args
+    sql = call.args[0]
+    params = call.kwargs.get("params", {})
+    assert "vq.status = :status" in sql
+    assert params["status"] == "active"
+
+
+@patch("app.routes.videos.execute_sql")
+def test_list_quotes_filters(mock_sql, client):
+    mock_sql.return_value = []
+    client.get("/quotes?q=infl&person_id=7&category=macro&ticker=aapl&video_id=vid1&status=archived")
+    call = mock_sql.call_args
+    sql = call.args[0]
+    params = call.kwargs["params"]
+    assert "ILIKE :q" in sql and params["q"] == "%infl%"
+    assert "vq.person_id = :person_id" in sql and params["person_id"] == 7
+    assert "vq.category_slug = :category" in sql and params["category"] == "macro"
+    assert "UPPER(vq.ticker) = UPPER(:ticker)" in sql and params["ticker"] == "aapl"
+    assert "vq.video_id = :video_id" in sql and params["video_id"] == "vid1"
+    assert params["status"] == "archived"
+
+
+@patch("app.routes.videos.execute_sql")
+def test_list_quotes_joins_labels(mock_sql, client):
+    mock_sql.return_value = [_row(dict(_QUOTE_ROW))]
+    r = client.get("/quotes")
+    sql = mock_sql.call_args.args[0]
+    assert "LEFT JOIN people" in sql and "credibility_categories" in sql
+    item = r.json()["quotes"][0]
+    assert item["personName"] == "Sachs" and item["categoryLabel"] == "Macro"
+    assert item["videoId"] == "v" and item["quoteText"] == "t"
