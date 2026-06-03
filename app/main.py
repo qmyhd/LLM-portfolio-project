@@ -34,6 +34,7 @@ from app.routes import (
     activities,
     chat,
     connections,
+    credibility,
     ideas,
     orders,
     people,
@@ -224,6 +225,11 @@ app.include_router(
 app.include_router(
     people.router,
     tags=["People"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    credibility.router,
+    tags=["Credibility"],
     dependencies=[Depends(require_api_key)],
 )
 
