@@ -225,3 +225,50 @@ def test_list_quotes_joins_labels(mock_sql, client):
     item = r.json()["quotes"][0]
     assert item["personName"] == "Sachs" and item["categoryLabel"] == "Macro"
     assert item["videoId"] == "v" and item["quoteText"] == "t"
+
+
+@patch("app.routes.videos.execute_sql")
+def test_get_quote_detail(mock_sql, client):
+    mock_sql.return_value = [_row(dict(_QUOTE_ROW))]
+    r = client.get("/quotes/1")
+    assert r.status_code == 200 and r.json()["id"] == 1
+
+
+@patch("app.routes.videos.execute_sql")
+def test_get_quote_404(mock_sql, client):
+    mock_sql.return_value = []
+    assert client.get("/quotes/999").status_code == 404
+
+
+@patch("app.routes.videos.transaction")
+def test_update_quote(mock_tx, client):
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = (1,)
+    mock_tx.return_value.__enter__.return_value = conn
+    r = client.put("/quotes/1", json=_quote_body(quoteText="edited", notes="n"))
+    assert r.status_code == 200
+    bound = conn.execute.call_args.args[1]
+    assert bound["quote_text"] == "edited" and bound["id"] == 1
+
+
+@patch("app.routes.videos.transaction")
+def test_update_quote_404(mock_tx, client):
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = None
+    mock_tx.return_value.__enter__.return_value = conn
+    assert client.put("/quotes/999", json=_quote_body()).status_code == 404
+
+
+@patch("app.routes.videos.execute_sql")
+def test_delete_quote_soft_archive(mock_sql, client):
+    mock_sql.return_value = [_row({"id": 1})]
+    r = client.delete("/quotes/1")
+    assert r.status_code == 200 and r.json()["status"] == "archived"
+    sql = mock_sql.call_args.args[0]
+    assert "archived" in sql and "DELETE FROM" not in sql.upper()
+
+
+@patch("app.routes.videos.execute_sql")
+def test_delete_quote_404(mock_sql, client):
+    mock_sql.return_value = []
+    assert client.delete("/quotes/999").status_code == 404

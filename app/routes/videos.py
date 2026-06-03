@@ -207,3 +207,57 @@ async def list_quotes(
         fetch_results=True,
     ) or []
     return {"quotes": [_quote_out(r) for r in rows]}
+
+
+@router.get("/quotes/{id}")
+async def get_quote(id: int = Path(...)):
+    rows = execute_sql(_QUOTE_SELECT + " WHERE vq.id = :id", params={"id": id}, fetch_results=True) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    return _quote_out(rows[0])
+
+
+@router.put("/quotes/{id}")
+async def update_quote(id: int = Path(...), body: QuoteBody = ...):  # noqa: B008
+    params = {**_quote_params(body), "id": id}
+    with transaction() as conn:
+        row = conn.execute(
+            text(
+                """
+                UPDATE video_quotes SET
+                    video_id = :video_id, video_url = :video_url, video_title = :video_title,
+                    channel_name = :channel_name, channel_url = :channel_url,
+                    quote_text = :quote_text, start_seconds = :start_seconds,
+                    end_seconds = :end_seconds, person_id = :person_id,
+                    category_slug = :category_slug, ticker = :ticker,
+                    stock_thesis_profile_id = :stock_thesis_profile_id,
+                    thesis_note = :thesis_note, tags = :tags, notes = :notes,
+                    updated_at = NOW()
+                WHERE id = :id
+                RETURNING id
+                """
+            ),
+            params,
+        )
+        if row.fetchone() is None:
+            raise HTTPException(status_code=404, detail="Quote not found")
+    return {
+        "id": id,
+        "videoId": body.videoId, "videoUrl": body.videoUrl, "quoteText": body.quoteText,
+        "startSeconds": body.startSeconds, "endSeconds": body.endSeconds,
+        "personId": body.personId, "categorySlug": body.categorySlug, "ticker": body.ticker,
+        "stockThesisProfileId": body.stockThesisProfileId, "thesisNote": body.thesisNote,
+        "tags": body.tags or [], "notes": body.notes,
+    }
+
+
+@router.delete("/quotes/{id}")
+async def delete_quote(id: int = Path(...)):
+    rows = execute_sql(
+        "UPDATE video_quotes SET status='archived', updated_at=NOW() WHERE id = :id RETURNING id",
+        params={"id": id},
+        fetch_results=True,
+    ) or []
+    if not rows:
+        raise HTTPException(status_code=404, detail="Quote not found")
+    return {"status": "archived", "id": id}
