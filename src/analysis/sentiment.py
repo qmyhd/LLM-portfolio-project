@@ -8,9 +8,13 @@ Data sources: discord_parsed_ideas, Discord messages (vaderSentiment), OpenBB ne
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime, timezone
 
+from src.analysis.credibility import CredibilityResolver
 from src.analysis.models import AnalysisInput, AnalystSignal, IdeaData, NewsItem
+
+logger = logging.getLogger(__name__)
 
 
 # Source weights
@@ -48,24 +52,36 @@ def _parse_idea_date(date_str: str) -> datetime | None:
     return None
 
 
-def _score_discord_ideas(ideas: list[IdeaData]) -> tuple[str, float, dict]:
+def _score_discord_ideas(
+    ideas: list[IdeaData],
+    symbol: str = "",
+    resolver=None,
+) -> tuple[str, float, dict]:
     """Score sentiment from Discord parsed ideas.
 
     Recent ideas (<7d) get 2x weight. Direction mapping:
     - long/bullish -> +1
     - short/bearish -> -1
     - neutral/mixed -> 0
-    """
-    if not ideas:
-        return "neutral", 0.0, {"idea_count": 0}
 
+    Credibility weighting (optional): when ``resolver`` is provided, each idea's
+    weight is additionally scaled by its author's effective credibility
+    multiplier for ``symbol`` (spec §5). A fully-muted author (multiplier 0.0)
+    is dropped from the adjusted average entirely. ``resolver=None`` reproduces
+    the legacy, credibility-free behaviour exactly. The returned signal and
+    confidence use the credibility-ADJUSTED score; the unadjusted baseline is
+    preserved under ``metrics["credibility"]`` for explainability.
+    """
     now = datetime.now(tz=timezone.utc)
     direction_map = {"long": 1.0, "bullish": 1.0, "short": -1.0, "bearish": -1.0}
 
-    weighted_sum = 0.0
-    total_weight = 0.0
+    base_num = 0.0  # baseline accumulators (all multipliers forced to 1.0)
+    base_den = 0.0
+    adj_num = 0.0  # credibility-adjusted accumulators
+    adj_den = 0.0
     bullish_count = 0
     bearish_count = 0
+    contributors: list[dict] = []
 
     for idea in ideas:
         # Time weighting: recent ideas get 2x weight
@@ -80,37 +96,36 @@ def _score_discord_ideas(ideas: list[IdeaData]) -> tuple[str, float, dict]:
 
         direction_score = direction_map.get(idea.direction.lower(), 0.0)
         confidence = max(0.0, min(idea.confidence, 1.0))
+        base_w = confidence * time_weight
 
-        weighted_sum += direction_score * confidence * time_weight
-        total_weight += confidence * time_weight
+        # Baseline always accumulates with a neutral (1.0) credibility weight.
+        base_num += direction_score * base_w
+        base_den += base_w
+
+        # Adjusted accumulates with the author's credibility multiplier.
+        mult = 1.0
+        if resolver is not None:
+            res = resolver.multiplier(idea.author_id)
+            mult = res.multiplier
+            if res.person_id is not None and mult != 1.0:
+                contributors.append({
+                    "author_id": idea.author_id,
+                    "person": res.person_name,
+                    "tiers": res.tiers,
+                    "effective_mult": round(mult, 4),
+                })
+        if mult != 0.0:
+            adj_num += direction_score * base_w * mult
+            adj_den += base_w * mult
+        # mult == 0.0 (fully muted) -> idea dropped from the adjusted average
 
         if direction_score > 0:
             bullish_count += 1
         elif direction_score < 0:
             bearish_count += 1
 
-    if total_weight == 0:
-        # Keep the metrics dict shape consistent with the main return below
-        # so callers (and tests) can rely on these keys always being present.
-        return "neutral", 0.0, {
-            "idea_count": len(ideas),
-            "bullish_count": 0,
-            "bearish_count": 0,
-            "bullish_pct": 0.0,
-            "avg_confidence": 0.0,
-            "weighted_score": 0.0,
-        }
-
-    score = weighted_sum / total_weight  # -1 to +1
-
-    if score > 0.2:
-        signal = "bullish"
-    elif score < -0.2:
-        signal = "bearish"
-    else:
-        signal = "neutral"
-
-    confidence = min(abs(score), 1.0)
+    baseline_score = base_num / base_den if base_den > 0 else 0.0
+    adjusted_score = adj_num / adj_den if adj_den > 0 else 0.0
 
     total_ideas = len(ideas)
     metrics = {
@@ -119,8 +134,27 @@ def _score_discord_ideas(ideas: list[IdeaData]) -> tuple[str, float, dict]:
         "bearish_count": bearish_count,
         "bullish_pct": round(bullish_count / total_ideas * 100, 1) if total_ideas > 0 else 0.0,
         "avg_confidence": round(sum(i.confidence for i in ideas) / total_ideas, 3) if total_ideas > 0 else 0.0,
-        "weighted_score": round(score, 4),
+        "weighted_score": round(adjusted_score, 4),
+        "credibility": {
+            "baseline_score": round(baseline_score, 4),
+            "adjusted_score": round(adjusted_score, 4),
+            "delta": round(adjusted_score - baseline_score, 4),
+            "contributors": contributors[:5],
+        },
     }
+
+    # No surviving ideas (none in-window, or every author fully muted) -> no signal.
+    if adj_den == 0:
+        return "neutral", 0.0, metrics
+
+    if adjusted_score > 0.2:
+        signal = "bullish"
+    elif adjusted_score < -0.2:
+        signal = "bearish"
+    else:
+        signal = "neutral"
+    confidence = min(abs(adjusted_score), 1.0)
+
     return signal, confidence, metrics
 
 
