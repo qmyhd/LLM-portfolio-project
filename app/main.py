@@ -37,6 +37,7 @@ from app.routes import (
     ideas,
     orders,
     portfolio,
+    profiles,
     search,
     sentiment,
     stocks,
@@ -212,6 +213,11 @@ app.include_router(
 app.include_router(
     trades.router,
     tags=["Trades"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    profiles.router,
+    tags=["Profiles"],
     dependencies=[Depends(require_api_key)],
 )
 

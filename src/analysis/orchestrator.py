@@ -177,15 +177,19 @@ def _assemble_input(
     except Exception:
         logger.warning("Failed to fetch news for %s", ticker_upper, exc_info=True)
 
-    # 4. Discord parsed ideas
+    # 4. Discord parsed ideas (primary_symbol + join — discord_parsed_ideas has
+    #    no ticker/created_at/author columns; author/created_at live on
+    #    discord_messages, matching the working chat.py query).
     try:
         idea_rows = execute_sql(
             """
-            SELECT direction, confidence, labels, idea_text, created_at, author
-            FROM discord_parsed_ideas
-            WHERE UPPER(ticker) = :ticker
-            AND created_at > NOW() - INTERVAL '30 days'
-            ORDER BY created_at DESC
+            SELECT dpi.direction, dpi.confidence, dpi.labels, dpi.idea_text,
+                   dm.created_at, dm.author
+            FROM discord_parsed_ideas dpi
+            LEFT JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
+            WHERE UPPER(dpi.primary_symbol) = :ticker
+              AND dm.created_at > NOW() - INTERVAL '30 days'
+            ORDER BY dm.created_at DESC
             LIMIT 50
             """,
             params={"ticker": ticker_upper},
@@ -267,21 +271,23 @@ def _assemble_input(
     #    correct denominator (e.g., 50% concentration in day-bucket is
     #    very different from 50% of total net worth).
     try:
-        if bucket:
-            bal_rows = execute_sql(
-                """
-                SELECT SUM(total_value) AS total
-                FROM account_balances
-                WHERE account_id IN (SELECT id FROM accounts WHERE bucket = :bucket)
-                """,
-                params={"bucket": bucket},
-                fetch_results=True,
-            )
-        else:
-            bal_rows = execute_sql(
-                "SELECT SUM(total_value) AS total FROM account_balances",
-                fetch_results=True,
-            )
+        # Portfolio value = positions equity (account_balances has no
+        # total_value column — only cash/buying_power). Bucket-scoped via
+        # the accounts join when a filter is active.
+        bucket_clause = " AND acc.bucket = :bucket " if bucket else ""
+        params = {"bucket": bucket} if bucket else None
+        bal_rows = execute_sql(
+            f"""
+            SELECT COALESCE(SUM(p.quantity * COALESCE(p.current_price, p.price)), 0) AS total
+            FROM positions p
+            LEFT JOIN accounts acc ON acc.id = p.account_id
+            WHERE p.quantity > 0
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
+            """,
+            params=params,
+            fetch_results=True,
+        )
         if bal_rows:
             m = bal_rows[0]._mapping if hasattr(bal_rows[0], "_mapping") else bal_rows[0]
             portfolio_value = float(m.get("total", 0) or 0)
@@ -609,25 +615,24 @@ async def get_portfolio_risk(
 
     # Get total portfolio value — scoped to the requested bucket when set.
     try:
-        if bucket:
-            bal_rows = execute_sql(
-                """
-                SELECT SUM(total_value) as total FROM account_balances
-                WHERE account_id IN (
-                    SELECT id FROM accounts WHERE bucket = :bucket
-                )
-                """,
-                params={"bucket": bucket},
-                fetch_results=True,
-            )
-        else:
-            bal_rows = execute_sql(
-                "SELECT SUM(total_value) as total FROM account_balances",
-                fetch_results=True,
-            )
+        # Positions equity (account_balances has no total_value column).
+        bucket_clause = " AND acc.bucket = :bucket " if bucket else ""
+        params = {"bucket": bucket} if bucket else None
+        bal_rows = execute_sql(
+            f"""
+            SELECT COALESCE(SUM(p.quantity * COALESCE(p.current_price, p.price)), 0) AS total
+            FROM positions p
+            LEFT JOIN accounts acc ON acc.id = p.account_id
+            WHERE p.quantity > 0
+              AND COALESCE(acc.connection_status, 'connected') != 'deleted'
+              {bucket_clause}
+            """,
+            params=params,
+            fetch_results=True,
+        )
         if bal_rows:
             bm = bal_rows[0]._mapping if hasattr(bal_rows[0], "_mapping") else bal_rows[0]
-            total_value = float(bm.get("total", 0) or 0)
+            total_value = float(bm.get("total", 0) or 0) or total_market_value
         else:
             total_value = total_market_value
     except Exception:
