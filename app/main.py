@@ -44,6 +44,7 @@ from app.routes import (
     sentiment,
     stocks,
     trades,
+    videos,
     watchlist,
     webhook,
 )
@@ -230,6 +231,11 @@ app.include_router(
 app.include_router(
     credibility.router,
     tags=["Credibility"],
+    dependencies=[Depends(require_api_key)],
+)
+app.include_router(
+    videos.router,
+    tags=["Video Research"],
     dependencies=[Depends(require_api_key)],
 )
 

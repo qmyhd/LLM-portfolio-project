@@ -90,3 +90,20 @@ def fetch_transcript(video_id: str) -> tuple[bool, list[dict], str | None]:
     except Exception as e:  # noqa: BLE001 — degrade, never raise
         logger.info("transcript unavailable for %s: %s", video_id, e.__class__.__name__)
         return False, [], e.__class__.__name__
+
+
+def fetch_oembed(url: str) -> dict:
+    """YouTube oEmbed metadata (title/author). Never raises — {} on failure."""
+    import requests
+    try:
+        r = requests.get(
+            "https://www.youtube.com/oembed",
+            params={"url": url, "format": "json"}, timeout=8,
+        )
+        if r.status_code != 200:
+            return {}
+        d = r.json()
+        return {"title": d.get("title"), "author_name": d.get("author_name"),
+                "author_url": d.get("author_url")}
+    except Exception:  # noqa: BLE001
+        return {}

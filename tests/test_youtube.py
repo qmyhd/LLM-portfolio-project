@@ -41,3 +41,35 @@ def test_fetch_transcript_unavailable(monkeypatch):
     monkeypatch.setattr(yt, "_get_transcript_raw", _boom)
     ok, segs, reason = yt.fetch_transcript("abc")
     assert ok is False and segs == [] and isinstance(reason, str)
+
+
+def test_fetch_oembed_success(monkeypatch):
+    import src.youtube as yt
+    class _Resp:
+        status_code = 200
+        @staticmethod
+        def json():
+            return {"title": "Vid Title", "author_name": "Some Channel",
+                    "author_url": "https://www.youtube.com/@somechannel"}
+    monkeypatch.setattr("requests.get", lambda *a, **k: _Resp())
+    out = yt.fetch_oembed("https://www.youtube.com/watch?v=dQw4w9WgXcQ")
+    assert out["title"] == "Vid Title"
+    assert out["author_name"] == "Some Channel"
+    assert out["author_url"].endswith("@somechannel")
+
+def test_fetch_oembed_non_200_returns_empty(monkeypatch):
+    import src.youtube as yt
+    class _Resp:
+        status_code = 404
+        @staticmethod
+        def json():
+            return {}
+    monkeypatch.setattr("requests.get", lambda *a, **k: _Resp())
+    assert yt.fetch_oembed("https://www.youtube.com/watch?v=x") == {}
+
+def test_fetch_oembed_exception_returns_empty(monkeypatch):
+    import src.youtube as yt
+    def _boom(*a, **k):
+        raise RuntimeError("network down")
+    monkeypatch.setattr("requests.get", _boom)
+    assert yt.fetch_oembed("https://www.youtube.com/watch?v=x") == {}
