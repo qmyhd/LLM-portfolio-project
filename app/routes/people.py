@@ -310,3 +310,152 @@ async def get_person_revisions(id: int = Path(...)):
             "createdAt": str(rd["created_at"]) if rd.get("created_at") else None,
         })
     return {"id": id, "revisions": out}
+
+
+# --------------------------------------------------------------------------- #
+# Identities + unmatched review queue (flag-don't-merge)
+# --------------------------------------------------------------------------- #
+
+
+class IdentityBody(BaseModel):
+    platform: str  # twitter/discord/youtube
+    platformUserId: str
+    handle: str | None = None
+
+
+@router.post("/people/{id}/identities")
+async def link_identity(id: int = Path(...), body: IdentityBody = ...):  # noqa: B008
+    lock = _lock_key(f"{body.platform}:{body.platformUserId}")
+    with transaction() as conn:
+        conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock})
+        existing = conn.execute(
+            text(
+                """
+                SELECT id, person_id, match_status
+                FROM source_identities
+                WHERE platform = :platform AND platform_user_id = :puid
+                """
+            ),
+            {"platform": body.platform, "puid": body.platformUserId},
+        ).fetchone()
+
+        if existing is not None and existing[1] is not None and existing[1] != id:
+            # Already linked to a different person — flag, never reassign.
+            conn.execute(
+                text(
+                    """
+                    UPDATE source_identities
+                    SET match_status = 'conflict', updated_at = NOW()
+                    WHERE id = :sid
+                    """
+                ),
+                {"sid": existing[0]},
+            )
+            raise HTTPException(
+                status_code=409,
+                detail=f"identity already linked to person {existing[1]}",
+            )
+
+        if existing is not None:
+            # person_id NULL or already == :id -> confirm it.
+            row = conn.execute(
+                text(
+                    """
+                    UPDATE source_identities
+                    SET person_id = :id, handle = :handle,
+                        match_status = 'confirmed', updated_at = NOW()
+                    WHERE id = :sid
+                    RETURNING id
+                    """
+                ),
+                {"id": id, "handle": body.handle, "sid": existing[0]},
+            )
+            sid = row.fetchone()[0]
+        else:
+            row = conn.execute(
+                text(
+                    """
+                    INSERT INTO source_identities
+                        (person_id, platform, platform_user_id, handle, match_status)
+                    VALUES (:id, :platform, :puid, :handle, 'confirmed')
+                    RETURNING id
+                    """
+                ),
+                {"id": id, "platform": body.platform,
+                 "puid": body.platformUserId, "handle": body.handle},
+            )
+            sid = row.fetchone()[0]
+
+    return {
+        "id": sid,
+        "personId": id,
+        "platform": body.platform,
+        "platformUserId": body.platformUserId,
+        "handle": body.handle,
+        "matchStatus": "confirmed",
+    }
+
+
+@router.delete("/people/{id}/identities/{sid}")
+async def unlink_identity(id: int = Path(...), sid: int = Path(...)):
+    execute_sql(
+        "DELETE FROM source_identities WHERE id = :sid AND person_id = :id",
+        params={"sid": sid, "id": id},
+    )
+    return {"status": "unlinked", "id": sid}
+
+
+@router.get("/identities/unmatched")
+async def list_unmatched_identities():
+    out: list[dict] = []
+
+    flagged = execute_sql(
+        """
+        SELECT id, person_id, platform, platform_user_id, handle, match_status
+        FROM source_identities
+        WHERE match_status IN ('suggested', 'unmatched', 'conflict')
+        ORDER BY updated_at DESC
+        """,
+        fetch_results=True,
+    ) or []
+    for r in flagged:
+        rd = _map(r)
+        out.append({
+            "kind": "flagged",
+            "id": rd.get("id"),
+            "personId": rd.get("person_id"),
+            "platform": rd.get("platform"),
+            "platformUserId": rd.get("platform_user_id"),
+            "handle": rd.get("handle"),
+            "matchStatus": rd.get("match_status"),
+        })
+
+    discord = execute_sql(
+        """
+        SELECT DISTINCT dm.author_id::text AS platform_user_id, dm.author AS handle
+        FROM discord_parsed_ideas dpi
+        JOIN discord_messages dm ON dpi.message_id::text = dm.message_id
+        WHERE dm.author_id IS NOT NULL
+          AND dm.created_at > NOW() - INTERVAL '30 days'
+          AND NOT EXISTS (
+            SELECT 1 FROM source_identities si
+            WHERE si.platform = 'discord'
+              AND si.platform_user_id = dm.author_id::text
+              AND si.match_status = 'confirmed'
+          )
+        """,
+        fetch_results=True,
+    ) or []
+    for r in discord:
+        rd = _map(r)
+        out.append({
+            "kind": "discord_unattributed",
+            "id": None,
+            "personId": None,
+            "platform": "discord",
+            "platformUserId": rd.get("platform_user_id"),
+            "handle": rd.get("handle"),
+            "matchStatus": None,
+        })
+
+    return {"unmatched": out}
