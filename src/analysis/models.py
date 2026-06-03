@@ -43,6 +43,7 @@ class IdeaData(BaseModel):
     idea_text: str
     created_at: str
     author: str
+    author_id: str = ""  # stable Discord user id; "" = unattributable (neutral credibility)
 
 
 class NewsItem(BaseModel):
