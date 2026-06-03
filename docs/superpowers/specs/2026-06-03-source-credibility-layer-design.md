@@ -36,8 +36,9 @@
 
 | Parameter | Value |
 |---|---|
-| Tier multipliers | **S=1.35, A=1.15, B=1.00, C=0.75, D=0.45, muted=0.00** |
-| Effective-multiplier clamp | **[0.30, 1.50]** |
+| Tier multipliers | **S=1.35, A=1.15, B=1.00, C=0.75, D=0.45** |
+| Muted (person muted in a category) | **0.00 — true hard exclusion; bypasses the clamp and drops the idea from the average (see §5)** |
+| Effective-multiplier clamp | **[0.30, 1.50]** — applied only to **nonzero** blended values |
 | Untiered category term | **1.00** (neutral) |
 | Stock with no topic tags | **1.00** (neutral, no change) |
 | Author with no confirmed identity | **1.00** (neutral) |
@@ -46,7 +47,7 @@
 
 `markets`, `company_fundamentals`, `macro`, `geopolitics`, `crypto`, `options_trading`, `technical_analysis`, `media_noise`
 
-> Note: `media_noise` is a *negative-signal* category in practice — a high tier there means "loud but low-signal." It is treated identically by the math (it is a category like any other); its interpretation is editorial. Tagging a stock with `media_noise` and tiering a person low there is how you down-weight pundits.
+> **Tier direction is uniform across every category: a higher tier always means *more* credible/trusted, never less.** `media_noise` means **skill at interpreting media-driven / noisy narratives** (separating signal from hype) — an S there is someone who reads noisy coverage well, not someone who *is* noise. To down-weight a low-signal pundit, tier them **C/D or muted** in the relevant categories; never invert the scale.
 
 ---
 
@@ -83,31 +84,46 @@ Seven tables; three (`credibility_categories`, `tier_multipliers`, `stock_topic_
 ### Effective multiplier for a Discord idea about stock `X` by person `P`
 
 ```
-tags(X)        = { category: weight, ... }      # from stock_topic_tags, raw
-tier_mult(P,c) = tier_multipliers[ P.tier_in(c) ]   if P is tiered in c and not muted
-               = 0.00                               if P is muted in c
-               = 1.00                               if P is untiered in c   (neutral)
+tags(X)        = { category: weight, ... }      # from stock_topic_tags, raw (weight >= 0)
+tier_mult(P,c) = 0.00                               if P is MUTED in c       (hard exclusion)
+               = tier_multipliers[ P.tier_in(c) ]   if P is tiered in c
+               = 1.00                               if P is untiered in c    (neutral)
 
-# normalize tag weights at read time
-W = Σ_c tags(X)[c]
-effective_mult(P, X) = ( Σ_c tags(X)[c] × tier_mult(P,c) ) / W      if W > 0
-                     = 1.00                                          if W == 0  (no tags)
-effective_mult = clamp(effective_mult, 0.30, 1.50)
+# normalize tag weights at read time; muted categories stay in the denominator
+W   = Σ_c tags(X)[c]                                 # all tagged categories, muted included
+raw = ( Σ_c tags(X)[c] × tier_mult(P,c) ) / W        if W > 0
+    = 1.00                                            if W == 0   (stock has no tags → neutral)
+
+effective_mult = 0.00                  if raw == 0.0   (ALL relevant categories muted — NOT clamped)
+               = clamp(raw, 0.30, 1.50) otherwise
 ```
 
-**Worked example:** `LMT = markets 0.6 / geopolitics 0.4`; `P` = markets:A(1.15), geopolitics:S(1.35):
-`(0.6×1.15 + 0.4×1.35) / 1.0 = 1.23`.
+**Muted is a true hard exclusion.** A muted `(person, category)` contributes `0.00` to the numerator while its tag weight stays in `W`, so a *partial* mute drags the blend down but is still clamped to `[0.30, 1.50]`; only when **every** tagged category for that person+symbol is muted does `raw` hit `0.0`, and that `0.00` is preserved (never clamped up to `0.30`).
+
+**Worked examples** (`LMT = markets 0.6 / geopolitics 0.4`):
+
+- Normal — P = markets:A(1.15), geopolitics:S(1.35): `(0.6×1.15 + 0.4×1.35)/1.0 = 1.23`.
+- Partial mute — P = markets:A(1.15), geopolitics:muted: `(0.6×1.15 + 0.4×0)/1.0 = 0.69` → clamp → `0.69`.
+- Fully muted — P muted in both: `0.00` (preserved, not clamped).
 
 **Safe defaults:** no tags on the stock → `1.00`; author has no confirmed identity/person → `1.00`; person untiered in a tagged category → that term is `1.00`.
 
 ### Application in `sentiment.py` (Discord-ideas source only)
 
-`effective_mult` becomes an additional weight factor alongside `confidence` and `time_weight`:
+`effective_mult` is an additional weight factor alongside `confidence` and `time_weight`, with a hard-exclusion drop for fully-muted sources:
 
 ```
-num   += direction_score × confidence × time_weight × effective_mult
-denom += confidence × time_weight × effective_mult
-discord_ideas_score = num / denom                  # still ∈ [-1, 1]
+for each Discord idea by person P about stock X:
+    m = effective_mult(P, X)
+    if m == 0.00:                  # fully-muted source → excluded entirely
+        continue                   #   contributes to NEITHER numerator nor denominator
+    num   += direction_score × confidence × time_weight × m
+    denom += confidence × time_weight × m
+
+if denom == 0:                     # no surviving ideas (e.g. every author muted)
+    discord_ideas → confidence 0 / neutral   # no signal; contributes nothing to overall sentiment
+else:
+    discord_ideas_score = num / denom        # ∈ [-1, 1]
 ```
 
 The Discord **sentiment proxy** (0.20) and **news** (0.30) sources are **untouched** in v1. The agent-level weights in `consensus.py` are **not** changed.
@@ -206,7 +222,7 @@ All DB access uses named `:param` placeholders; writes use `transaction()` + `pg
 ## 12. Guardrails
 
 - Credibility-weighted **average** ⇒ result stays in `[-1, 1]`; **identical to today** when all tiers neutral/absent → safe rollout.
-- Blended multiplier clamped to **[0.30, 1.50]**.
+- Nonzero blended multiplier clamped to **[0.30, 1.50]**; a fully-muted source resolves to **0.00** and is dropped from the average entirely (not clamped up).
 - Fully manual, auditable, revisioned; the explainability delta is **computed** (baseline vs adjusted), never asserted.
 - 073 additive only; RLS on all new tables; no existing-table changes in v1.
 - Twitter scoring stays off until `author_id` is persisted; news scoring untouched.
