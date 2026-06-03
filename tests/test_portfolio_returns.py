@@ -60,3 +60,19 @@ def test_short_history_holding_renormalizes_no_jump():
 def test_empty_inputs_return_zero():
     assert compute_return_series({}, {}) == ([], 0.0)
     assert compute_return_series({"AAPL": 5}, {}) == ([], 0.0)
+
+
+def test_zero_or_invalid_first_close_uses_first_positive_baseline():
+    # If the earliest in-window close is 0/garbage but later closes are valid,
+    # the holding should still reflect its real movement (baseline = first
+    # POSITIVE close), not flat-line at 0% (the old behaviour skipped every day
+    # because base <= 0).
+    points, period = compute_return_series(
+        {"A": 10.0},
+        {"A": {"2026-05-01": 0.0, "2026-05-02": 110.0, "2026-05-03": 121.0}},
+    )
+    # baseline = 110 (first positive); last day 121 -> +10%.
+    assert period == 10.0
+    # the 0-price day contributes nothing (treated as missing), never -100%.
+    assert points[0]["returnPct"] == 0.0
+    assert points[-1]["returnPct"] == 10.0
