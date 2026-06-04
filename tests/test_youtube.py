@@ -153,3 +153,111 @@ def test_fetch_transcript_generic_error_never_raises(monkeypatch):
     monkeypatch.setattr(yt, "_get_transcript_raw", lambda vid: (_ for _ in ()).throw(ValueError("weird")))
     ok, segs, reason = yt.fetch_transcript("abc")
     assert ok is False and segs == [] and reason == "ValueError"
+
+
+# ----------------- TranscriptAPI.com provider (preferred) ------------------
+
+def test_transcriptapi_used_first_when_key_present(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.setenv("TRANSCRIPTAPI_KEY", "k")
+    monkeypatch.setattr(yt, "_fetch_via_transcriptapi",
+                        lambda vid: [{"text": "hi", "start": 1.0, "duration": 2.0}])
+    monkeypatch.setattr(yt, "_get_transcript_raw",
+                        lambda vid: (_ for _ in ()).throw(AssertionError("fallback should not run")))
+    ok, segs, reason = yt.fetch_transcript("abc")
+    assert ok is True and segs[0]["text"] == "hi" and reason is None
+
+
+def test_transcriptapi_failure_falls_back_to_library(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.setenv("TRANSCRIPTAPI_KEY", "k")
+    monkeypatch.setattr(yt, "_fetch_via_transcriptapi", lambda vid: None)  # provider failed
+    monkeypatch.setattr(yt, "_get_transcript_raw",
+                        lambda vid: [{"text": "fb", "start": 0.0, "duration": 1.0}])
+    ok, segs, _ = yt.fetch_transcript("abc")
+    assert ok is True and segs[0]["text"] == "fb"
+
+
+def test_no_transcriptapi_key_uses_library(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.delenv("TRANSCRIPTAPI_KEY", raising=False)
+    called = {"provider": False}
+    monkeypatch.setattr(yt, "_fetch_via_transcriptapi",
+                        lambda vid: (called.__setitem__("provider", True), None)[1])
+    monkeypatch.setattr(yt, "_get_transcript_raw",
+                        lambda vid: [{"text": "lib", "start": 0.0, "duration": 1.0}])
+    ok, segs, _ = yt.fetch_transcript("abc")
+    assert ok is True and segs[0]["text"] == "lib"
+    assert called["provider"] is False
+
+
+def test_fetch_via_transcriptapi_success(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.setenv("TRANSCRIPTAPI_KEY", "k")
+
+    class _R:
+        status_code = 200
+        @staticmethod
+        def json():
+            return {"transcript": [{"text": "a", "start": 0.0, "duration": 2.0},
+                                   {"text": "b", "start": 2.0, "duration": 1.5}]}
+
+    monkeypatch.setattr("requests.get", lambda *a, **k: _R())
+    segs = yt._fetch_via_transcriptapi("abc")
+    assert segs == [{"text": "a", "start": 0.0, "duration": 2.0},
+                    {"text": "b", "start": 2.0, "duration": 1.5}]
+
+
+def test_fetch_via_transcriptapi_non_200_returns_none(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.setenv("TRANSCRIPTAPI_KEY", "k")
+
+    class _R:
+        status_code = 429
+        @staticmethod
+        def json():
+            return {}
+
+    monkeypatch.setattr("requests.get", lambda *a, **k: _R())
+    assert yt._fetch_via_transcriptapi("abc") is None
+
+
+def test_fetch_via_transcriptapi_exception_returns_none(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.setenv("TRANSCRIPTAPI_KEY", "k")
+    monkeypatch.setattr("requests.get", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("net")))
+    assert yt._fetch_via_transcriptapi("abc") is None
+
+
+def test_fetch_via_transcriptapi_no_key_returns_none(monkeypatch):
+    import src.youtube as yt
+    monkeypatch.delenv("TRANSCRIPTAPI_KEY", raising=False)
+    assert yt._fetch_via_transcriptapi("abc") is None
+
+
+def test_normalize_transcriptapi_derives_duration():
+    import src.youtube as yt
+    data = {"transcript": [{"text": "a", "start": 0.0},
+                           {"text": "b", "start": 3.0},
+                           {"text": "c", "start": 5.0}]}
+    segs = yt._normalize_transcriptapi(data)
+    assert segs[0]["duration"] == 3.0   # next start - this start
+    assert segs[1]["duration"] == 2.0
+    assert segs[2]["duration"] == 3.0   # last -> default
+
+
+def test_transcriptapi_does_not_log_key(monkeypatch, caplog):
+    import logging
+    import src.youtube as yt
+    monkeypatch.setenv("TRANSCRIPTAPI_KEY", "SUPERSECRET")
+
+    class _R:
+        status_code = 429
+        @staticmethod
+        def json():
+            return {}
+
+    monkeypatch.setattr("requests.get", lambda *a, **k: _R())
+    with caplog.at_level(logging.DEBUG):
+        yt._fetch_via_transcriptapi("abc")
+    assert "SUPERSECRET" not in caplog.text

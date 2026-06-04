@@ -17,8 +17,12 @@ logger = logging.getLogger(__name__)
 _BLOCKED_EXC_NAMES = frozenset({"RequestBlocked", "IpBlocked"})
 _BLOCKED_REASON = (
     "YouTube blocked transcript requests from this server. "
-    "Transcript proxy not configured or blocked."
+    "No working transcript provider/proxy is configured."
 )
+
+# TranscriptAPI.com (preferred provider when TRANSCRIPTAPI_KEY is set).
+_TRANSCRIPTAPI_URL = "https://transcriptapi.com/api/v2/youtube/transcript"
+_LAST_SEGMENT_DEFAULT_DURATION = 3.0
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -113,8 +117,97 @@ def _get_transcript_raw(video_id: str) -> list[dict]:
     return api.fetch(video_id, languages=["en", "en-US"]).to_raw_data()
 
 
+def _normalize_transcriptapi(data) -> list[dict]:
+    """Normalize a TranscriptAPI.com payload into [{text, start, duration}].
+
+    Tolerant of shape: a top-level list, or a dict holding the segment list under
+    a common key. When a segment lacks a duration, derive it from the next
+    segment's start (positive delta), defaulting the last segment to a small
+    constant. Isolated so it can be unit-tested without the network.
+    """
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = None
+        for key in ("transcript", "segments", "data", "results"):
+            value = data.get(key)
+            if isinstance(value, list):
+                items = value
+                break
+        if items is None:
+            return []
+    else:
+        return []
+
+    # Pass 1: extract text + start (+ duration if present).
+    parsed: list[dict] = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        start = it.get("start", it.get("offset", it.get("start_time")))
+        try:
+            start_f = float(start)
+        except (TypeError, ValueError):
+            continue
+        dur = it.get("duration", it.get("dur"))
+        try:
+            dur_f = float(dur) if dur is not None else None
+        except (TypeError, ValueError):
+            dur_f = None
+        parsed.append({"text": str(it.get("text", "") or ""), "start": start_f, "duration": dur_f})
+
+    # Pass 2: derive missing durations from the next start.
+    out: list[dict] = []
+    for i, seg in enumerate(parsed):
+        dur = seg["duration"]
+        if dur is None:
+            if i + 1 < len(parsed) and parsed[i + 1]["start"] > seg["start"]:
+                dur = parsed[i + 1]["start"] - seg["start"]
+            else:
+                dur = _LAST_SEGMENT_DEFAULT_DURATION
+        out.append({"text": seg["text"], "start": seg["start"], "duration": float(dur)})
+    return out
+
+
+def _fetch_via_transcriptapi(video_id: str) -> list[dict] | None:
+    """Fetch a transcript via TranscriptAPI.com. Returns normalized segments, or
+    None to signal "fall back to youtube-transcript-api". Never raises; the API
+    key is never logged.
+    """
+    api_key = os.getenv("TRANSCRIPTAPI_KEY")
+    if not api_key:
+        return None
+    import requests
+    try:
+        r = requests.get(
+            _TRANSCRIPTAPI_URL,
+            params={"video_id": video_id},
+            headers={"Authorization": f"Bearer {api_key}"},
+            timeout=15,
+        )
+        if r.status_code != 200:
+            logger.info("TranscriptAPI non-200 for %s: %s", video_id, r.status_code)
+            return None
+        segs = _normalize_transcriptapi(r.json())
+        return segs or None
+    except Exception:  # noqa: BLE001 — never raise; signal fallback
+        logger.info("TranscriptAPI request failed for %s", video_id)
+        return None
+
+
 def fetch_transcript(video_id: str) -> tuple[bool, list[dict], str | None]:
-    """(available, segments, reason). Never raises."""
+    """(available, segments, reason). Never raises.
+
+    Provider order: TranscriptAPI.com (if TRANSCRIPTAPI_KEY set) ->
+    youtube-transcript-api (with optional Webshare/generic proxy) -> unavailable.
+    """
+    # 1. Preferred: TranscriptAPI.com (never raises; None -> fall back).
+    if os.getenv("TRANSCRIPTAPI_KEY"):
+        provider_segs = _fetch_via_transcriptapi(video_id)
+        if provider_segs:
+            return True, provider_segs, None
+
+    # 2. Fallback: youtube-transcript-api (+ optional proxy).
     try:
         raw = _get_transcript_raw(video_id) or []
         segs = [
