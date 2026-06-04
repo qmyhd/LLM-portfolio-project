@@ -181,7 +181,8 @@ def _fetch_via_transcriptapi(video_id: str) -> list[dict] | None:
     try:
         r = requests.get(
             _TRANSCRIPTAPI_URL,
-            params={"video_id": video_id},
+            # TranscriptAPI.com expects video_url; a bare video id works as its value.
+            params={"video_url": video_id, "format": "json"},
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=15,
         )
