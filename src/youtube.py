@@ -6,10 +6,19 @@ sentinel so the API can degrade gracefully (spec section 5).
 from __future__ import annotations
 
 import logging
+import os
 import re
 from urllib.parse import parse_qs, urlparse
 
 logger = logging.getLogger(__name__)
+
+# Exception class names (matched by name, not import — robust across library
+# versions) that mean YouTube blocked this server's IP / request.
+_BLOCKED_EXC_NAMES = frozenset({"RequestBlocked", "IpBlocked"})
+_BLOCKED_REASON = (
+    "YouTube blocked transcript requests from this server. "
+    "Transcript proxy not configured or blocked."
+)
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 
@@ -59,20 +68,49 @@ def parse_channel_key(author_url: str | None) -> str | None:
     return None
 
 
+def _build_proxy_config():
+    """Optional proxy config for youtube-transcript-api, from environment.
+
+    YouTube blocks transcript requests from many datacenter IPs (EC2), surfacing
+    as RequestBlocked/IpBlocked. Routing through a residential/rotating proxy
+    avoids that. Precedence: Webshare creds > generic HTTP(S) proxy > none.
+    Credentials are NEVER logged. Returns a proxy config object or None.
+    """
+    ws_user = os.getenv("YOUTUBE_TRANSCRIPT_WEBSHARE_USERNAME")
+    ws_pass = os.getenv("YOUTUBE_TRANSCRIPT_WEBSHARE_PASSWORD")
+    if ws_user and ws_pass:
+        from youtube_transcript_api.proxies import WebshareProxyConfig
+
+        kwargs: dict = {"proxy_username": ws_user, "proxy_password": ws_pass}
+        locations = os.getenv("YOUTUBE_TRANSCRIPT_WEBSHARE_LOCATIONS")
+        if locations:
+            parsed = [c.strip().lower() for c in locations.split(",") if c.strip()]
+            if parsed:
+                kwargs["filter_ip_locations"] = parsed
+        return WebshareProxyConfig(**kwargs)
+
+    http_proxy = os.getenv("YOUTUBE_TRANSCRIPT_HTTP_PROXY")
+    https_proxy = os.getenv("YOUTUBE_TRANSCRIPT_HTTPS_PROXY")
+    if http_proxy or https_proxy:
+        from youtube_transcript_api.proxies import GenericProxyConfig
+
+        return GenericProxyConfig(http_url=http_proxy, https_url=https_proxy)
+
+    return None
+
+
 def _get_transcript_raw(video_id: str) -> list[dict]:
     """Thin call to youtube-transcript-api, isolated for mocking + version adaptation.
 
-    Returns a list of {text, start, duration}. If the installed library version
-    exposes a different surface than the call below, adapt ONLY this function
-    (keep the return shape) — the spike in Step 5 confirms the actual surface.
+    Returns a list of {text, start, duration}. youtube-transcript-api >=1.0 uses
+    an instance API: YouTubeTranscriptApi(proxy_config=...).fetch(video_id) ->
+    FetchedTranscript, which exposes .to_raw_data(). The optional proxy config
+    routes around datacenter-IP blocking (see _build_proxy_config).
     """
     from youtube_transcript_api import YouTubeTranscriptApi
 
-    # youtube-transcript-api >=1.0 replaced the static get_transcript(...) with an
-    # instance API: YouTubeTranscriptApi().fetch(video_id) -> FetchedTranscript,
-    # which exposes .to_raw_data() yielding {text, start, duration} dicts.
-    fetched = YouTubeTranscriptApi().fetch(video_id, languages=["en", "en-US"])
-    return fetched.to_raw_data()
+    api = YouTubeTranscriptApi(proxy_config=_build_proxy_config())
+    return api.fetch(video_id, languages=["en", "en-US"]).to_raw_data()
 
 
 def fetch_transcript(video_id: str) -> tuple[bool, list[dict], str | None]:
@@ -88,8 +126,11 @@ def fetch_transcript(video_id: str) -> tuple[bool, list[dict], str | None]:
             return False, [], "empty transcript"
         return True, segs, None
     except Exception as e:  # noqa: BLE001 — degrade, never raise
-        logger.info("transcript unavailable for %s: %s", video_id, e.__class__.__name__)
-        return False, [], e.__class__.__name__
+        name = e.__class__.__name__
+        logger.info("transcript unavailable for %s: %s", video_id, name)
+        if name in _BLOCKED_EXC_NAMES:
+            return False, [], _BLOCKED_REASON
+        return False, [], name
 
 
 def fetch_oembed(url: str) -> dict:

@@ -73,3 +73,83 @@ def test_fetch_oembed_exception_returns_empty(monkeypatch):
         raise RuntimeError("network down")
     monkeypatch.setattr("requests.get", _boom)
     assert yt.fetch_oembed("https://www.youtube.com/watch?v=x") == {}
+
+
+# --------- Phase: proxy support + RequestBlocked handling (hotfix) ---------
+
+_PROXY_ENV = (
+    "YOUTUBE_TRANSCRIPT_WEBSHARE_USERNAME",
+    "YOUTUBE_TRANSCRIPT_WEBSHARE_PASSWORD",
+    "YOUTUBE_TRANSCRIPT_WEBSHARE_LOCATIONS",
+    "YOUTUBE_TRANSCRIPT_HTTP_PROXY",
+    "YOUTUBE_TRANSCRIPT_HTTPS_PROXY",
+)
+
+
+def _clear_proxy_env(monkeypatch):
+    for v in _PROXY_ENV:
+        monkeypatch.delenv(v, raising=False)
+
+
+def test_build_proxy_config_none(monkeypatch):
+    import src.youtube as yt
+    _clear_proxy_env(monkeypatch)
+    assert yt._build_proxy_config() is None
+
+
+def test_build_proxy_config_webshare(monkeypatch):
+    import src.youtube as yt
+    _clear_proxy_env(monkeypatch)
+    monkeypatch.setenv("YOUTUBE_TRANSCRIPT_WEBSHARE_USERNAME", "u")
+    monkeypatch.setenv("YOUTUBE_TRANSCRIPT_WEBSHARE_PASSWORD", "p")
+    monkeypatch.setenv("YOUTUBE_TRANSCRIPT_WEBSHARE_LOCATIONS", "us, de")
+    cfg = yt._build_proxy_config()
+    assert type(cfg).__name__ == "WebshareProxyConfig"
+
+
+def test_build_proxy_config_generic(monkeypatch):
+    import src.youtube as yt
+    _clear_proxy_env(monkeypatch)
+    monkeypatch.setenv("YOUTUBE_TRANSCRIPT_HTTPS_PROXY", "https://user:pass@proxy.example:8080")
+    cfg = yt._build_proxy_config()
+    assert type(cfg).__name__ == "GenericProxyConfig"
+
+
+def test_build_proxy_config_webshare_wins_over_generic(monkeypatch):
+    import src.youtube as yt
+    _clear_proxy_env(monkeypatch)
+    monkeypatch.setenv("YOUTUBE_TRANSCRIPT_WEBSHARE_USERNAME", "u")
+    monkeypatch.setenv("YOUTUBE_TRANSCRIPT_WEBSHARE_PASSWORD", "p")
+    monkeypatch.setenv("YOUTUBE_TRANSCRIPT_HTTPS_PROXY", "https://proxy.example:8080")
+    assert type(yt._build_proxy_config()).__name__ == "WebshareProxyConfig"
+
+
+def test_fetch_transcript_requestblocked_friendly_reason(monkeypatch):
+    import src.youtube as yt
+
+    class RequestBlocked(Exception):
+        pass
+
+    monkeypatch.setattr(yt, "_get_transcript_raw", lambda vid: (_ for _ in ()).throw(RequestBlocked("x")))
+    ok, segs, reason = yt.fetch_transcript("abc")
+    assert ok is False and segs == []
+    assert "blocked transcript requests" in reason.lower()
+
+
+def test_fetch_transcript_ipblocked_friendly_reason(monkeypatch):
+    import src.youtube as yt
+
+    class IpBlocked(Exception):
+        pass
+
+    monkeypatch.setattr(yt, "_get_transcript_raw", lambda vid: (_ for _ in ()).throw(IpBlocked("x")))
+    _, _, reason = yt.fetch_transcript("abc")
+    assert "blocked transcript requests" in reason.lower()
+
+
+def test_fetch_transcript_generic_error_never_raises(monkeypatch):
+    import src.youtube as yt
+
+    monkeypatch.setattr(yt, "_get_transcript_raw", lambda vid: (_ for _ in ()).throw(ValueError("weird")))
+    ok, segs, reason = yt.fetch_transcript("abc")
+    assert ok is False and segs == [] and reason == "ValueError"
