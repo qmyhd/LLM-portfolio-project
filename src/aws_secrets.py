@@ -121,8 +121,10 @@ SECRET_KEY_MAPPING = {
     "TWITTER_BEARER_TOKEN": "TWITTER_BEARER_TOKEN",
     # OpenBB / FMP
     "FMP_API_KEY": "FMP_API_KEY",
-    # YouTube transcript proxy (optional — avoids datacenter-IP RequestBlocked).
-    # Absent keys are skipped, so these are safe to map before the values exist.
+    # YouTube transcript provider/proxy (optional — avoids datacenter-IP
+    # RequestBlocked). Absent keys are skipped, so these are safe to map before
+    # the values exist. TranscriptAPI.com is the preferred provider.
+    "TRANSCRIPTAPI_KEY": "TRANSCRIPTAPI_KEY",
     "YOUTUBE_TRANSCRIPT_WEBSHARE_USERNAME": "YOUTUBE_TRANSCRIPT_WEBSHARE_USERNAME",
     "YOUTUBE_TRANSCRIPT_WEBSHARE_PASSWORD": "YOUTUBE_TRANSCRIPT_WEBSHARE_PASSWORD",
     "YOUTUBE_TRANSCRIPT_WEBSHARE_LOCATIONS": "YOUTUBE_TRANSCRIPT_WEBSHARE_LOCATIONS",
