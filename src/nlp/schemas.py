@@ -392,4 +392,5 @@ def parsed_idea_to_db_row(
 
 # v1.0: Initial parser prompt
 # v1.1: Enhanced levels extraction with explicit patterns and examples (Dec 2025)
-CURRENT_PROMPT_VERSION = "v1.1"
+# v1.2: X/Twitter source separation + 13F/institutional attribution handling
+CURRENT_PROMPT_VERSION = "v1.2"
