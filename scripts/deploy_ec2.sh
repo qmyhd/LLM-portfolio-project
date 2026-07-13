@@ -68,10 +68,13 @@ step "Restarting discord-bot.service..."
 sudo systemctl restart discord-bot.service
 
 # ── 6. Wait for API to come up, then health check ───────────────────
-step "Waiting for API to start (up to 15s)..."
+# The API takes 30-60s to boot (OpenBB and friends import at startup), so
+# the window must cover a cold start — a short window fails the workflow
+# while the service is still coming up (observed on run 29215179405).
+step "Waiting for API to start (up to 90s)..."
 sleep 3
 
-RETRIES=4
+RETRIES=29
 for i in $(seq 1 $RETRIES); do
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" --max-time 5 http://127.0.0.1:8000/health 2>/dev/null || echo "000")
     if [[ "$HTTP_CODE" == "200" ]]; then
