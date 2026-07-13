@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import require_api_key
+from app.auth import router as auth_router
 from app.routes import (
     activities,
     chat,
@@ -236,6 +237,14 @@ app.include_router(
 app.include_router(
     videos.router,
     tags=["Video Research"],
+    dependencies=[Depends(require_api_key)],
+)
+# Auth tracking — called server-side by the Next.js frontend during sign-in,
+# so it carries the same API key as every other route. Not a public endpoint.
+app.include_router(
+    auth_router,
+    prefix="/auth",
+    tags=["Auth"],
     dependencies=[Depends(require_api_key)],
 )
 

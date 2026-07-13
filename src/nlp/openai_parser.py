@@ -572,6 +572,25 @@ Parse the message into semantic "idea units". Each idea should:
 - symbols[]: ALL tickers mentioned in this idea
 - Use uppercase without $ (e.g., "AAPL" not "$AAPL")
 
+### X/Twitter and linked-post content
+- If the Discord message is mainly sharing an X/Twitter post, preserve the tweet as RESOURCE_LINK
+  and classify the tweet's claims separately from the sender's own trade action.
+- Do not infer that the Discord sender bought/sold/holds something just because a linked tweet is bullish or bearish.
+- Broad narrative tweets can be valid timeline/story context even when they have no ticker; use
+  primary_symbol=null, action=none, direction=neutral or mixed unless the text is explicit.
+
+### 13F / institutional filing handling
+- Treat 13F, Form 13F, whale/fund holdings, "filed", "new stake", "increased stake",
+  "reduced stake", and "portfolio update" from named investors or funds as INSTITUTIONAL_FLOW.
+- Keep all trades from the same named filing/investor thesis together when they are one coherent
+  filing review. Prefer one digest idea with symbols[] over many separate ideas unless the sender
+  gives an explicit personal trade plan for a specific symbol.
+- Attribute institutional filing content to the investor/fund being discussed, not automatically
+  to the Discord sender. Use action=watch or none unless the sender explicitly says they bought,
+  sold, trimmed, added, shorted, or plan to trade.
+- If a message says "Buffett/Berkshire 13F..." or similar, the idea_summary should name the
+  investor/fund and filing context.
+
 ### Instrument Type
 Classify the asset type being discussed:
 - equity: Stocks, shares, ETFs (default for most tickers)

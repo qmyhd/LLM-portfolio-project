@@ -13,7 +13,8 @@ Endpoints:
 import json
 import logging
 import os
-from typing import Optional
+from datetime import datetime
+from typing import Any, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, Query
@@ -44,6 +45,21 @@ class IdeaOut(BaseModel):
     status: str
     tags: list[str] = Field(default_factory=list)
     originMessageId: str | None = None
+    title: str | None = None
+    sourceUrl: str | None = None
+    sourceCreatedAt: str | None = None
+    author: str | None = None
+    authorId: str | None = None
+    platformMessageId: str | None = None
+    threadKey: str | None = None
+    sourceMetadata: dict[str, Any] = Field(default_factory=dict)
+    reviewStatus: str = "unreviewed"
+    reviewNotes: str | None = None
+    attributedPersonId: int | None = None
+    attributionKind: str = "self"
+    filingType: str | None = None
+    filingPeriod: str | None = None
+    institutionName: str | None = None
     contentHash: str
     createdAt: str
     updatedAt: str
@@ -66,6 +82,21 @@ class CreateIdeaRequest(BaseModel):
     tags: list[str] = Field(default_factory=list)
     status: str = "draft"
     source: str = "manual"
+    title: str | None = None
+    sourceUrl: str | None = None
+    sourceCreatedAt: datetime | None = None
+    author: str | None = None
+    authorId: str | None = None
+    platformMessageId: str | None = None
+    threadKey: str | None = None
+    sourceMetadata: dict[str, Any] = Field(default_factory=dict)
+    reviewStatus: str = "unreviewed"
+    reviewNotes: str | None = None
+    attributedPersonId: int | None = None
+    attributionKind: str = "self"
+    filingType: str | None = None
+    filingPeriod: str | None = None
+    institutionName: str | None = None
 
 
 class UpdateIdeaRequest(BaseModel):
@@ -76,6 +107,83 @@ class UpdateIdeaRequest(BaseModel):
     symbols: list[str] | None = None
     tags: list[str] | None = None
     status: str | None = None
+    title: str | None = None
+    sourceUrl: str | None = None
+    sourceCreatedAt: datetime | None = None
+    author: str | None = None
+    authorId: str | None = None
+    platformMessageId: str | None = None
+    threadKey: str | None = None
+    sourceMetadata: dict[str, Any] | None = None
+    reviewStatus: str | None = None
+    reviewNotes: str | None = None
+    attributedPersonId: int | None = None
+    attributionKind: str | None = None
+    filingType: str | None = None
+    filingPeriod: str | None = None
+    institutionName: str | None = None
+
+
+class ImportMessage(BaseModel):
+    """Normalized imported iMessage/timeline item."""
+
+    content: str
+    sentAt: datetime | None = None
+    author: str | None = None
+    authorId: str | None = None
+    messageId: str | None = None
+    threadKey: str | None = None
+    symbols: list[str] = Field(default_factory=list)
+    tags: list[str] = Field(default_factory=list)
+    sourceUrl: str | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class ImportMessagesRequest(BaseModel):
+    source: str = "imessage"
+    threadKey: str | None = None
+    defaultAuthor: str | None = None
+    messages: list[ImportMessage]
+
+
+class ImportMessagesResponse(BaseModel):
+    imported: int
+    skipped: int
+    ideas: list[IdeaOut]
+
+
+class TimelineResponse(BaseModel):
+    ideas: list[IdeaOut]
+    total: int
+
+
+class ParsedIdeaCurationRequest(BaseModel):
+    labels: list[str] | None = None
+    primarySymbol: str | None = None
+    symbols: list[str] | None = None
+    ideaText: str | None = None
+    ideaSummary: str | None = None
+    direction: str | None = None
+    action: str | None = None
+    reviewStatus: str = "reviewed"
+    reviewNotes: str | None = None
+    attributedPersonId: int | None = None
+    attributionKind: str | None = None
+    thesisBucket: str | None = None
+    filingType: str | None = None
+    filingPeriod: str | None = None
+    institutionName: str | None = None
+
+
+class ParsedIdeaCurationResponse(BaseModel):
+    id: str
+    reviewStatus: str
+    labels: list[str]
+    primarySymbol: str | None = None
+    symbols: list[str]
+    attributionKind: str
+    attributedPersonId: int | None = None
+    thesisBucket: str | None = None
 
 
 class RefineResponse(BaseModel):
@@ -123,14 +231,41 @@ def _row_to_idea(row) -> IdeaOut:
         status=rd["status"],
         tags=rd.get("tags") or [],
         originMessageId=rd.get("origin_message_id"),
+        title=rd.get("title"),
+        sourceUrl=rd.get("source_url"),
+        sourceCreatedAt=str(rd["source_created_at"]) if rd.get("source_created_at") else None,
+        author=rd.get("author"),
+        authorId=rd.get("author_id"),
+        platformMessageId=rd.get("platform_message_id"),
+        threadKey=rd.get("thread_key"),
+        sourceMetadata=rd.get("source_metadata") or {},
+        reviewStatus=rd.get("review_status") or "unreviewed",
+        reviewNotes=rd.get("review_notes"),
+        attributedPersonId=rd.get("attributed_person_id"),
+        attributionKind=rd.get("attribution_kind") or "self",
+        filingType=rd.get("filing_type"),
+        filingPeriod=rd.get("filing_period"),
+        institutionName=rd.get("institution_name"),
         contentHash=rd["content_hash"],
         createdAt=str(rd["created_at"]),
         updatedAt=str(rd["updated_at"]),
     )
 
 
-_VALID_SOURCES = {"discord", "manual", "transcribe"}
+_VALID_SOURCES = {"discord", "manual", "transcribe", "imessage", "twitter", "x"}
 _VALID_STATUSES = {"draft", "refined", "archived"}
+_VALID_REVIEW_STATUSES = {"unreviewed", "reviewed", "needs_review"}
+_VALID_ATTRIBUTION_KINDS = {"self", "external_person", "institution", "unknown"}
+
+
+def _idea_select_columns() -> str:
+    return """
+        id, symbol, symbols, content, source, status, tags,
+        origin_message_id, title, source_url, source_created_at, author, author_id,
+        platform_message_id, thread_key, source_metadata, review_status, review_notes,
+        attributed_person_id, attribution_kind, filing_type, filing_period,
+        institution_name, content_hash, created_at, updated_at
+    """
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +278,9 @@ async def list_ideas(
     tag: str | None = Query(None, description="Filter by tag"),
     source: str | None = Query(None, description="Filter by source"),
     status: str | None = Query(None, description="Filter by status"),
+    review_status: str | None = Query(None, description="Filter by review status"),
+    thread_key: str | None = Query(None, description="Filter by source thread"),
+    attribution_kind: str | None = Query(None, description="Filter by attribution kind"),
     q: str | None = Query(None, description="Full-text search on content"),
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
@@ -169,6 +307,19 @@ async def list_ideas(
                 raise HTTPException(status_code=400, detail=f"Invalid status: {status}")
             conditions.append("status = :status")
             params["status"] = status
+        if review_status:
+            if review_status not in _VALID_REVIEW_STATUSES:
+                raise HTTPException(status_code=400, detail=f"Invalid review status: {review_status}")
+            conditions.append("review_status = :review_status")
+            params["review_status"] = review_status
+        if thread_key:
+            conditions.append("thread_key = :thread_key")
+            params["thread_key"] = thread_key
+        if attribution_kind:
+            if attribution_kind not in _VALID_ATTRIBUTION_KINDS:
+                raise HTTPException(status_code=400, detail=f"Invalid attribution kind: {attribution_kind}")
+            conditions.append("attribution_kind = :attribution_kind")
+            params["attribution_kind"] = attribution_kind
         if q:
             conditions.append("content ILIKE :q")
             params["q"] = f"%{q}%"
@@ -186,10 +337,9 @@ async def list_ideas(
 
         # Fetch ideas
         data_sql = f"""
-            SELECT id, symbol, symbols, content, source, status, tags,
-                   origin_message_id, content_hash, created_at, updated_at
+            SELECT {_idea_select_columns()}
             FROM user_ideas{where_clause}
-            ORDER BY created_at DESC
+            ORDER BY COALESCE(source_created_at, created_at) DESC
             LIMIT :limit OFFSET :offset
         """
         rows = execute_sql(data_sql, params=params, fetch_results=True)
@@ -206,6 +356,172 @@ async def list_ideas(
         raise HTTPException(status_code=500, detail="Failed to list ideas") from None
 
 
+@router.get("/timeline", response_model=TimelineResponse)
+async def ideas_timeline(
+    source: str | None = Query(None),
+    thread_key: str | None = Query(None),
+    author: str | None = Query(None),
+    symbol: str | None = Query(None),
+    limit: int = Query(100, ge=1, le=500),
+):
+    """Chronological story/timeline view across imported and journal ideas."""
+    conditions = []
+    params: dict = {"limit": limit}
+    if source:
+        if source not in _VALID_SOURCES:
+            raise HTTPException(status_code=400, detail=f"Invalid source: {source}")
+        conditions.append("source = :source")
+        params["source"] = source
+    if thread_key:
+        conditions.append("thread_key = :thread_key")
+        params["thread_key"] = thread_key
+    if author:
+        conditions.append("author ILIKE :author")
+        params["author"] = author
+    if symbol:
+        conditions.append("(UPPER(symbol) = :symbol OR :symbol = ANY(symbols))")
+        params["symbol"] = symbol.upper()
+    where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    rows = execute_sql(
+        f"""
+        SELECT {_idea_select_columns()}
+        FROM user_ideas{where_clause}
+        ORDER BY COALESCE(source_created_at, created_at) ASC
+        LIMIT :limit
+        """,
+        params=params,
+        fetch_results=True,
+    ) or []
+    return TimelineResponse(ideas=[_row_to_idea(row) for row in rows], total=len(rows))
+
+
+@router.post("/import/messages", response_model=ImportMessagesResponse, status_code=201)
+async def import_messages(body: ImportMessagesRequest):
+    """Import iMessage/X-style timeline messages into the unified ideas store."""
+    if body.source not in {"imessage", "twitter", "x"}:
+        raise HTTPException(status_code=400, detail="Import source must be imessage, twitter, or x")
+    if not body.messages:
+        raise HTTPException(status_code=400, detail="messages cannot be empty")
+
+    imported: list[IdeaOut] = []
+    skipped = 0
+    for msg in body.messages:
+        if not msg.content.strip():
+            skipped += 1
+            continue
+        content_hash = compute_content_hash(msg.content)
+        symbols = [s.upper().lstrip("$") for s in msg.symbols] or None
+        symbol = symbols[0] if symbols else None
+        thread_key = msg.threadKey or body.threadKey
+        author = msg.author or body.defaultAuthor
+
+        try:
+            rows = execute_sql(
+                f"""
+                INSERT INTO user_ideas (
+                    symbol, symbols, content, source, status, tags, content_hash,
+                    source_url, source_created_at, author, author_id,
+                    platform_message_id, thread_key, source_metadata,
+                    review_status, attribution_kind
+                )
+                VALUES (
+                    :symbol, :symbols, :content, :source, 'draft', :tags, :content_hash,
+                    :source_url, :source_created_at, :author, :author_id,
+                    :platform_message_id, :thread_key, CAST(:source_metadata AS jsonb),
+                    'unreviewed', 'self'
+                )
+                ON CONFLICT DO NOTHING
+                RETURNING {_idea_select_columns()}
+                """,
+                params={
+                    "symbol": symbol,
+                    "symbols": symbols,
+                    "content": msg.content.strip(),
+                    "source": body.source,
+                    "tags": msg.tags or None,
+                    "content_hash": content_hash,
+                    "source_url": msg.sourceUrl,
+                    "source_created_at": msg.sentAt,
+                    "author": author,
+                    "author_id": msg.authorId,
+                    "platform_message_id": msg.messageId,
+                    "thread_key": thread_key,
+                    "source_metadata": json.dumps(msg.metadata or {}),
+                },
+                fetch_results=True,
+            ) or []
+            if rows:
+                imported.append(_row_to_idea(rows[0]))
+            else:
+                skipped += 1
+        except Exception as e:
+            logger.warning("Skipped imported %s message %s: %s", body.source, msg.messageId, e)
+            skipped += 1
+
+    return ImportMessagesResponse(imported=len(imported), skipped=skipped, ideas=imported)
+
+
+@router.put("/discord-parsed/{parsed_id}/curation", response_model=ParsedIdeaCurationResponse)
+async def curate_discord_parsed_idea(
+    parsed_id: UUID = Path(...),
+    body: ParsedIdeaCurationRequest = ...,
+):
+    """Human-correct labels, attribution, and 13F bucketing for an NLP idea."""
+    if body.reviewStatus not in _VALID_REVIEW_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid review status: {body.reviewStatus}")
+    if body.attributionKind is not None and body.attributionKind not in _VALID_ATTRIBUTION_KINDS:
+        raise HTTPException(status_code=400, detail=f"Invalid attribution kind: {body.attributionKind}")
+
+    set_clauses = ["review_status = :review_status"]
+    params: dict = {"id": str(parsed_id), "review_status": body.reviewStatus}
+    field_map = {
+        "labels": ("labels", body.labels),
+        "primary_symbol": ("primarySymbol", body.primarySymbol.upper() if body.primarySymbol else None),
+        "symbols": ("symbols", [s.upper() for s in body.symbols] if body.symbols is not None else None),
+        "idea_text": ("ideaText", body.ideaText),
+        "idea_summary": ("ideaSummary", body.ideaSummary),
+        "direction": ("direction", body.direction),
+        "action": ("action", body.action),
+        "review_notes": ("reviewNotes", body.reviewNotes),
+        "attributed_person_id": ("attributedPersonId", body.attributedPersonId),
+        "attribution_kind": ("attributionKind", body.attributionKind),
+        "thesis_bucket": ("thesisBucket", body.thesisBucket),
+        "filing_type": ("filingType", body.filingType),
+        "filing_period": ("filingPeriod", body.filingPeriod),
+        "institution_name": ("institutionName", body.institutionName),
+    }
+    for column, (field_name, value) in field_map.items():
+        if field_name in body.model_fields_set:
+            set_clauses.append(f"{column} = :{column}")
+            params[column] = value
+
+    rows = execute_sql(
+        f"""
+        UPDATE discord_parsed_ideas
+        SET {', '.join(set_clauses)}
+        WHERE id = :id
+        RETURNING id, review_status, labels, primary_symbol, symbols,
+                  attribution_kind, attributed_person_id, thesis_bucket
+        """,
+        params=params,
+        fetch_results=True,
+    )
+    if not rows:
+        raise HTTPException(status_code=404, detail="Parsed idea not found")
+    rd = dict(rows[0]._mapping) if hasattr(rows[0], "_mapping") else dict(rows[0])
+    return ParsedIdeaCurationResponse(
+        id=str(rd["id"]),
+        reviewStatus=rd.get("review_status") or "reviewed",
+        labels=rd.get("labels") or [],
+        primarySymbol=rd.get("primary_symbol"),
+        symbols=rd.get("symbols") or [],
+        attributionKind=rd.get("attribution_kind") or "self",
+        attributedPersonId=rd.get("attributed_person_id"),
+        thesisBucket=rd.get("thesis_bucket"),
+    )
+
+
 @router.post("", response_model=IdeaOut, status_code=201)
 async def create_idea(request: CreateIdeaRequest):
     """Create a new idea."""
@@ -215,6 +531,10 @@ async def create_idea(request: CreateIdeaRequest):
         raise HTTPException(status_code=400, detail=f"Invalid source: {request.source}")
     if request.status not in _VALID_STATUSES:
         raise HTTPException(status_code=400, detail=f"Invalid status: {request.status}")
+    if request.reviewStatus not in _VALID_REVIEW_STATUSES:
+        raise HTTPException(status_code=400, detail=f"Invalid review status: {request.reviewStatus}")
+    if request.attributionKind not in _VALID_ATTRIBUTION_KINDS:
+        raise HTTPException(status_code=400, detail=f"Invalid attribution kind: {request.attributionKind}")
 
     content_hash = compute_content_hash(request.content)
     symbol = request.symbol.upper() if request.symbol else None
@@ -222,11 +542,22 @@ async def create_idea(request: CreateIdeaRequest):
 
     try:
         rows = execute_sql(
-            """
-            INSERT INTO user_ideas (symbol, symbols, content, source, status, tags, content_hash)
-            VALUES (:symbol, :symbols, :content, :source, :status, :tags, :content_hash)
-            RETURNING id, symbol, symbols, content, source, status, tags,
-                      origin_message_id, content_hash, created_at, updated_at
+            f"""
+            INSERT INTO user_ideas (
+                symbol, symbols, content, source, status, tags, content_hash,
+                title, source_url, source_created_at, author, author_id,
+                platform_message_id, thread_key, source_metadata, review_status,
+                review_notes, attributed_person_id, attribution_kind, filing_type,
+                filing_period, institution_name
+            )
+            VALUES (
+                :symbol, :symbols, :content, :source, :status, :tags, :content_hash,
+                :title, :source_url, :source_created_at, :author, :author_id,
+                :platform_message_id, :thread_key, CAST(:source_metadata AS jsonb),
+                :review_status, :review_notes, :attributed_person_id,
+                :attribution_kind, :filing_type, :filing_period, :institution_name
+            )
+            RETURNING {_idea_select_columns()}
             """,
             params={
                 "symbol": symbol,
@@ -236,6 +567,21 @@ async def create_idea(request: CreateIdeaRequest):
                 "status": request.status,
                 "tags": request.tags or None,
                 "content_hash": content_hash,
+                "title": request.title,
+                "source_url": request.sourceUrl,
+                "source_created_at": request.sourceCreatedAt,
+                "author": request.author,
+                "author_id": request.authorId,
+                "platform_message_id": request.platformMessageId,
+                "thread_key": request.threadKey,
+                "source_metadata": json.dumps(request.sourceMetadata or {}),
+                "review_status": request.reviewStatus,
+                "review_notes": request.reviewNotes,
+                "attributed_person_id": request.attributedPersonId,
+                "attribution_kind": request.attributionKind,
+                "filing_type": request.filingType,
+                "filing_period": request.filingPeriod,
+                "institution_name": request.institutionName,
             },
             fetch_results=True,
         )
@@ -281,6 +627,38 @@ async def update_idea(
             raise HTTPException(status_code=400, detail=f"Invalid status: {request.status}")
         set_clauses.append("status = :status")
         params["status"] = request.status
+    scalar_fields = {
+        "title": ("title", request.title),
+        "source_url": ("sourceUrl", request.sourceUrl),
+        "source_created_at": ("sourceCreatedAt", request.sourceCreatedAt),
+        "author": ("author", request.author),
+        "author_id": ("authorId", request.authorId),
+        "platform_message_id": ("platformMessageId", request.platformMessageId),
+        "thread_key": ("threadKey", request.threadKey),
+        "review_notes": ("reviewNotes", request.reviewNotes),
+        "attributed_person_id": ("attributedPersonId", request.attributedPersonId),
+        "filing_type": ("filingType", request.filingType),
+        "filing_period": ("filingPeriod", request.filingPeriod),
+        "institution_name": ("institutionName", request.institutionName),
+    }
+    fields_set = request.model_fields_set
+    for column, (field_name, value) in scalar_fields.items():
+        if field_name in fields_set:
+            set_clauses.append(f"{column} = :{column}")
+            params[column] = value
+    if "sourceMetadata" in fields_set:
+        set_clauses.append("source_metadata = CAST(:source_metadata AS jsonb)")
+        params["source_metadata"] = json.dumps(request.sourceMetadata or {})
+    if request.reviewStatus is not None:
+        if request.reviewStatus not in _VALID_REVIEW_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Invalid review status: {request.reviewStatus}")
+        set_clauses.append("review_status = :review_status")
+        params["review_status"] = request.reviewStatus
+    if request.attributionKind is not None:
+        if request.attributionKind not in _VALID_ATTRIBUTION_KINDS:
+            raise HTTPException(status_code=400, detail=f"Invalid attribution kind: {request.attributionKind}")
+        set_clauses.append("attribution_kind = :attribution_kind")
+        params["attribution_kind"] = request.attributionKind
 
     if not set_clauses:
         raise HTTPException(status_code=400, detail="No fields to update")
@@ -291,8 +669,7 @@ async def update_idea(
             UPDATE user_ideas
             SET {', '.join(set_clauses)}
             WHERE id = :id
-            RETURNING id, symbol, symbols, content, source, status, tags,
-                      origin_message_id, content_hash, created_at, updated_at
+            RETURNING {_idea_select_columns()}
             """,
             params=params,
             fetch_results=True,
