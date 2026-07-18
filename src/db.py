@@ -271,6 +271,39 @@ def save_parsed_ideas_atomic(
             text("SELECT pg_advisory_xact_lock(:lock_key)"), {"lock_key": lock_key}
         )
 
+        # Step 0.5: Human curation wins — if any idea row for this message has
+        # been reviewed (review_status != 'unreviewed'), the message is frozen:
+        # keep the curated rows, discard this parse, and mark the message 'ok'
+        # so it doesn't loop as pending. Re-open by setting the rows back to
+        # 'unreviewed' via PUT /ideas/discord-parsed/{id}/curation.
+        reviewed = conn.execute(
+            text(
+                """
+                SELECT 1 FROM discord_parsed_ideas
+                WHERE message_id = CAST(:message_id AS text)
+                  AND review_status <> 'unreviewed'
+                LIMIT 1
+                """
+            ),
+            {"message_id": str(message_id)},
+        ).fetchone()
+        if reviewed:
+            logger.info(
+                "Skipping reparse of message %s: has human-reviewed ideas",
+                message_id,
+            )
+            conn.execute(
+                text(
+                    """
+                    UPDATE discord_messages
+                    SET parse_status = 'ok', error_reason = NULL
+                    WHERE message_id = CAST(:message_id AS text)
+                    """
+                ),
+                {"message_id": str(message_id)},
+            )
+            return 0
+
         # Step 1: Delete existing ideas for this message
         conn.execute(
             text(

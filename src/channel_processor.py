@@ -316,6 +316,7 @@ def _delete_existing_ideas(message_id: str) -> None:
     query = """
         DELETE FROM discord_parsed_ideas
         WHERE message_id = CAST(:message_id AS text)
+          AND review_status = 'unreviewed'
     """
     execute_sql(query, params={"message_id": str(message_id)})
 

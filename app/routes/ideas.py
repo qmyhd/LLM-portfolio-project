@@ -186,6 +186,40 @@ class ParsedIdeaCurationResponse(BaseModel):
     thesisBucket: str | None = None
 
 
+class ParsedIdeaReviewItem(BaseModel):
+    """A parsed Discord idea plus its source message, for the review queue."""
+
+    id: str
+    messageId: str
+    ideaText: str | None = None
+    ideaSummary: str | None = None
+    primarySymbol: str | None = None
+    symbols: list[str] = Field(default_factory=list)
+    labels: list[str] = Field(default_factory=list)
+    direction: str | None = None
+    action: str | None = None
+    isNoise: bool = False
+    confidence: float | None = None
+    parsedAt: str | None = None
+    reviewStatus: str = "unreviewed"
+    reviewNotes: str | None = None
+    attributionKind: str = "self"
+    attributedPersonId: int | None = None
+    thesisBucket: str | None = None
+    filingType: str | None = None
+    filingPeriod: str | None = None
+    institutionName: str | None = None
+    messageContent: str | None = None
+    messageAuthor: str | None = None
+    messageChannel: str | None = None
+    messageCreatedAt: str | None = None
+
+
+class ParsedIdeasListResponse(BaseModel):
+    items: list[ParsedIdeaReviewItem]
+    total: int
+
+
 class RefineResponse(BaseModel):
     """Auto-refine result."""
 
@@ -460,6 +494,102 @@ async def import_messages(body: ImportMessagesRequest):
             skipped += 1
 
     return ImportMessagesResponse(imported=len(imported), skipped=skipped, ideas=imported)
+
+
+@router.get("/discord-parsed", response_model=ParsedIdeasListResponse)
+async def list_discord_parsed_ideas(
+    review_status: str | None = Query(None, description="Filter by review status"),
+    symbol: str | None = Query(None, description="Filter by primary or secondary symbol"),
+    label: str | None = Query(None, description="Filter by NLP label"),
+    include_noise: bool = Query(False, description="Include ideas flagged as noise"),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """List parsed Discord ideas with their source message, for the review queue."""
+    conditions: list[str] = []
+    params: dict = {"limit": limit, "offset": offset}
+
+    if review_status:
+        if review_status not in _VALID_REVIEW_STATUSES:
+            raise HTTPException(status_code=400, detail=f"Invalid review status: {review_status}")
+        conditions.append("dpi.review_status = :review_status")
+        params["review_status"] = review_status
+    if symbol:
+        conditions.append("(UPPER(dpi.primary_symbol) = :symbol OR :symbol = ANY(dpi.symbols))")
+        params["symbol"] = symbol.upper()
+    if label:
+        conditions.append(":label = ANY(dpi.labels)")
+        params["label"] = label
+    if not include_noise:
+        conditions.append("COALESCE(dpi.is_noise, false) = false")
+
+    where_clause = (" WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    try:
+        count_rows = execute_sql(
+            f"SELECT COUNT(*) FROM discord_parsed_ideas dpi{where_clause}",
+            params={k: v for k, v in params.items() if k not in ("limit", "offset")},
+            fetch_results=True,
+        )
+        total = int(count_rows[0][0]) if count_rows else 0
+
+        rows = execute_sql(
+            f"""
+            SELECT dpi.id, dpi.message_id, dpi.idea_text, dpi.idea_summary,
+                   dpi.primary_symbol, dpi.symbols, dpi.labels, dpi.direction,
+                   dpi.action, dpi.is_noise, dpi.confidence, dpi.parsed_at,
+                   dpi.review_status, dpi.review_notes, dpi.attribution_kind,
+                   dpi.attributed_person_id, dpi.thesis_bucket, dpi.filing_type,
+                   dpi.filing_period, dpi.institution_name,
+                   dm.content AS message_content, dm.author AS message_author,
+                   dm.channel AS message_channel, dm.created_at AS message_created_at
+            FROM discord_parsed_ideas dpi
+            LEFT JOIN discord_messages dm ON dm.message_id = dpi.message_id
+            {where_clause}
+            ORDER BY dpi.parsed_at DESC NULLS LAST, dpi.id
+            LIMIT :limit OFFSET :offset
+            """,
+            params=params,
+            fetch_results=True,
+        ) or []
+
+        items = []
+        for row in rows:
+            rd = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+            items.append(
+                ParsedIdeaReviewItem(
+                    id=str(rd["id"]),
+                    messageId=str(rd["message_id"]),
+                    ideaText=rd.get("idea_text"),
+                    ideaSummary=rd.get("idea_summary"),
+                    primarySymbol=rd.get("primary_symbol"),
+                    symbols=rd.get("symbols") or [],
+                    labels=rd.get("labels") or [],
+                    direction=rd.get("direction"),
+                    action=rd.get("action"),
+                    isNoise=bool(rd.get("is_noise")),
+                    confidence=rd.get("confidence"),
+                    parsedAt=str(rd["parsed_at"]) if rd.get("parsed_at") else None,
+                    reviewStatus=rd.get("review_status") or "unreviewed",
+                    reviewNotes=rd.get("review_notes"),
+                    attributionKind=rd.get("attribution_kind") or "self",
+                    attributedPersonId=rd.get("attributed_person_id"),
+                    thesisBucket=rd.get("thesis_bucket"),
+                    filingType=rd.get("filing_type"),
+                    filingPeriod=rd.get("filing_period"),
+                    institutionName=rd.get("institution_name"),
+                    messageContent=rd.get("message_content"),
+                    messageAuthor=rd.get("message_author"),
+                    messageChannel=rd.get("message_channel"),
+                    messageCreatedAt=str(rd["message_created_at"]) if rd.get("message_created_at") else None,
+                )
+            )
+        return ParsedIdeasListResponse(items=items, total=total)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception("Failed to list parsed ideas for review")
+        raise HTTPException(status_code=500, detail="Failed to list parsed ideas") from None
 
 
 @router.put("/discord-parsed/{parsed_id}/curation", response_model=ParsedIdeaCurationResponse)
