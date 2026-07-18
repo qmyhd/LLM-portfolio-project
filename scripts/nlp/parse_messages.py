@@ -544,6 +544,36 @@ def save_parsed_ideas_with_cleanup(
             )
             logger.debug(f"Acquired advisory lock for message {message_id}")
 
+            # Step 0.5: Human curation wins — a message with any reviewed idea
+            # row is frozen. Keep the curated rows, discard this parse, and
+            # mark the message 'ok' so it doesn't loop as pending.
+            reviewed = conn.execute(
+                text(
+                    """
+                    SELECT 1 FROM discord_parsed_ideas
+                    WHERE message_id = CAST(:message_id AS text)
+                      AND review_status <> 'unreviewed'
+                    LIMIT 1
+                    """
+                ),
+                {"message_id": str(message_id)},
+            ).fetchone()
+            if reviewed:
+                logger.info(
+                    f"Skipping reparse of message {message_id}: has human-reviewed ideas"
+                )
+                conn.execute(
+                    text(
+                        """
+                        UPDATE discord_messages
+                        SET parse_status = 'ok', error_reason = NULL
+                        WHERE message_id = CAST(:message_id AS text)
+                        """
+                    ),
+                    {"message_id": str(message_id)},
+                )
+                return 0
+
             # Step 1: Delete existing ideas for this message
             conn.execute(
                 text(

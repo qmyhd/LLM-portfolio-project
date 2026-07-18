@@ -560,6 +560,7 @@ class ReparseRequest(BaseModel):
 class ReparseResponse(BaseModel):
     reset: int  # how many discord_messages rows were flipped to 'pending'
     deletedParsedIdeas: int  # how many discord_parsed_ideas rows were dropped
+    skippedReviewed: int = 0  # messages left untouched because a human reviewed them
     note: str  # what to do next (e.g. "next nightly batch will pick these up")
 
 
@@ -652,6 +653,29 @@ async def reparse_messages(req: ReparseRequest):
         ids = [str(m).strip() for m in req.messageIds if str(m).strip()]
         if not ids:
             return ReparseResponse(reset=0, deletedParsedIdeas=0, note="no message ids provided")
+
+        # Human curation wins: messages with any reviewed idea row are frozen.
+        # Re-open them first via PUT /ideas/discord-parsed/{id}/curation
+        # (reviewStatus='unreviewed') if a reparse is really wanted.
+        reviewed_rows = execute_sql(
+            """
+            SELECT DISTINCT message_id::text FROM discord_parsed_ideas
+            WHERE message_id::text = ANY(:ids)
+              AND review_status <> 'unreviewed'
+            """,
+            params={"ids": ids},
+            fetch_results=True,
+        ) or []
+        reviewed_ids = {str(r[0]) for r in reviewed_rows}
+        ids = [i for i in ids if i not in reviewed_ids]
+        if not ids:
+            return ReparseResponse(
+                reset=0,
+                deletedParsedIdeas=0,
+                skippedReviewed=len(reviewed_ids),
+                note="All requested messages have human-reviewed ideas — nothing reparsed.",
+            )
+
         # Drop any parsed ideas for these messages so the reparse starts clean
         del_rows = execute_sql(
             "DELETE FROM discord_parsed_ideas WHERE message_id::text = ANY(:ids) RETURNING id",
@@ -672,6 +696,7 @@ async def reparse_messages(req: ReparseRequest):
         return ReparseResponse(
             reset=len(upd_rows),
             deletedParsedIdeas=len(del_rows),
+            skippedReviewed=len(reviewed_ids),
             note="Marked as pending — next NLP batch will reparse.",
         )
 
@@ -693,13 +718,35 @@ async def reparse_messages(req: ReparseRequest):
         where_extra = " AND created_at > NOW() - (:days || ' days')::INTERVAL"
         params["days"] = str(req.sinceDays)
 
+    # Human curation wins: exclude messages that have any reviewed idea row.
+    not_reviewed = """ AND NOT EXISTS (
+            SELECT 1 FROM discord_parsed_ideas dpi
+             WHERE dpi.message_id = discord_messages.message_id
+               AND dpi.review_status <> 'unreviewed'
+        )"""
+
+    skipped_rows = execute_sql(
+        f"""
+        SELECT COUNT(*) FROM discord_messages
+         WHERE parse_status = ANY(:statuses){where_extra}
+           AND EXISTS (
+            SELECT 1 FROM discord_parsed_ideas dpi
+             WHERE dpi.message_id = discord_messages.message_id
+               AND dpi.review_status <> 'unreviewed'
+        )
+        """,
+        params=params,
+        fetch_results=True,
+    )
+    skipped_reviewed = int(skipped_rows[0][0]) if skipped_rows else 0
+
     # Drop parsed ideas only for the messages we're about to reset
     del_rows = execute_sql(
         f"""
         DELETE FROM discord_parsed_ideas
         WHERE message_id::text IN (
             SELECT message_id FROM discord_messages
-             WHERE parse_status = ANY(:statuses){where_extra}
+             WHERE parse_status = ANY(:statuses){where_extra}{not_reviewed}
         )
         RETURNING id
         """,
@@ -712,7 +759,7 @@ async def reparse_messages(req: ReparseRequest):
         UPDATE discord_messages
            SET parse_status = 'pending',
                error_reason = NULL
-         WHERE parse_status = ANY(:statuses){where_extra}
+         WHERE parse_status = ANY(:statuses){where_extra}{not_reviewed}
         RETURNING message_id
         """,
         params=params,
@@ -722,6 +769,7 @@ async def reparse_messages(req: ReparseRequest):
     return ReparseResponse(
         reset=len(upd_rows),
         deletedParsedIdeas=len(del_rows),
+        skippedReviewed=skipped_reviewed,
         note=(
             f"Reset {len(upd_rows)} message(s) in status {statuses} to pending. "
             "Next NLP batch will reparse."

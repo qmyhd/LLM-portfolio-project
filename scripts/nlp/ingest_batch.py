@@ -270,10 +270,35 @@ def delete_and_insert_ideas_atomic(
 
         logger.debug(f"Acquired advisory locks for {len(message_ids)} messages")
 
+        # Step 1.5: Human curation wins — messages with any reviewed idea row
+        # are frozen: excluded from both the delete and the insert so curated
+        # rows survive batch reparses.
+        reviewed_rows = conn.execute(
+            text(
+                """
+                SELECT DISTINCT message_id FROM discord_parsed_ideas
+                WHERE message_id = ANY(:mids)
+                  AND review_status <> 'unreviewed'
+                """
+            ),
+            {"mids": [str(m) for m in message_ids]},
+        ).fetchall()
+        reviewed_ids = {str(r[0]) for r in reviewed_rows}
+        if reviewed_ids:
+            logger.info(
+                f"Skipping reparse of {len(reviewed_ids)} message(s) with "
+                f"human-reviewed ideas: {sorted(reviewed_ids)[:10]}"
+            )
+            message_ids = [m for m in message_ids if str(m) not in reviewed_ids]
+            ideas = [i for i in ideas if str(i.get("message_id")) not in reviewed_ids]
+
+        if not message_ids:
+            return 0, 0
+
         # Step 2: Delete existing ideas
         placeholders = ", ".join(f"'{mid}'" for mid in message_ids)
         delete_query = f"""
-            DELETE FROM discord_parsed_ideas 
+            DELETE FROM discord_parsed_ideas
             WHERE message_id IN ({placeholders})
         """
         result = conn.execute(text(delete_query))
@@ -320,11 +345,12 @@ def delete_existing_ideas_for_messages(message_ids: List[int]) -> int:
 
     logger.debug(f"Acquired advisory locks for {len(message_ids)} messages")
 
-    # Build query with IN clause
+    # Build query with IN clause (reviewed rows are frozen — never deleted)
     placeholders = ", ".join(f"'{mid}'" for mid in message_ids)
     query = f"""
-        DELETE FROM discord_parsed_ideas 
+        DELETE FROM discord_parsed_ideas
         WHERE message_id IN ({placeholders})
+          AND review_status = 'unreviewed'
     """
 
     execute_sql(query)
