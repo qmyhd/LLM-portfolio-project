@@ -108,13 +108,17 @@ def log_message_to_database(
 
         # Deterministic parse pre-classification so non-content never sits in
         # 'pending' forever: bot/command/empty/too-short -> 'skipped' up front.
-        # (The parser only picks up pending messages with >10 chars of real
-        # content that aren't bot/command.) On re-ingest we do NOT overwrite an
-        # existing parse_status, so an already-parsed message keeps its result.
-        if is_bot or is_command or len(content.strip()) <= 10:
+        # A shared tweet/link carries its content in the embed even when the
+        # message text is short, so messages with embeds or tweet URLs stay
+        # parseable. On re-ingest we do NOT overwrite an existing parse_status,
+        # so an already-parsed message keeps its result.
+        has_shareable = bool(embeds_json) or bool(tweet_urls_str)
+        if is_bot or is_command:
             initial_parse_status = "skipped"
-        else:
+        elif has_shareable or len(content.strip()) > 10:
             initial_parse_status = "pending"
+        else:
+            initial_parse_status = "skipped"
 
         message_data = {
             "message_id": str(message.id),
