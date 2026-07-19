@@ -320,19 +320,25 @@ def get_pending_messages(
         """
         params = {"message_id": str(message_id)}
     else:
-        # Exclude bot messages and command messages from NLP parsing
-        # These are stored but flagged: is_bot=TRUE or is_command=TRUE
+        # Exclude bot messages and command messages from NLP parsing.
+        # A shared tweet often has little/no message text (just a URL), so we
+        # also admit messages whose content is short but that carry embed
+        # content (the unfurled tweet text) — see enrichment below.
         query = """
-            SELECT 
+            SELECT
                 message_id,
                 content,
                 author,
                 channel,
-                created_at
+                created_at,
+                embeds,
+                tweet_urls
             FROM discord_messages
             WHERE parse_status = 'pending'
-            AND content IS NOT NULL
-            AND LENGTH(content) > 10
+            AND (
+                (content IS NOT NULL AND LENGTH(content) > 10)
+                OR (embeds IS NOT NULL AND embeds <> '')
+            )
             AND (is_bot IS NULL OR is_bot = FALSE)
             AND (is_command IS NULL OR is_command = FALSE)
             ORDER BY created_at DESC
@@ -346,18 +352,64 @@ def get_pending_messages(
     if not result:
         return []
 
-    return [
-        {
-            "message_id": row[0],
-            "content": row[1],
-            "author": row[2],
-            "channel": (
-                str(row[3]) if row[3] else None
-            ),  # Column is 'channel', not 'channel_id'
-            "created_at": row[4].isoformat() if row[4] else None,
-        }
-        for row in result
-    ]
+    out = []
+    for row in result:
+        content = row[1] or ""
+        embeds_raw = row[5] if len(row) > 5 else None
+        # Enrich the parseable text with any shared-tweet content Discord
+        # unfurled into an embed, so the model evaluates the tweet's claims,
+        # not a bare URL. Raw content is preserved for hashing elsewhere.
+        tweet_text = _extract_embed_text(embeds_raw)
+        parse_content = content
+        if tweet_text:
+            parse_content = f"{content}\n\n[Shared post]: {tweet_text}".strip()
+
+        out.append(
+            {
+                "message_id": row[0],
+                "content": parse_content,
+                "raw_content": content,
+                "author": row[2],
+                "channel": str(row[3]) if row[3] else None,
+                "created_at": row[4].isoformat() if row[4] else None,
+                "tweet_urls": row[6] if len(row) > 6 else None,
+            }
+        )
+    return out
+
+
+def _extract_embed_text(embeds_raw: Optional[str]) -> str:
+    """Pull readable text (author + title + description) out of stored embeds.
+
+    embeds is a JSON array of {type,title,description,url,author}. Returns a
+    single condensed string, or '' when there's nothing useful.
+    """
+    if not embeds_raw:
+        return ""
+    try:
+        import json
+
+        embeds = json.loads(embeds_raw)
+    except (ValueError, TypeError):
+        return ""
+    if not isinstance(embeds, list):
+        return ""
+    parts: List[str] = []
+    for emb in embeds:
+        if not isinstance(emb, dict):
+            continue
+        for key in ("author", "title", "description"):
+            val = emb.get(key)
+            if val and isinstance(val, str) and val.strip():
+                parts.append(val.strip())
+    # De-dup while preserving order, cap length to keep prompts lean.
+    seen = set()
+    deduped = []
+    for p in parts:
+        if p not in seen:
+            seen.add(p)
+            deduped.append(p)
+    return " — ".join(deduped)[:1500]
 
 
 def get_candidate_messages_by_size() -> Dict[str, Optional[Dict[str, Any]]]:
