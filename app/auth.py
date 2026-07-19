@@ -334,3 +334,46 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to track signed-in user")
     return _row_to_app_user(rows[0])
+
+
+class AuthConfigStatus(BaseModel):
+    googleClientIdConfigured: bool
+    googleAuthLibInstalled: bool
+    ownerEmailsCount: int
+    authDisabled: bool
+    appUsersCount: int | None = None
+
+
+@router.get("/config", response_model=AuthConfigStatus)
+async def auth_config_status():
+    """
+    Secrets-free health check for the Google sign-in flow, so config can be
+    verified without SSH. Returns booleans/counts only — never any secret
+    value. Requires the API key (the router carries require_api_key).
+    """
+    google_client_id_set = bool(os.getenv("GOOGLE_CLIENT_ID", "").strip())
+
+    try:
+        import google.oauth2.id_token  # noqa: F401
+
+        lib_installed = True
+    except ImportError:
+        lib_installed = False
+
+    app_users_count: int | None = None
+    try:
+        from src.db import execute_sql
+
+        rows = execute_sql("SELECT COUNT(*) FROM app_users", fetch_results=True)
+        if rows:
+            app_users_count = int(rows[0][0])
+    except Exception:  # table missing / DB issue — leave as None
+        app_users_count = None
+
+    return AuthConfigStatus(
+        googleClientIdConfigured=google_client_id_set,
+        googleAuthLibInstalled=lib_installed,
+        ownerEmailsCount=len(_owner_emails()),
+        authDisabled=is_auth_disabled(),
+        appUsersCount=app_users_count,
+    )

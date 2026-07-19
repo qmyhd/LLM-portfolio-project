@@ -216,6 +216,24 @@ def test_google_auth_rejects_profile_fields_when_auth_enabled(secured_client):
 
 
 @patch("src.db.execute_sql")
+def test_auth_config_status_reports_without_secrets(mock_sql, client):
+    mock_sql.return_value = [(3,)]
+    with patch.dict(
+        "os.environ",
+        {"GOOGLE_CLIENT_ID": "abc.apps.googleusercontent.com", "OWNER_EMAILS": "a@x.com,b@y.com"},
+    ):
+        resp = client.get("/auth/config")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["googleClientIdConfigured"] is True
+    assert body["ownerEmailsCount"] == 2
+    assert body["appUsersCount"] == 3
+    # Never leaks the actual client id
+    assert "abc.apps" not in resp.text
+
+
+@patch("src.db.execute_sql")
 def test_google_auth_rate_limited(mock_sql, client, monkeypatch):
     import app.auth as auth_module
 
