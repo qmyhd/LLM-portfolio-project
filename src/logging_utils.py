@@ -62,7 +62,8 @@ def log_message_to_database(
             from src.discord_ingest import compute_content_hash
             content_hash = compute_content_hash(message.content)
 
-        tickers = extract_ticker_symbols(message.content)
+        content = message.content or ""
+        tickers = extract_ticker_symbols(content)
 
         # Capture attachments as JSON array
         attachments_json = None
@@ -78,6 +79,43 @@ def log_message_to_database(
             ]
             attachments_json = json.dumps(attachments_data)
 
+        # Capture embeds — for shared X/Twitter links Discord unfurls the tweet
+        # text into an embed description, so this preserves the tweet content
+        # without any Twitter API call.
+        embeds_json = None
+        if getattr(message, "embeds", None):
+            embeds_data = []
+            for emb in message.embeds:
+                author_name = getattr(getattr(emb, "author", None), "name", None)
+                embeds_data.append(
+                    {
+                        "type": getattr(emb, "type", None),
+                        "title": getattr(emb, "title", None),
+                        "description": getattr(emb, "description", None),
+                        "url": getattr(emb, "url", None),
+                        "author": author_name,
+                    }
+                )
+            if embeds_data:
+                embeds_json = json.dumps(embeds_data)
+
+        # Extract shared tweet URLs from the message text (the live path
+        # previously never populated tweet_urls).
+        from src.message_cleaner import extract_tweet_urls
+
+        tweet_url_list = extract_tweet_urls(content)
+        tweet_urls_str = ", ".join(tweet_url_list) if tweet_url_list else None
+
+        # Deterministic parse pre-classification so non-content never sits in
+        # 'pending' forever: bot/command/empty/too-short -> 'skipped' up front.
+        # (The parser only picks up pending messages with >10 chars of real
+        # content that aren't bot/command.) On re-ingest we do NOT overwrite an
+        # existing parse_status, so an already-parsed message keeps its result.
+        if is_bot or is_command or len(content.strip()) <= 10:
+            initial_parse_status = "skipped"
+        else:
+            initial_parse_status = "pending"
+
         message_data = {
             "message_id": str(message.id),
             "author": message.author.name,
@@ -86,9 +124,10 @@ def log_message_to_database(
             "channel": message.channel.name,
             "timestamp": message.created_at.isoformat(),
             "user_id": str(message.author.id),
-            "num_chars": len(message.content),
-            "num_words": len(message.content.split()),
+            "num_chars": len(content),
+            "num_words": len(content.split()),
             "tickers_detected": ", ".join(tickers) if tickers else None,
+            "tweet_urls": tweet_urls_str,
             "is_reply": bool(message.reference and message.reference.message_id),
             "reply_to_id": message.reference.message_id if message.reference else None,
             "mentions": (
@@ -97,23 +136,25 @@ def log_message_to_database(
                 else None
             ),
             "attachments": attachments_json,
+            "embeds": embeds_json,
             "is_bot": is_bot,
             "is_command": is_command,
             "channel_type": channel_type,
             "content_hash": content_hash,
+            "parse_status": initial_parse_status,
         }
 
         execute_sql(
             """
             INSERT INTO discord_messages
             (message_id, author, author_id, content, channel, timestamp,
-             user_id, num_chars, num_words, tickers_detected,
-             is_reply, reply_to_id, mentions, attachments,
-             is_bot, is_command, channel_type, content_hash)
+             user_id, num_chars, num_words, tickers_detected, tweet_urls,
+             is_reply, reply_to_id, mentions, attachments, embeds,
+             is_bot, is_command, channel_type, content_hash, parse_status)
             VALUES (:message_id, :author, :author_id, :content, :channel, :timestamp,
-                    :user_id, :num_chars, :num_words, :tickers_detected,
-                    :is_reply, :reply_to_id, :mentions, :attachments,
-                    :is_bot, :is_command, :channel_type, :content_hash)
+                    :user_id, :num_chars, :num_words, :tickers_detected, :tweet_urls,
+                    :is_reply, :reply_to_id, :mentions, :attachments, :embeds,
+                    :is_bot, :is_command, :channel_type, :content_hash, :parse_status)
             ON CONFLICT (message_id) DO UPDATE SET
                 author = EXCLUDED.author,
                 author_id = EXCLUDED.author_id,
@@ -123,10 +164,12 @@ def log_message_to_database(
                 num_chars = EXCLUDED.num_chars,
                 num_words = EXCLUDED.num_words,
                 tickers_detected = EXCLUDED.tickers_detected,
+                tweet_urls = EXCLUDED.tweet_urls,
                 is_reply = EXCLUDED.is_reply,
                 reply_to_id = EXCLUDED.reply_to_id,
                 mentions = EXCLUDED.mentions,
                 attachments = EXCLUDED.attachments,
+                embeds = EXCLUDED.embeds,
                 is_bot = EXCLUDED.is_bot,
                 is_command = EXCLUDED.is_command,
                 channel_type = EXCLUDED.channel_type,
