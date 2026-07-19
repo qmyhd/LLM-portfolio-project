@@ -80,8 +80,7 @@ OpenBB (FMP+SEC)─┘→ Cached fundamentals/filings/news → FastAPI → Next.
 - **`src/snaptrade_collector.py`** — SnapTrade ETL (accounts, positions, orders, balances) with stale position reconciliation (safety-guarded: connection health, count sanity, sync recency)
 - **`src/databento_collector.py`** — Databento OHLCV → Supabase upsert + optional S3 archive
 - **`src/retry_utils.py`** — `@hardened_retry()` for API calls, `@database_retry()` for DB operations, `@snaptrade_retry()` for SnapTrade SDK calls (429 rate-limit aware)
-- **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes, company info, return metrics, and search fallback
-- **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes. Defines `CRYPTO_IDENTITY` dict (TradingView symbol mapping) and `_CRYPTO_SYMBOLS` frozenset (13 crypto tickers) used as guards against Databento ticker collisions.
+- **`src/market_data_service.py`** — yfinance wrapper with TTL caching for real-time quotes, company info (incl. sector/industry), return metrics, and search fallback. Defines `CRYPTO_IDENTITY` dict (TradingView symbol mapping) and `_CRYPTO_SYMBOLS` frozenset (13 crypto tickers) used as guards against Databento ticker collisions.
 - **`src/message_cleaner.py`** — Ticker extraction (`$AAPL`, `$BRK.B`), sentiment scoring via vaderSentiment
 - **`src/openbb_service.py`** — OpenBB Platform SDK wrapper. Thread-safe TTL caches (transcripts 24h, fundamentals 1h, news 15m). FMP provider for fundamentals/transcripts/management/news, SEC provider for filings (free). Never raises — returns `None`/`[]` on failure. Requires `FMP_API_KEY` for FMP data.
 - **`src/discord_ingest.py`** — Incremental Discord message ingestion with cursor-based tracking and content hash deduplication
