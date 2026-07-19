@@ -124,9 +124,14 @@ app = FastAPI(
 
 # CORS configuration - allow frontend origins.
 # NOTE: the app's browser traffic goes through Next.js server-side proxies, so
-# CORS is mostly belt-and-suspenders. The regex additionally allows Vercel
-# preview deployments (llm-portfolio-frontend-<hash>-<team>.vercel.app) and the
-# www subdomain, so a direct browser call from a preview build isn't blocked.
+# CORS is mostly belt-and-suspenders. The regex allows this project's Vercel
+# preview deployments, which are always of the form
+#   llm-portfolio-frontend-<hash>-qmyhds-projects.vercel.app
+# The trailing `-qmyhds-projects` is the team slug — only this Vercel team can
+# produce it, so an attacker cannot register a matching *.vercel.app host.
+# We deliberately DO NOT use a bare `...vercel.app` regex: combined with
+# allow_credentials=True that would trust any attacker-registered project on
+# the shared vercel.app domain.
 ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Local Next.js dev
     "http://127.0.0.1:3000",
@@ -134,7 +139,9 @@ ALLOWED_ORIGINS = [
     "https://llmportfolio.app",  # Custom domain
     "https://www.llmportfolio.app",
 ]
-ALLOWED_ORIGIN_REGEX = r"https://llm-portfolio-frontend[a-z0-9-]*\.vercel\.app"
+ALLOWED_ORIGIN_REGEX = (
+    r"https://llm-portfolio-frontend-[a-z0-9-]+-qmyhds-projects\.vercel\.app"
+)
 
 app.add_middleware(
     CORSMiddleware,
