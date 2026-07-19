@@ -122,17 +122,24 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# CORS configuration - allow frontend origins
+# CORS configuration - allow frontend origins.
+# NOTE: the app's browser traffic goes through Next.js server-side proxies, so
+# CORS is mostly belt-and-suspenders. The regex additionally allows Vercel
+# preview deployments (llm-portfolio-frontend-<hash>-<team>.vercel.app) and the
+# www subdomain, so a direct browser call from a preview build isn't blocked.
 ALLOWED_ORIGINS = [
     "http://localhost:3000",  # Local Next.js dev
     "http://127.0.0.1:3000",
     "https://llm-portfolio-frontend.vercel.app",  # Production Vercel
-    "https://llmportfolio.app",  # Custom domain (if configured)
+    "https://llmportfolio.app",  # Custom domain
+    "https://www.llmportfolio.app",
 ]
+ALLOWED_ORIGIN_REGEX = r"https://llm-portfolio-frontend[a-z0-9-]*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],

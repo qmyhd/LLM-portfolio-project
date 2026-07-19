@@ -143,3 +143,6 @@ ruff_cache/
 
 # opensrc - source code for packages
 opensrc/
+
+# Codex local scratch
+.codex/
