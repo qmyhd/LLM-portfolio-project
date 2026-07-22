@@ -145,21 +145,29 @@ def _assemble_input(
     ticker_upper = ticker.upper()
 
     # 1. OHLCV data
+    # get_ohlcv REQUIRES (ticker, start, end) and returns a DataFrame with
+    # capitalized OHLCV columns and the trade date as a DatetimeIndex. The old
+    # code called get_ohlcv(ticker) with no dates (-> TypeError, swallowed) and
+    # read lowercase columns, so EVERY analysis got zero bars and technical /
+    # risk always reported "insufficient OHLCV data". ~400 calendar days gives
+    # enough trading bars for a 200-day SMA and the other indicators.
     if not _is_crypto(ticker_upper):
         try:
+            from datetime import date, timedelta
+
             from src.price_service import get_ohlcv
 
-            df = get_ohlcv(ticker_upper)
+            df = get_ohlcv(ticker_upper, date.today() - timedelta(days=400), date.today())
             if df is not None and not df.empty:
-                for _, row in df.iterrows():
+                for idx, row in df.iterrows():
                     ohlcv_bars.append(
                         OHLCVBar(
-                            date=str(row["date"]),
-                            open=float(row["open"]),
-                            high=float(row["high"]),
-                            low=float(row["low"]),
-                            close=float(row["close"]),
-                            volume=float(row["volume"]),
+                            date=idx.date().isoformat(),
+                            open=float(row["Open"]),
+                            high=float(row["High"]),
+                            low=float(row["Low"]),
+                            close=float(row["Close"]),
+                            volume=float(row["Volume"]),
                         )
                     )
                 data_sources.append(f"Databento OHLCV ({len(ohlcv_bars)} days)")
@@ -595,13 +603,15 @@ async def get_portfolio_risk(
         mv = float(m.get("market_value", 0) or 0)
         weights[symbol] = mv / total_market_value if total_market_value > 0 else 0.0
 
-        # Get OHLCV returns
+        # Get OHLCV returns (same get_ohlcv signature/column fix as above).
         try:
+            from datetime import date, timedelta
+
             from src.price_service import get_ohlcv
 
-            df = get_ohlcv(symbol)
+            df = get_ohlcv(symbol, date.today() - timedelta(days=400), date.today())
             if df is not None and not df.empty and len(df) > 10:
-                returns = df["close"].pct_change().dropna().values
+                returns = df["Close"].pct_change().dropna().values
                 returns_data[symbol] = returns
         except Exception:
             logger.warning("Failed to fetch OHLCV for portfolio risk: %s", symbol, exc_info=True)

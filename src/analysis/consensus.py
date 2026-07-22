@@ -37,32 +37,41 @@ SIGNAL_MAP: dict[str, float] = {
 def compute_deterministic_score(signals: list[AnalystSignal]) -> tuple[float, str]:
     """Compute bull_bear_score and 5-tier verdict from agent signals.
 
-    Score = sum(signal_numeric * weight * confidence) / sum(weight * confidence)
+    Score = [sum(signal_numeric * weight * confidence) / sum(weight * confidence)]
+            * coverage, where coverage = (# agents with data) / (total agents).
 
-    Verdict thresholds:
-    - > 0.4: strong_buy
-    - > 0.15: buy
-    - > -0.15: hold
-    - > -0.4: sell
-    - else: strong_sell
+    The coverage factor is critical: agents that lack data return confidence=0
+    and drop out of the weighted average, so WITHOUT it a single high-confidence
+    agent (e.g. sentiment from one Discord idea) would produce a full ±1.0
+    "strong" verdict while every other agent reported "no data". Damping by
+    coverage makes a verdict only as strong as the breadth of evidence behind
+    it — one data-backed agent can reach at most ~±0.2 (a weak buy/sell), and a
+    "strong" call requires ~3+ agents actually agreeing.
+
+    Verdict thresholds (post-damping):
+    - > 0.4: strong_buy   | > 0.15: buy   | > -0.15: hold   | > -0.4: sell   | else: strong_sell
 
     Returns:
         (bull_bear_score, verdict)
     """
     total_weighted = 0.0
     total_weight = 0.0
+    agents_with_data = 0
 
     for sig in signals:
         weight = AGENT_WEIGHTS.get(sig.agent_id, 0.10)
         numeric = SIGNAL_MAP.get(sig.signal, 0.0)
         total_weighted += numeric * weight * sig.confidence
         total_weight += weight * sig.confidence
+        if sig.confidence > 0:
+            agents_with_data += 1
 
-    if total_weight == 0:
+    if total_weight == 0 or agents_with_data == 0:
         return 0.0, "hold"
 
-    score = total_weighted / total_weight
-    score = max(-1.0, min(1.0, score))
+    raw_score = total_weighted / total_weight
+    coverage = agents_with_data / len(AGENT_WEIGHTS)
+    score = max(-1.0, min(1.0, raw_score * coverage))
 
     if score > 0.4:
         verdict = "strong_buy"

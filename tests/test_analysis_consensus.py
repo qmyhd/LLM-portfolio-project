@@ -114,3 +114,48 @@ async def test_consensus_full_run(bullish_signals: list[AnalystSignal]) -> None:
     assert len(report.agent_signals) == 5
     assert len(report.data_sources) == 2
     assert report.model_used.startswith("gpt-")
+
+
+# ---------------------------------------------------------------------------
+# Regression: coverage damping — a verdict is only as strong as its evidence.
+# ---------------------------------------------------------------------------
+
+
+def _s(agent_id, signal, confidence):
+    return AnalystSignal(agent_id=agent_id, signal=signal, confidence=confidence, reasoning="")
+
+
+def test_single_data_agent_cannot_produce_strong_verdict():
+    """One bullish agent while the other four report no data (confidence=0)
+    must NOT yield strong_buy +1.0 — the historical overclaiming bug."""
+    signals = [
+        _s("technical", "neutral", 0.0),
+        _s("fundamental", "neutral", 0.0),
+        _s("valuation", "neutral", 0.0),
+        _s("sentiment", "bullish", 1.0),
+        _s("risk", "neutral", 0.0),
+    ]
+    score, verdict = compute_deterministic_score(signals)
+    assert verdict != "strong_buy"
+    assert abs(score) <= 0.25  # one of five agents -> ~0.2 max
+
+
+def test_full_agreement_still_reaches_strong():
+    """When all five agents have data and agree, strong_buy is preserved."""
+    signals = [_s(a, "bullish", 0.9) for a in ("technical", "fundamental", "valuation", "sentiment", "risk")]
+    score, verdict = compute_deterministic_score(signals)
+    assert verdict == "strong_buy"
+    assert score > 0.4
+
+
+def test_mixed_data_agents_net_to_hold():
+    """Neutral(data) + bullish + bearish should cancel to hold, not a buy."""
+    signals = [
+        _s("technical", "neutral", 0.9),
+        _s("fundamental", "neutral", 0.0),
+        _s("valuation", "neutral", 0.0),
+        _s("sentiment", "bullish", 1.0),
+        _s("risk", "bearish", 1.0),
+    ]
+    _, verdict = compute_deterministic_score(signals)
+    assert verdict == "hold"
