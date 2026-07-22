@@ -47,12 +47,6 @@ class _Settings(BaseSettings):
     DISCORD_CLIENT_ID: str = ""
     DISCORD_CLIENT_SECRET: str = ""
 
-    # === Twitter API Configuration ==================================
-    TWITTER_BEARER_TOKEN: str = ""
-    TWITTER_API_KEY: str = ""
-    TWITTER_API_SECRET_KEY: str = ""
-    TWITTER_ACCESS_TOKEN: str = ""
-    TWITTER_ACCESS_TOKEN_SECRET: str = ""
 
     # === OpenBB / FMP Configuration =================================
     FMP_API_KEY: str = ""

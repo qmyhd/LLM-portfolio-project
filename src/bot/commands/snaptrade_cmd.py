@@ -36,7 +36,7 @@ _last_refresh_time = None
 # NOTE: _auto_refresh_running removed — nightly-pipeline.timer is the canonical scheduler
 
 
-def register(bot: commands.Bot, twitter_client=None):
+def register(bot: commands.Bot):
     """Register SnapTrade commands with the bot."""
 
     @bot.command(name="fetch", aliases=["sync", "refresh"])

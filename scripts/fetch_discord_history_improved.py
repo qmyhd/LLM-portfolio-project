@@ -70,8 +70,7 @@ async def fetch_channel_history_batch(
 
             # Log to database
             try:
-                twitter_client = getattr(bot, "twitter_client", None)
-                log_message_to_database(msg, twitter_client)
+                log_message_to_database(msg)
                 total_logged += 1
 
                 # Progress indicator every 10 messages
@@ -138,22 +137,8 @@ async def main():
         print("❌ LOG_CHANNEL_IDS not set in .env")
         return
 
-    # Initialize Twitter client (optional)
-    twitter_client = None
-    try:
-        import tweepy
-
-        if config.TWITTER_BEARER_TOKEN:
-            twitter_client = tweepy.Client(
-                bearer_token=config.TWITTER_BEARER_TOKEN, wait_on_rate_limit=True
-            )
-            print("✅ Twitter client initialized")
-    except Exception as e:
-        print(f"⚠️  Twitter client not available: {e}")
-
     # Create bot
-    bot = create_bot(twitter_client=twitter_client)
-    bot.twitter_client = twitter_client
+    bot = create_bot()
 
     @bot.event
     async def on_ready():

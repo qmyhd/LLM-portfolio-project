@@ -16,7 +16,7 @@ from src.logging_utils import log_message_to_database
 from src.bot.ui import EmbedFactory, build_embed, EmbedCategory
 
 
-def register(bot: commands.Bot, twitter_client=None):
+def register(bot: commands.Bot):
     @bot.command(name="process")
     async def process_channel_data(ctx, channel_type: str = "trading"):
         """
@@ -123,7 +123,7 @@ def register(bot: commands.Bot, twitter_client=None):
             inserted_count = 0
             for msg in messages_to_insert:
                 try:
-                    log_message_to_database(msg, twitter_client=twitter_client)
+                    log_message_to_database(msg)
                     inserted_count += 1
                 except Exception as e:
                     # Log error but continue processing other messages
@@ -294,7 +294,7 @@ def register(bot: commands.Bot, twitter_client=None):
 
                         # Insert new message
                         try:
-                            log_message_to_database(msg, twitter_client=twitter_client)
+                            log_message_to_database(msg)
                             batch_inserted += 1
                             total_inserted += 1
                             # Add to existing set to avoid re-checking in same run

@@ -59,7 +59,7 @@ def get_channel_type(channel_name: str | None) -> str:
     return "general"
 
 
-def register_events(bot: commands.Bot, twitter_client=None):
+def register_events(bot: commands.Bot):
     @bot.event
     async def on_ready():
         print(f"✅ Bot is online and logged in as {bot.user}")
@@ -88,7 +88,6 @@ def register_events(bot: commands.Bot, twitter_client=None):
             # Bot/command messages are stored but flagged for exclusion from NLP
             log_message_to_database(
                 message,
-                twitter_client=twitter_client,
                 is_bot=is_bot,
                 is_command=is_command,
                 channel_type=channel_type,

@@ -20,7 +20,7 @@ RAW_DIR = BASE_DIR / "data" / "raw"
 RAW_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def register(bot: commands.Bot, twitter_client=None):
+def register(bot: commands.Bot):
     @bot.command(name="history")
     async def fetch_history(ctx, limit: int = 100):
         """Fetch message history from the current channel.
@@ -69,7 +69,7 @@ def register(bot: commands.Bot, twitter_client=None):
                     continue
 
                 # Log to database
-                log_message_to_database(msg, twitter_client)
+                log_message_to_database(msg)
                 count += 1
 
                 # Rate limiting: delay every 50 messages
