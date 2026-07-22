@@ -321,6 +321,29 @@ def main():
     if results.get("stock_refresh") is False:
         logger.warning("⚠️ Stock refresh failed (non-critical)")
 
+    # Data-freshness guard — make silent decay LOUD. Several pipeline steps are
+    # "non-critical" and only log a swallowed warning on failure, which let the
+    # stock-profile refresh fail every night for months while the table sat
+    # empty. Surface any expected-populated table that is empty after the run.
+    for _table, _label in [
+        ("stock_profile_current", "stock profiles"),
+        ("ohlcv_daily", "OHLCV prices"),
+        ("positions", "positions"),
+    ]:
+        try:
+            from src.db import execute_sql
+
+            _rows = execute_sql(f"SELECT count(*) FROM {_table}", fetch_results=True)
+            if _rows and int(_rows[0][0]) == 0:
+                logger.error(
+                    "🚨 DATA FRESHNESS: %s is EMPTY after the nightly run — %s "
+                    "pipeline step is silently failing; investigate.",
+                    _table,
+                    _label,
+                )
+        except Exception as _e:  # never let the guard itself break the pipeline
+            logger.warning("Freshness check for %s failed: %s", _table, _e)
+
     # Discord ingestion failure is non-critical by default
     if REQUIRE_DISCORD_INGEST and results.get("discord_ingest") is False:
         logger.error("Discord ingestion failed and REQUIRE_DISCORD_INGEST=1 - aborting")
