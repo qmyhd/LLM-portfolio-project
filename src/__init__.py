@@ -12,7 +12,6 @@ Core Modules:
 - data_collector: Financial data collection and storage
 - journal_generator: LLM-powered journal generation
 - logging_utils: Discord message logging and processing
-- twitter_analysis: Social sentiment analysis
 """
 
 __version__ = "1.0.0"

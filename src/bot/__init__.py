@@ -6,7 +6,7 @@ from discord.ext import commands as dpy_cmds  # rename the import
 __all__ = ["create_bot"]
 
 
-def create_bot(command_prefix: str = "!", twitter_client=None):
+def create_bot(command_prefix: str = "!"):
     intents = discord.Intents.default()
     intents.message_content = True
 
@@ -20,6 +20,6 @@ def create_bot(command_prefix: str = "!", twitter_client=None):
     from .commands import register_commands  # ok – this no longer shadows dpy_cmds
     from .events import register_events
 
-    register_events(bot, twitter_client)
-    register_commands(bot, twitter_client)
+    register_events(bot)
+    register_commands(bot)
     return bot
