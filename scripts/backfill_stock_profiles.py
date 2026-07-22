@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import argparse
 import logging
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
 
 import sys
@@ -138,7 +138,7 @@ def get_order_metrics(ticker: str) -> dict[str, Any]:
 
 def get_sentiment_metrics(ticker: str) -> dict[str, Any]:
     """Get sentiment and mention metrics from discord_parsed_ideas."""
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     days_30_ago = now - timedelta(days=30)
     days_7_ago = now - timedelta(days=7)
 
@@ -314,7 +314,7 @@ def get_price_metrics(ticker: str) -> dict[str, Any]:
 
 def build_stock_profile(ticker: str) -> dict[str, Any]:
     """Build complete stock profile by aggregating all metrics."""
-    profile = {"ticker": ticker, "last_updated": datetime.now()}
+    profile = {"ticker": ticker, "last_updated": datetime.now(timezone.utc)}
 
     # Aggregate all metrics
     profile.update(get_price_metrics(ticker))
