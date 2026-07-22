@@ -115,17 +115,11 @@ class CredibilityResolver:
             if not mults:
                 mults = dict(DEFAULT_TIER_MULTIPLIERS)
 
-            # 2. stock topic tags
-            tag_rows = execute_sql(
-                "SELECT category_slug, weight FROM stock_topic_tags WHERE UPPER(symbol) = :symbol",
-                params={"symbol": symbol.upper()},
-                fetch_results=True,
-            ) or []
-            for r in tag_rows:
-                m = _row_mapping(r)
-                tags[m["category_slug"]] = float(m["weight"])
+            # (per-symbol topic tags were removed — the stock_topic_tags table
+            # was dropped; `tags` stays empty and credibility falls back to
+            # author/tier weighting only.)
 
-            # 3. identities (only if we have ids — never emit IN ())
+            # identities (only if we have ids — never emit IN ())
             if ids:
                 placeholders = ", ".join(f":id{i}" for i in range(len(ids)))
                 idp = {f"id{i}": v for i, v in enumerate(ids)}
