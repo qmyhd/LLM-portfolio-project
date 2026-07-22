@@ -7,21 +7,16 @@ Endpoints:
 - GET /stocks/{ticker}/fundamentals - Financial metrics
 - GET /stocks/{ticker}/filings      - SEC filings
 - GET /stocks/{ticker}/news         - Company news
-- GET /stocks/{ticker}/notes        - User's personal notes
-- POST /stocks/{ticker}/notes       - Save a note
-- DELETE /stocks/{ticker}/notes/{id} - Delete a note
 """
 
 import asyncio
 import logging
 import re
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Path, Query
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from src.db import execute_sql
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -116,24 +111,6 @@ class NewsResponse(BaseModel):
     ticker: str
     articles: list[NewsItem]
     total: int
-
-
-class StockNote(BaseModel):
-    id: int
-    symbol: str
-    content: str
-    createdAt: str
-    updatedAt: str
-
-
-class NotesResponse(BaseModel):
-    ticker: str
-    notes: list[StockNote]
-    total: int
-
-
-class CreateNoteRequest(BaseModel):
-    content: str
 
 
 # ---------------------------------------------------------------------------
@@ -249,93 +226,4 @@ async def get_stock_news(
         return NewsResponse(ticker=symbol, articles=[], total=0)
 
 
-@router.get("/{ticker}/notes", response_model=NotesResponse)
-async def get_stock_notes(
-    ticker: str = Path(...),
-    limit: int = Query(50, ge=1, le=200),
-):
-    """Get user's personal notes for a stock."""
-    symbol = _validate_ticker(ticker)
-    try:
-        rows = execute_sql(
-            """
-            SELECT id, symbol, content, created_at, updated_at
-            FROM stock_notes
-            WHERE UPPER(symbol) = :symbol
-            ORDER BY created_at DESC
-            LIMIT :limit
-            """,
-            params={"symbol": symbol, "limit": limit},
-            fetch_results=True,
-        )
-
-        notes = []
-        for row in rows or []:
-            rd = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
-            notes.append(StockNote(
-                id=int(rd["id"]),
-                symbol=rd["symbol"],
-                content=rd["content"],
-                createdAt=str(rd["created_at"]),
-                updatedAt=str(rd["updated_at"]),
-            ))
-
-        return NotesResponse(ticker=symbol, notes=notes, total=len(notes))
-    except Exception as e:
-        logger.error("Notes fetch error for %s: %s", symbol, e)
-        return NotesResponse(ticker=symbol, notes=[], total=0)
-
-
-@router.post("/{ticker}/notes", response_model=StockNote, status_code=201)
-async def create_stock_note(
-    ticker: str = Path(...),
-    request: CreateNoteRequest = ...,
-):
-    """Create a personal note for a stock."""
-    symbol = _validate_ticker(ticker)
-    if not request.content.strip():
-        raise HTTPException(status_code=400, detail="Note content cannot be empty")
-
-    try:
-        rows = execute_sql(
-            """
-            INSERT INTO stock_notes (symbol, content)
-            VALUES (:symbol, :content)
-            RETURNING id, symbol, content, created_at, updated_at
-            """,
-            params={"symbol": symbol, "content": request.content.strip()},
-            fetch_results=True,
-        )
-        if rows:
-            rd = dict(rows[0]._mapping) if hasattr(rows[0], "_mapping") else dict(rows[0])
-            return StockNote(
-                id=int(rd["id"]),
-                symbol=rd["symbol"],
-                content=rd["content"],
-                createdAt=str(rd["created_at"]),
-                updatedAt=str(rd["updated_at"]),
-            )
-        raise HTTPException(status_code=500, detail="Failed to create note")
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Note creation error for %s: %s", symbol, e)
-        raise HTTPException(status_code=500, detail="Failed to create note") from None
-
-
-@router.delete("/{ticker}/notes/{note_id}", status_code=204)
-async def delete_stock_note(
-    ticker: str = Path(...),
-    note_id: int = Path(..., ge=1),
-):
-    """Delete a personal note."""
-    symbol = _validate_ticker(ticker)
-    try:
-        execute_sql(
-            "DELETE FROM stock_notes WHERE id = :id AND UPPER(symbol) = :symbol",
-            params={"id": note_id, "symbol": symbol},
-            fetch_results=False,
-        )
-    except Exception as e:
-        logger.error("Note deletion error: %s", e)
-        raise HTTPException(status_code=500, detail="Failed to delete note") from None
+# (per-stock notes routes removed — the stock_notes feature was cut.)

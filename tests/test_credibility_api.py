@@ -102,48 +102,4 @@ def test_put_tier_multipliers_valid_returns(mock_tx, client):
     assert any("INSERT INTO tier_multipliers" in s for s in sql_texts)
 
 
-@patch("app.routes.credibility.execute_sql")
-def test_get_topic_tags_returns_tags(mock_sql, client):
-    mock_sql.return_value = [
-        _row({"category_slug": "macro", "weight": 0.5}),
-        _row({"category_slug": "equities", "weight": 1.0}),
-    ]
-    r = client.get("/stocks/aapl/topic-tags")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["symbol"] == "AAPL"
-    assert body["tags"][0]["categorySlug"] == "macro"
-    assert body["tags"][0]["weight"] == 0.5
-
-
-@patch("app.routes.credibility.transaction")
-def test_put_topic_tags_400_on_negative_weight(mock_tx, client):
-    r = client.put(
-        "/stocks/AAPL/topic-tags",
-        json={"tags": [{"categorySlug": "macro", "weight": -0.1}]},
-    )
-    assert r.status_code == 400
-    assert "weight must be >= 0" in r.json()["detail"]
-
-
-@patch("app.routes.credibility.transaction")
-def test_put_topic_tags_replaces(mock_tx, client):
-    conn = MagicMock()
-    mock_tx.return_value.__enter__.return_value = conn
-
-    r = client.put(
-        "/stocks/AAPL/topic-tags",
-        json={"tags": [{"categorySlug": "macro", "weight": 0.5}]},
-    )
-    assert r.status_code == 200
-    body = r.json()
-    assert body["symbol"] == "AAPL"
-    assert body["tags"][0]["categorySlug"] == "macro"
-    assert body["tags"][0]["weight"] == 0.5
-    sql_texts = [str(call.args[0]) for call in conn.execute.call_args_list]
-    assert any("DELETE FROM stock_topic_tags" in s for s in sql_texts)
-    assert any("INSERT INTO stock_topic_tags" in s for s in sql_texts)
-    # DELETE must precede INSERT
-    delete_idx = next(i for i, s in enumerate(sql_texts) if "DELETE FROM stock_topic_tags" in s)
-    insert_idx = next(i for i, s in enumerate(sql_texts) if "INSERT INTO stock_topic_tags" in s)
-    assert delete_idx < insert_idx
+# (topic-tags route tests removed — the stock_topic_tags feature was cut.)

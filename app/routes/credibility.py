@@ -5,8 +5,6 @@ Root-mounted router. Endpoints:
 - PUT    /credibility/categories          upsert categories
 - GET    /credibility/tier-multipliers    tier -> multiplier map
 - PUT    /credibility/tier-multipliers    upsert tier multipliers
-- GET    /stocks/{ticker}/topic-tags      per-symbol category weights
-- PUT    /stocks/{ticker}/topic-tags      replace per-symbol category weights
 """
 
 from __future__ import annotations
@@ -14,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import logging
 
-from fastapi import APIRouter, HTTPException, Path
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -48,15 +46,6 @@ class CategoriesBody(BaseModel):
 
 class TierMultipliersBody(BaseModel):
     multipliers: dict[str, float]  # {tier: multiplier}
-
-
-class TopicTagBody(BaseModel):
-    categorySlug: str
-    weight: float
-
-
-class TopicTagsBody(BaseModel):
-    tags: list[TopicTagBody]
 
 
 # --------------------------------------------------------------------------- #
@@ -158,56 +147,4 @@ async def put_tier_multipliers(body: TierMultipliersBody):
 # --------------------------------------------------------------------------- #
 
 
-@router.get("/stocks/{ticker}/topic-tags")
-async def get_topic_tags(ticker: str = Path(...)):
-    symbol = ticker.upper()
-    rows = execute_sql(
-        """
-        SELECT category_slug, weight
-        FROM stock_topic_tags
-        WHERE UPPER(symbol) = :symbol
-        ORDER BY category_slug
-        """,
-        params={"symbol": symbol},
-        fetch_results=True,
-    ) or []
-    tags = []
-    for r in rows:
-        rd = _map(r)
-        tags.append({
-            "categorySlug": rd.get("category_slug"),
-            "weight": float(rd.get("weight")),
-        })
-    return {"symbol": symbol, "tags": tags}
-
-
-@router.put("/stocks/{ticker}/topic-tags")
-async def put_topic_tags(ticker: str = Path(...), body: TopicTagsBody = ...):  # noqa: B008
-    for t in body.tags:
-        if t.weight < 0:
-            raise HTTPException(status_code=400, detail="weight must be >= 0")
-    symbol = ticker.upper()
-    lock = _lock_key(symbol)
-    with transaction() as conn:
-        conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": lock})
-        conn.execute(
-            text("DELETE FROM stock_topic_tags WHERE UPPER(symbol) = :symbol"),
-            {"symbol": symbol},
-        )
-        for t in body.tags:
-            conn.execute(
-                text(
-                    """
-                    INSERT INTO stock_topic_tags (symbol, category_slug, weight)
-                    VALUES (:symbol, :slug, :weight)
-                    """
-                ),
-                {"symbol": symbol, "slug": t.categorySlug, "weight": t.weight},
-            )
-    return {
-        "symbol": symbol,
-        "tags": [
-            {"categorySlug": t.categorySlug, "weight": t.weight}
-            for t in body.tags
-        ],
-    }
+# (per-stock topic-tags routes removed — the stock_topic_tags feature was cut.)

@@ -83,10 +83,12 @@ def test_resolver_blank_author_is_neutral(monkeypatch):
 
 
 def test_resolver_happy_path(monkeypatch):
+    # Topic tags were removed, so the resolver no longer applies per-topic
+    # credibility weighting — it still identifies the person, but the
+    # multiplier is neutral (1.0). (In production stock_topic_tags was always
+    # empty, so this was already the effective behavior.)
     rows = {
         "tier_multipliers": [{"tier": "S", "multiplier": 1.35}, {"tier": "A", "multiplier": 1.15}],
-        "stock_topic_tags": [{"category_slug": "markets", "weight": 0.6},
-                             {"category_slug": "geopolitics", "weight": 0.4}],
         "source_identities": [{"platform_user_id": "1", "person_id": 7, "full_name": "Sachs"}],
         "person_category_tiers": [{"person_id": 7, "category_slug": "markets", "tier": "A", "muted": False},
                                   {"person_id": 7, "category_slug": "geopolitics", "tier": "S", "muted": False}],
@@ -94,7 +96,7 @@ def test_resolver_happy_path(monkeypatch):
     monkeypatch.setattr(cred, "execute_sql", _mock_execute(rows))
     r = cred.CredibilityResolver.for_ideas("LMT", author_ids=["1"])
     res = r.multiplier("1")
-    assert round(res.multiplier, 4) == 1.23
+    assert round(res.multiplier, 4) == 1.0
     assert res.person_id == 7 and res.person_name == "Sachs"
 
 
