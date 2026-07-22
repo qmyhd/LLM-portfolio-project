@@ -60,14 +60,12 @@ def _redact_secret_name(secret_name: Optional[str]) -> str:
     return f"<redacted-{kind}-secret-name len={length}>"
 
 
-
-
-
 # Secret name mapping: environment variable -> secret key in Secrets Manager
 # These are the keys expected in the AWS Secrets Manager secret
 SECRET_KEY_MAPPING = {
     # API Authentication
     "API_SECRET_KEY": "API_SECRET_KEY",  # For FastAPI bearer token auth
+    "OWNER_EMAILS": "OWNER_EMAILS",
     # Database - Supabase (primary and only)
     "DATABASE_URL": "DATABASE_URL",
     "DATABASE_DIRECT_URL": "DATABASE_DIRECT_URL",

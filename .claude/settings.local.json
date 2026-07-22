@@ -68,7 +68,14 @@
       "Bash(ruff check scripts/env_doctor.py scripts/investigate_symbol.py app/routes/portfolio.py)",
       "Bash(python scripts/_audit_data.py)",
       "Bash(python scripts/fix_orphaned_accounts.py)",
-      "Bash(python scripts/fix_orphaned_accounts.py --apply)"
+      "Bash(python scripts/fix_orphaned_accounts.py --apply)",
+      "Bash(node -e ' *)",
+      "Bash(npx tsc *)",
+      "Bash(python -m pytest tests/ -q -m \"not openai and not integration\")",
+      "Bash(python -m ruff check src/ app/ tests/)",
+      "WebSearch",
+      "WebFetch(domain:databento.com)",
+      "mcp__claude_ai_Supabase__execute_sql"
     ]
   }
 }
