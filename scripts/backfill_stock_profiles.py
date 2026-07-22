@@ -72,13 +72,21 @@ def get_all_tracked_tickers() -> list[str]:
 
 def get_position_metrics(ticker: str) -> dict[str, Any]:
     """Get position metrics for a ticker from positions table."""
+    # NOTE: `positions` has no percent column — unrealized_pnl_pct is computed
+    # as total P&L over total cost basis (SUM(open_pnl) / SUM(qty*avg_cost)).
+    # The old query referenced a non-existent `open_pnl_percent` column, so this
+    # whole refresh failed on every ticker and stock_profile_current stayed empty.
     query = """
-    SELECT 
+    SELECT
         SUM(quantity) AS current_qty,
         SUM(equity) AS current_value,
         AVG(average_buy_price) AS avg_buy_price,
         SUM(open_pnl) AS unrealized_pnl,
-        AVG(open_pnl_percent) AS unrealized_pnl_pct
+        CASE
+            WHEN SUM(quantity * average_buy_price) > 0
+            THEN SUM(open_pnl) / SUM(quantity * average_buy_price) * 100.0
+            ELSE NULL
+        END AS unrealized_pnl_pct
     FROM positions
     WHERE symbol = :ticker
     """
