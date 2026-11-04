@@ -8,5 +8,38 @@
     "superpowers@claude-plugins-official": true,
     "ralph-loop@claude-plugins-official": true,
     "feature-dev@claude-plugins-official": true
+  },
+  "enabledMcpjsonServers": [
+    "robinhood-trading"
+  ],
+  "permissions": {
+    "deny": [
+      "mcp__robinhood-trading__place_equity_order",
+      "mcp__robinhood-trading__cancel_equity_order",
+      "mcp__robinhood-trading__place_option_order",
+      "mcp__robinhood-trading__cancel_option_order",
+      "mcp__robinhood-trading__exercise_option",
+      "mcp__robinhood-trading__cancel_option_exercise",
+      "mcp__robinhood-trading__place_crypto_order",
+      "mcp__robinhood-trading__cancel_crypto_order",
+      "mcp__robinhood-trading__place_advanced_order",
+      "mcp__robinhood-trading__cancel_advanced_order"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "mcp__.*[Rr]obinhood.*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python \"$CLAUDE_PROJECT_DIR/.claude/hooks/robinhood_readonly_guard.py\"",
+            "timeout": 10,
+            "onFailure": "block",
+            "statusMessage": "Robinhood read-only guard (project)"
+          }
+        ]
+      }
+    ]
   }
 }

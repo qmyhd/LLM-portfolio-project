@@ -179,3 +179,4 @@ The `LEFT JOIN` + `COALESCE` pattern keeps legacy rows with orphan `account_id` 
 - **AGENTS.md** — Authoritative AI contributor guide (setup, patterns, rules)
 - **docs/ARCHITECTURE.md** — System architecture deep-dive
 - **.github/copilot-instructions.md** — Code patterns and integration examples
+- **docs/integrations/robinhood-mcp.md** — Robinhood Trading MCP (`.mcp.json` → `robinhood-trading`): **read-only**. Live tool list pinned in `docs/integrations/robinhood-mcp-tools.json`; guard = `.claude/settings.json` deny rules + `.claude/hooks/robinhood_readonly_guard.py`, checked by `tests/test_robinhood_guard.py`. Never place, cancel or exercise orders through it.
