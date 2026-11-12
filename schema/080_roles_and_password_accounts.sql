@@ -37,7 +37,31 @@ ALTER TABLE public.app_users
 ALTER TABLE public.app_users
     ALTER COLUMN role SET DEFAULT 'pending';
 
--- 4. Password-account columns.
+-- 4. Allow password accounts. Drop any CHECK on provider (original inline
+--    constraint is app_users_provider_check), then allow google and password.
+DO $$
+DECLARE
+    con RECORD;
+BEGIN
+    FOR con IN
+        SELECT c.conname
+        FROM pg_constraint c
+        WHERE c.conrelid = 'public.app_users'::regclass
+          AND c.contype = 'c'
+          AND pg_get_constraintdef(c.oid) ILIKE '%provider%'
+    LOOP
+        EXECUTE format('ALTER TABLE public.app_users DROP CONSTRAINT %I', con.conname);
+    END LOOP;
+END $$;
+
+ALTER TABLE public.app_users
+    ADD CONSTRAINT app_users_provider_check
+    CHECK (provider IN ('google', 'password'));
+
+-- email stays NOT NULL UNIQUE: password accounts store '<username>@local' as
+-- their email, which keeps it unique.
+
+-- 5. Password-account columns.
 ALTER TABLE public.app_users
     ADD COLUMN IF NOT EXISTS password_hash text NULL;
 ALTER TABLE public.app_users
