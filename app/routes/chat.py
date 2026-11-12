@@ -11,7 +11,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Path
 from openai import OpenAI
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from src.bucket import BucketQuery, bucket_filter_sql, validate_bucket
 from src.db import execute_sql
@@ -21,11 +21,17 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-class ChatRequest(BaseModel):
-    """Chat request body."""
+# Caps keep a single request from sending a huge prompt to OpenAI. `context`
+# is appended to the system prompt, so it gets a cap of its own.
+CHAT_MESSAGE_MAX_CHARS = 4_000
+CHAT_CONTEXT_MAX_CHARS = 8_000
 
-    message: str
-    context: str | None = None
+
+class ChatRequest(BaseModel):
+    """Chat request body. Over-long fields are rejected with a 422."""
+
+    message: str = Field(..., min_length=1, max_length=CHAT_MESSAGE_MAX_CHARS)
+    context: str | None = Field(default=None, max_length=CHAT_CONTEXT_MAX_CHARS)
 
 
 class ChatResponse(BaseModel):
@@ -36,13 +42,17 @@ class ChatResponse(BaseModel):
 
 
 @router.post("/{ticker}/chat", response_model=ChatResponse)
-async def chat_about_stock(
+def chat_about_stock(
     ticker: str = Path(..., description="Stock ticker symbol"),
     request: ChatRequest | None = None,
     bucket: str | None = BucketQuery,
 ):
     """
     Chat with AI about a stock using OpenAI.
+
+    Plain ``def`` on purpose: the OpenAI client and the DB calls block, so
+    FastAPI runs this in its threadpool rather than stalling the event loop
+    (and every other request) for the 5-20 s an OpenAI call takes.
 
     The AI has access to:
     - Recent trading ideas from Discord
@@ -186,5 +196,7 @@ Guidelines:
         )
 
     except Exception as e:
-        logger.error(f"Error in chat for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=f"Chat error: {str(e)}") from e
+        logger.error(f"Error in chat for {symbol}: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="The AI chat failed; try again shortly"
+        ) from e

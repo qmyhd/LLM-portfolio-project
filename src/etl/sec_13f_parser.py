@@ -20,7 +20,10 @@ Usage:
     my_positions = pd.DataFrame({'cusip': ['123456789'], 'my_avg_cost': [100.0]})
     relevant, summary = filter_for_my_portfolio(df, my_positions)
 
-    # 3. Generate SQL
+    # 3. Insert (bound parameters)
+    insert_holdings(relevant, manager_cik='12345', manager_name='Fund X', filing_date='2025-01-01')
+
+    # Or, to paste into the SQL editor (deprecated):
     sql_statements = generate_sql_inserts(relevant, manager_cik='12345', manager_name='Fund X', filing_date='2025-01-01')
 """
 
@@ -165,23 +168,15 @@ def generate_sql_inserts(
 
     Returns:
         List[str]: List of SQL INSERT statements
+
+    Deprecated: prefer ``insert_holdings`` (bound parameters, runs the
+    INSERTs directly). Kept for anyone who still pastes the text into the
+    Supabase SQL editor; every value is now quoted through ``_sql_literal``
+    rather than only some of them.
     """
     statements = []
 
-    for _, row in df.iterrows():
-        # Calculate full value (value_x1000 is in thousands)
-        value_usd = int(row["value_x1000"] * 1000)
-
-        # Handle booleans for put/call
-        put_call = str(row.get("put_call", "")).upper()
-        is_put = "TRUE" if put_call == "PUT" else "FALSE"
-        is_call = "TRUE" if put_call == "CALL" else "FALSE"
-
-        # Escape strings
-        issuer = str(row["issuer"]).replace("'", "''")
-        mgr_name = str(manager_name).replace("'", "''")
-        ticker = str(row.get("ticker", "")).replace("'", "''")
-
+    for params in build_holding_params(df, manager_cik, manager_name, filing_date):
         sql = f"""
         INSERT INTO institutional_holdings (
             filing_date, manager_cik, manager_name,
@@ -189,12 +184,91 @@ def generate_sql_inserts(
             value_usd, shares, share_type,
             is_put, is_call
         ) VALUES (
-            '{filing_date}', '{manager_cik}', '{mgr_name}',
-            '{row['cusip']}', '{ticker}', '{issuer}',
-            {value_usd}, {int(row['shares'])}, '{row['share_type']}',
-            {is_put}, {is_call}
+            {_sql_literal(params['filing_date'])}, {_sql_literal(params['manager_cik'])}, {_sql_literal(params['manager_name'])},
+            {_sql_literal(params['cusip'])}, {_sql_literal(params['ticker'])}, {_sql_literal(params['company_name'])},
+            {_sql_literal(params['value_usd'])}, {_sql_literal(params['shares'])}, {_sql_literal(params['share_type'])},
+            {_sql_literal(params['is_put'])}, {_sql_literal(params['is_call'])}
         );
         """
         statements.append(sql.strip())
 
     return statements
+
+
+# Bound-parameter INSERT: values never become part of the SQL text.
+INSTITUTIONAL_HOLDINGS_INSERT_SQL = """
+    INSERT INTO institutional_holdings (
+        filing_date, manager_cik, manager_name,
+        cusip, ticker, company_name,
+        value_usd, shares, share_type,
+        is_put, is_call
+    ) VALUES (
+        :filing_date, :manager_cik, :manager_name,
+        :cusip, :ticker, :company_name,
+        :value_usd, :shares, :share_type,
+        :is_put, :is_call
+    )
+"""
+
+
+def build_holding_params(
+    df: pd.DataFrame,
+    manager_cik: str,
+    manager_name: str,
+    filing_date: str,
+) -> List[Dict]:
+    """
+    Build one bound-parameter dict per holding for INSTITUTIONAL_HOLDINGS_INSERT_SQL.
+
+    Numbers are coerced with int() so a malformed value raises here instead
+    of reaching the database.
+    """
+    rows: List[Dict] = []
+    for _, row in df.iterrows():
+        put_call = str(row.get("put_call", "") or "").upper()
+        rows.append(
+            {
+                "filing_date": str(filing_date),
+                "manager_cik": str(manager_cik),
+                "manager_name": str(manager_name),
+                "cusip": str(row["cusip"]),
+                "ticker": str(row.get("ticker", "") or ""),
+                "company_name": str(row["issuer"]),
+                # value_x1000 is reported in thousands of dollars
+                "value_usd": int(row["value_x1000"] * 1000),
+                "shares": int(row["shares"]),
+                "share_type": str(row["share_type"]),
+                "is_put": put_call == "PUT",
+                "is_call": put_call == "CALL",
+            }
+        )
+    return rows
+
+
+def insert_holdings(
+    df: pd.DataFrame,
+    manager_cik: str,
+    manager_name: str,
+    filing_date: str,
+) -> int:
+    """
+    Insert holdings into institutional_holdings using bound parameters.
+
+    Returns:
+        Number of rows sent to the database.
+    """
+    from src.db import execute_sql
+
+    rows = build_holding_params(df, manager_cik, manager_name, filing_date)
+    for params in rows:
+        execute_sql(INSTITUTIONAL_HOLDINGS_INSERT_SQL, params=params)
+    return len(rows)
+
+
+def _sql_literal(value) -> str:
+    """Render a Python value as a safe SQL literal (for generate_sql_inserts only)."""
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int):
+        return str(int(value))
+    return "'" + str(value).replace("'", "''") + "'"

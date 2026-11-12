@@ -840,11 +840,14 @@ async def delete_idea(idea_id: UUID = Path(...)):
 
 
 @router.post("/{idea_id}/refine", response_model=RefineResponse)
-async def refine_idea(
+def refine_idea(
     idea_id: UUID = Path(...),
     apply: bool = Query(False, description="Auto-apply refined content to the idea"),
 ):
     """
+    Plain ``def`` on purpose: up to three blocking OpenAI calls run here, so
+    FastAPI runs it in its threadpool instead of stalling the event loop.
+
     AI auto-refine an idea using three-pass self-reflection:
 
     1. **Refine** — generate improved idea with structured fields

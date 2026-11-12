@@ -43,7 +43,7 @@ server {
     # ... SSL certs, security headers, logging ...
 
     # ── Hardening snippet (paste here) ──
-    if ($request_method !~ ^(GET|POST|PUT|DELETE|OPTIONS)$) { return 444; }
+    if ($request_method !~ ^(GET|POST|PUT|PATCH|DELETE|OPTIONS)$) { return 444; }
     location = / { access_log off; return 444; }
     # ... rest of snippet ...
 

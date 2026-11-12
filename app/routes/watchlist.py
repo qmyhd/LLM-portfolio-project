@@ -226,9 +226,9 @@ async def validate_ticker(request: ValidationRequest):
         )
 
     except Exception as e:
-        logger.error(f"Error validating ticker {ticker}: {e}")
+        logger.error(f"Error validating ticker {ticker}: {e}", exc_info=True)
         return ValidationResponse(
             ticker=ticker,
             valid=False,
-            message=f"Validation error: {str(e)}",
+            message="Validation failed; try again later",
         )

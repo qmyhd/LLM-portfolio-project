@@ -29,7 +29,7 @@ from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.auth import require_api_key
+from app.auth import assert_auth_configured, is_development, require_api_key
 from app.auth import router as auth_router
 from app.routes import (
     activities,
@@ -73,6 +73,9 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     """Application startup and shutdown lifecycle."""
     logger.info("Starting LLM Portfolio Journal API...")
+    # Fail closed: stop here if auth is on but API_SECRET_KEY is missing.
+    assert_auth_configured()
+
     # Startup: verify database connection
     try:
         from src.db import healthcheck
@@ -112,13 +115,19 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down LLM Portfolio Journal API...")
 
 
+# Interactive API docs are served only when ENVIRONMENT=development is set
+# explicitly. On the live server they are off in the app itself, and nginx
+# (nginx/snippets/api_hardening.conf) also returns 404 for them.
+_docs_enabled = is_development()
+
 # Create FastAPI app
 app = FastAPI(
     title="LLM Portfolio Journal API",
     description="REST API for portfolio analytics, trading ideas, and market data",
     version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc",
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
     lifespan=lifespan,
 )
 
@@ -148,7 +157,7 @@ app.add_middleware(
     allow_origins=ALLOWED_ORIGINS,
     allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allow_headers=["*"],
     expose_headers=["X-Request-ID"],
 )
@@ -278,8 +287,11 @@ if _debug_enabled:
 
 @app.get("/", include_in_schema=False)
 async def root():
-    """Root endpoint - redirect to docs."""
-    return {"message": "LLM Portfolio Journal API", "docs": "/docs"}
+    """Root endpoint. Points at the docs only where they are enabled."""
+    body = {"message": "LLM Portfolio Journal API"}
+    if _docs_enabled:
+        body["docs"] = "/docs"
+    return body
 
 
 @app.get("/health", tags=["Health"])

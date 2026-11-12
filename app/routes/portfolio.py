@@ -650,10 +650,8 @@ async def get_portfolio(
         )
 
     except Exception as e:
-        logger.error(f"Error fetching portfolio: {e}")
-        raise HTTPException(
-            status_code=500, detail=f"Failed to fetch portfolio: {str(e)}"
-        ) from e
+        logger.error(f"Error fetching portfolio: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch portfolio") from e
 
 
 class SyncResult(BaseModel):
@@ -713,11 +711,11 @@ async def sync_portfolio():
             authError=auth_error,
         )
     except Exception as e:
-        logger.error(f"Error syncing portfolio: {e}")
+        logger.error(f"Error syncing portfolio: {e}", exc_info=True)
         # Even fatal errors return 200 with a stable shape so the UI always gets parseable JSON
         return SyncResult(
             status="error",
-            message=f"Sync failed: {str(e)}",
+            message="Sync failed; see the API log for details",
             accounts=0,
             balances=0,
             positions=0,
