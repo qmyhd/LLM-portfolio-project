@@ -237,8 +237,9 @@ _rate_buckets: dict[str, deque[float]] = {}
 _rate_lock = threading.Lock()
 
 
-def _check_auth_rate_limit(client_ip: str) -> None:
-    """Raise 429 when `client_ip` exceeds AUTH_RATE_LIMIT requests/minute."""
+def _check_auth_rate_limit(key: str) -> None:
+    """Raise 429 when `key` (a client IP or a username key) exceeds
+    AUTH_RATE_LIMIT requests/minute."""
     now = time.monotonic()
     with _rate_lock:
         # Opportunistic cleanup so the map can't grow unbounded under
@@ -252,7 +253,7 @@ def _check_auth_rate_limit(client_ip: str) -> None:
             for ip in stale:
                 del _rate_buckets[ip]
 
-        bucket = _rate_buckets.setdefault(client_ip, deque())
+        bucket = _rate_buckets.setdefault(key, deque())
         while bucket and now - bucket[0] > _RATE_WINDOW_SECONDS:
             bucket.popleft()
         if len(bucket) >= AUTH_RATE_LIMIT:
@@ -475,11 +476,15 @@ async def password_login(request: Request, body: PasswordLoginRequest):
     which one it was.
     """
     client_ip = request.client.host if request.client else "unknown"
-    _check_auth_rate_limit(client_ip)
-
+    # Limit per username so one person hammering a name can't use up everyone
+    # else's logins; fall back to the client IP when no username can be derived.
     try:
         username = normalize_username(body.username)
     except ValueError:
+        username = None
+    _check_auth_rate_limit(f"pw:{username}" if username else client_ip)
+
+    if username is None:
         verify_password(body.password, None)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN
@@ -525,9 +530,6 @@ async def auth_me(request: Request):
     waiting page notices approval. Reveals nothing beyond that one user: a
     missing, malformed or unknown id is a plain 404.
     """
-    client_ip = request.client.host if request.client else "unknown"
-    _check_auth_rate_limit(f"me:{client_ip}")
-
     not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown user")
     raw = request.headers.get("X-App-User")
     if not raw:

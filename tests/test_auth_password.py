@@ -341,3 +341,34 @@ def test_me_missing_or_malformed_header_is_404_without_query(client, headers):
         r = client.get("/auth/me", headers=headers)
     assert r.status_code == 404
     ex.assert_not_called()
+
+
+# ------------------------------------------------------------ rate limiting
+
+
+def test_me_is_not_rate_limited(client):
+    row = {"id": UID, "role": "guest", "email": "a@b.com", "full_name": None}
+    with patch("app.auth.execute_sql", return_value=[row]):
+        codes = [client.get("/auth/me", headers={"X-App-User": UID}).status_code for _ in range(100)]
+    assert codes == [200] * 100
+
+
+def test_password_rate_limit_is_per_username(client):
+    with patch("app.auth.execute_sql", return_value=[]), patch.object(auth, "AUTH_RATE_LIMIT", 3):
+        a = [_login(client, "alice", "whatever-pass").status_code for _ in range(4)]
+        b = _login(client, "bobby", "whatever-pass").status_code
+        shaped_badly = _login(client, "a@b", "x").status_code
+    assert a == [401, 401, 401, 429]
+    assert b == 401
+    assert shaped_badly == 401  # falls back to the IP bucket, which is still fresh
+
+
+def test_password_rate_limit_bucket_count_is_bounded():
+    import time
+
+    stale = time.monotonic() - 1000
+    for i in range(10_001):
+        auth._rate_buckets[f"pw:user{i}"] = auth.deque([stale])
+    auth._check_auth_rate_limit("pw:fresh")
+    assert len(auth._rate_buckets) == 1
+    assert "pw:fresh" in auth._rate_buckets
