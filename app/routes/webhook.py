@@ -87,10 +87,10 @@ def verify_webhook_signature(raw_body: bytes, signature_header: str | None) -> b
     if hmac.compare_digest(signature_header.strip(), expected):
         return True
 
+    # Never log any part of the expected signature: a prefix of a valid HMAC
+    # is information an attacker should not get from our logs.
     logger.warning(
-        "Webhook signature mismatch: got=%s... expected=%s...",
-        signature_header[:12],
-        expected[:12],
+        "Webhook signature mismatch (received %d chars)", len(signature_header)
     )
     return False
 

@@ -170,8 +170,8 @@ async def get_sentiment_summary(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching sentiment summary for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.error(f"Error fetching sentiment summary for {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch sentiment summary") from e
 
 
 @router.get("/messages", response_model=MessagesResponse)
@@ -252,8 +252,8 @@ async def get_sentiment_messages(
         )
 
     except Exception as e:
-        logger.error(f"Error fetching messages for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.error(f"Error fetching messages for {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch messages") from e
 
 
 def _parsed_direction(value: Any) -> str:
@@ -623,7 +623,7 @@ async def get_sentiment_status():
         )
     except Exception as e:
         logger.error(f"Error fetching sentiment status: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        raise HTTPException(status_code=500, detail="Failed to fetch sentiment status") from e
 
 
 _RESETTABLE_STATUSES = frozenset({"ok", "error", "skipped", "noise", "pending"})

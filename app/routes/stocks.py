@@ -515,8 +515,8 @@ async def get_stock_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error fetching stock profile for {symbol}: {e}")
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.error(f"Error fetching stock profile for {symbol}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to fetch stock profile") from e
 
 
 @router.get("/{ticker}/ideas", response_model=IdeasResponse)

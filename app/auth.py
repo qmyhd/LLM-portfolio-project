@@ -30,13 +30,32 @@ router = APIRouter()
 security = HTTPBearer(auto_error=False)
 
 
+def get_environment() -> str:
+    """
+    Return the deployment environment, defaulting to "production".
+
+    The default is deliberately production: a missing ENVIRONMENT variable
+    must never relax security. Local work opts out explicitly, either with
+    ENVIRONMENT=development or with DISABLE_AUTH=true in .env.
+    """
+    return (os.getenv("ENVIRONMENT") or "production").strip().lower()
+
+
+def is_development() -> bool:
+    """True only when ENVIRONMENT is explicitly set to development."""
+    return get_environment() == "development"
+
+
 def is_auth_disabled() -> bool:
     """
     Check if authentication is disabled for local development.
 
     Auth is disabled when:
     - DISABLE_AUTH=true (explicit), OR
-    - ENVIRONMENT=development AND API_SECRET_KEY is not set
+    - ENVIRONMENT=development (explicit) AND API_SECRET_KEY is not set
+
+    A production box that loses its key does NOT fall open: the startup
+    check (`assert_auth_configured`) refuses to boot instead.
 
     Returns:
         True if auth should be skipped
@@ -45,11 +64,31 @@ def is_auth_disabled() -> bool:
     if os.getenv("DISABLE_AUTH", "").lower() in ("true", "1", "yes"):
         return True
 
-    # Auto-disable in development if no key is configured
-    env = os.getenv("ENVIRONMENT", "development")
+    # Auto-disable only when development was explicitly requested
     has_key = bool(os.getenv("API_SECRET_KEY"))
+    return is_development() and not has_key
 
-    return env == "development" and not has_key
+
+def assert_auth_configured() -> None:
+    """
+    Fail closed at startup: refuse to run without an API key.
+
+    Called from the FastAPI lifespan. Raises RuntimeError (which stops
+    uvicorn) when auth is enabled but API_SECRET_KEY is missing, so a
+    secrets-loading failure takes the API down instead of opening it up.
+    """
+    if is_auth_disabled():
+        logger.warning(
+            "API authentication is DISABLED (DISABLE_AUTH or development "
+            "without a key). Never run this way on a public host."
+        )
+        return
+    if not os.getenv("API_SECRET_KEY"):
+        raise RuntimeError(
+            "API_SECRET_KEY is not set and authentication is enabled "
+            f"(ENVIRONMENT={get_environment()}). Refusing to start. Set the key, "
+            "or set DISABLE_AUTH=true for local development only."
+        )
 
 
 def get_api_secret_key() -> str:
@@ -64,8 +103,8 @@ def get_api_secret_key() -> str:
     """
     key = os.getenv("API_SECRET_KEY")
     if not key:
-        # In development, allow a default key for testing
-        if os.getenv("ENVIRONMENT", "development") == "development":
+        # Only an explicit development environment gets a default key
+        if is_development():
             logger.warning("API_SECRET_KEY not set, using development default")
             return "dev-key-not-for-production"
         raise RuntimeError(

@@ -19,6 +19,7 @@ import logging
 import os
 
 from fastapi import APIRouter, HTTPException, Path, Query
+from fastapi.concurrency import run_in_threadpool
 from openai import OpenAI
 from pydantic import BaseModel
 from sqlalchemy import text
@@ -353,8 +354,10 @@ async def autofill_profile(
     symbol = ticker.upper()
     sources: list[str] = []
 
+    # This route awaits get_stock_analysis, so it stays async; its blocking
+    # DB/news calls run in the threadpool so they don't stall the event loop.
     try:
-        track_record = compute_stock_track_record(symbol, b)
+        track_record = await run_in_threadpool(compute_stock_track_record, symbol, b)
         sources.append("trades")
     except Exception as e:  # noqa: BLE001
         logger.warning("autofill track record failed for %s: %s", symbol, e)
@@ -362,7 +365,7 @@ async def autofill_profile(
 
     catalysts: list[dict] = []
     try:
-        news = get_company_news(symbol, limit=8) or []
+        news = await run_in_threadpool(get_company_news, symbol, limit=8) or []
         catalysts = [{"title": n.get("title"), "date": n.get("date"),
                       "source": n.get("source"), "url": n.get("url")} for n in news]
         if catalysts:
@@ -378,7 +381,7 @@ async def autofill_profile(
     except Exception as e:  # noqa: BLE001
         logger.warning("autofill analysis failed for %s: %s", symbol, e)
 
-    ideas = _ideas_digest(symbol)
+    ideas = await run_in_threadpool(_ideas_digest, symbol)
     if ideas:
         sources.append("ideas")
 
@@ -420,8 +423,10 @@ class InterviewBody(BaseModel):
     answers: list[dict] = []  # [{field, question, answer}]
 
 
+# interview and synthesize are plain ``def``: their OpenAI calls block, so
+# FastAPI runs them in its threadpool instead of on the event loop.
 @router.post("/stocks/{ticker}/profile/interview")
-async def interview(
+def interview(
     ticker: str = Path(...),
     body: InterviewBody = ...,  # noqa: B008
     bucket: str | None = BucketQuery,
@@ -468,7 +473,7 @@ class SynthesizeBody(BaseModel):
 
 
 @router.post("/stocks/{ticker}/profile/synthesize")
-async def synthesize(
+def synthesize(
     ticker: str = Path(...),
     body: SynthesizeBody = ...,  # noqa: B008
     bucket: str | None = BucketQuery,

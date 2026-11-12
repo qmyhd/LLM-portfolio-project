@@ -127,8 +127,13 @@ async def update_account_bucket(
 
 
 @router.post("/portal", response_model=PortalUrlResponse)
-async def generate_portal_url():
-    """Generate a SnapTrade Connect redirect URL for linking a brokerage."""
+def generate_portal_url():
+    """Generate a SnapTrade Connect redirect URL for linking a brokerage.
+
+    Plain ``def`` on purpose: the SnapTrade SDK blocks (with retries and
+    sleeps), so FastAPI runs this in its threadpool instead of on the event
+    loop, where it would stall every other request.
+    """
     try:
         from snaptrade_client import SnapTrade
     except ImportError as e:
@@ -162,8 +167,10 @@ async def generate_portal_url():
     except HTTPException:
         raise
     except Exception as e:
-        logger.error("Failed to generate portal URL: %s", e)
-        raise HTTPException(status_code=500, detail=str(e)) from e
+        logger.error("Failed to generate portal URL: %s", e, exc_info=True)
+        raise HTTPException(
+            status_code=500, detail="Failed to generate the SnapTrade connection link"
+        ) from e
 
 
 def _extract_redirect_uri(response: Any) -> str | None:
