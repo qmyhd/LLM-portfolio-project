@@ -336,3 +336,26 @@ def parser_regression_fixture(fixtures_dir):
 def triage_regression_fixture(fixtures_dir):
     """Return the path to triage regression fixture file."""
     return fixtures_dir / "triage_regression.jsonl"
+
+
+# =============================================================================
+# ACCESS POLICY
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _owner_viewer_for_route_tests():
+    """Resolve every API caller as the owner so route tests pass the access policy.
+
+    tests/test_access_matrix.py overrides this per test; tests/test_identity.py
+    calls resolve_viewer directly and is unaffected. The app is imported lazily
+    so tests that never touch it don't pay for it.
+    """
+    from app.identity import OWNER_VIEWER, resolve_viewer
+    from app.main import app
+
+    saved = dict(app.dependency_overrides)
+    app.dependency_overrides[resolve_viewer] = lambda: OWNER_VIEWER
+    yield
+    app.dependency_overrides.clear()
+    app.dependency_overrides.update(saved)

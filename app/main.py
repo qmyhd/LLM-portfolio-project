@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import assert_auth_configured, is_development, require_api_key
+from app.access import enforce_access
 from app.auth import router as auth_router
 from app.routes import (
     activities,
@@ -169,98 +170,98 @@ app.include_router(
     portfolio.router,
     prefix="/portfolio",
     tags=["Portfolio"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     orders.router,
     prefix="/orders",
     tags=["Orders"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     stocks.router,
     prefix="/stocks",
     tags=["Stocks"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     analysis_routes.router,
     tags=["Analysis"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     search.router,
     prefix="/search",
     tags=["Search"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     watchlist.router,
     prefix="/watchlist",
     tags=["Watchlist"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     chat.router,
     prefix="/stocks",
     tags=["Chat"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     activities.router,
     prefix="/activities",
     tags=["Activities"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 
 app.include_router(
     sentiment.router,
     prefix="/sentiment",
     tags=["Sentiment"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     openbb_routes.router,
     prefix="/stocks",
     tags=["OpenBB Insights"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     ideas.router,
     prefix="/ideas",
     tags=["Ideas"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     connections.router,
     prefix="/connections",
     tags=["Connections"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     trades.router,
     tags=["Trades"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     profiles.router,
     tags=["Profiles"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     people.router,
     tags=["People"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     credibility.router,
     tags=["Credibility"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 app.include_router(
     videos.router,
     tags=["Video Research"],
-    dependencies=[Depends(require_api_key)],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 # Auth tracking — called server-side by the Next.js frontend during sign-in,
 # so it carries the same API key as every other route. Not a public endpoint.
@@ -280,7 +281,7 @@ if _debug_enabled:
         debug_routes.router,
         prefix="/debug",
         tags=["Debug"],
-        dependencies=[Depends(require_api_key)],
+        dependencies=[Depends(require_api_key), Depends(enforce_access)],
     )
     logger.warning("Debug endpoints are ENABLED -- disable in production")
 

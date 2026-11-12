@@ -52,6 +52,12 @@ banner "API_KEY_PRESENT"
 if [[ -n "${API_SECRET_KEY:-}" ]]; then echo "yes (len=${#API_SECRET_KEY})"; else echo "NO — auth'd endpoints will fail"; fi
 
 banner "API_PROBES"
+# These probes send the API key but no X-App-User header, so the access policy
+# (app/access.py) resolves the caller as "pending" and every probe below now
+# returns 403 "This account is waiting for approval" instead of 200. That is
+# the expected result and proves the policy is enforced. Only a 401 (bad key)
+# or a 200 (policy bypassed) is a finding.
+EXPECT_CODE="403"
 probe() {
   local path="$1"
   local label="$2"
