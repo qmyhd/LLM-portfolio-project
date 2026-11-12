@@ -21,6 +21,9 @@ from collections import deque
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Security, status
+from fastapi.exception_handlers import request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 
@@ -306,10 +309,14 @@ def _row_dict(row) -> dict:
 
 
 def _invalidate_role_cache(user_id: str) -> None:
-    # Imported here: app.identity imports this module at load time.
-    from app.identity import invalidate_viewer
+    # Imported here: app.identity imports this module at load time. A failure
+    # must never turn a committed sign-in into a 500; the cache expires anyway.
+    try:
+        from app.identity import invalidate_viewer
 
-    invalidate_viewer(user_id)
+        invalidate_viewer(user_id)
+    except Exception:
+        logger.warning("Role cache invalidation failed", exc_info=True)
 
 
 def _notify_new_pending(full_name: str | None, email: str) -> None:
@@ -466,6 +473,70 @@ _SUCCESS_SQL = """
 _WRONG_LOGIN = "Wrong username or password"
 _LOCKED_LOGIN = "Too many attempts. Try again in 15 minutes"
 
+# ---------------------------------------------------------------------------
+# Shadow lock: names with no account are never written to the database, but
+# they lock like a real account (5 failures -> 423 for 15 minutes) so the
+# lockout can't be used to find out which usernames exist. In-process state,
+# bounded like the rate-limit buckets.
+# ---------------------------------------------------------------------------
+
+_LOCK_FAILURES = 5
+_LOCK_SECONDS = 15 * 60.0
+_SHADOW_MAX_NAMES = 10_000
+_shadow_locks: dict[str, dict] = {}  # key -> {"fails": [monotonic ts], "until": float}
+_shadow_lock = threading.Lock()
+
+
+def _shadow_key(raw_username: str) -> str:
+    """Normalised username when valid, else trimmed lower-cased input cut to 64."""
+    try:
+        return normalize_username(raw_username)
+    except ValueError:
+        return (raw_username or "").strip().lower()[:64]
+
+
+def _shadow_is_locked(key: str) -> bool:
+    now = time.monotonic()
+    with _shadow_lock:
+        entry = _shadow_locks.get(key)
+        return bool(entry and entry["until"] > now)
+
+
+def _shadow_record_failure(key: str) -> bool:
+    """Record a failure for an unknown name; True when the name is now locked."""
+    now = time.monotonic()
+    with _shadow_lock:
+        if len(_shadow_locks) >= _SHADOW_MAX_NAMES:
+            for name in [
+                n
+                for n, e in _shadow_locks.items()
+                if e["until"] <= now and all(now - t > _LOCK_SECONDS for t in e["fails"])
+            ]:
+                del _shadow_locks[name]
+            while len(_shadow_locks) >= _SHADOW_MAX_NAMES:  # still full: drop the oldest
+                del _shadow_locks[next(iter(_shadow_locks))]
+
+        entry = _shadow_locks.setdefault(key, {"fails": [], "until": 0.0})
+        if entry["until"] > now:
+            return True  # already locked: no change, no extension
+        entry["fails"] = [t for t in entry["fails"] if now - t <= _LOCK_SECONDS]
+        entry["fails"].append(now)
+        if len(entry["fails"]) >= _LOCK_FAILURES:
+            entry["until"] = now + _LOCK_SECONDS
+            entry["fails"] = []
+            return True
+        return False
+
+
+def _unknown_login(raw_username: str, password: str) -> HTTPException:
+    """The response for a name with no usable account: one dummy verification,
+    then 401, or 423 once the name's shadow lock is on."""
+    verify_password(password, None)
+    key = _shadow_key(raw_username)
+    if _shadow_is_locked(key) or _shadow_record_failure(key):
+        return HTTPException(status_code=status.HTTP_423_LOCKED, detail=_LOCKED_LOGIN)
+    return HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN)
+
 
 @router.post("/password", response_model=AppUserOut)
 async def password_login(request: Request, body: PasswordLoginRequest):
@@ -485,14 +556,14 @@ async def password_login(request: Request, body: PasswordLoginRequest):
     _check_auth_rate_limit(f"pw:{username}" if username else client_ip)
 
     if username is None:
-        verify_password(body.password, None)
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN
-        ) from None
+        raise _unknown_login(body.username, body.password)
 
     rows = execute_sql(_LOGIN_LOOKUP_SQL, params={"username": username}, fetch_results=True)
     account = _row_dict(rows[0]) if rows else None
     stored_hash = account["password_hash"] if account else None
+
+    if account is None or stored_hash is None:
+        raise _unknown_login(username, body.password)
 
     # An over-long password can't be the real one: never verify a truncation.
     if len(body.password) > MAX_PASSWORD:
@@ -500,9 +571,6 @@ async def password_login(request: Request, body: PasswordLoginRequest):
         password_ok = False
     else:
         password_ok = verify_password(body.password, stored_hash)
-
-    if account is None or stored_hash is None:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN)
 
     locked = HTTPException(status_code=status.HTTP_423_LOCKED, detail=_LOCKED_LOGIN)
     if account["is_locked"]:
@@ -521,6 +589,15 @@ async def password_login(request: Request, body: PasswordLoginRequest):
     if not updated:  # locked by a concurrent failure since the lookup
         raise locked
     return _row_to_app_user(updated[0])
+
+
+async def auth_validation_error_handler(request: Request, exc: RequestValidationError):
+    """422 for /auth/* without echoing any request input (it may hold a
+    password). Every other path keeps FastAPI's default handler."""
+    path = request.url.path
+    if path == "/auth" or path.startswith("/auth/"):
+        return JSONResponse(status_code=422, content={"detail": "Invalid request"})
+    return await request_validation_exception_handler(request, exc)
 
 
 @router.get("/me", response_model=MeOut)

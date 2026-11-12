@@ -90,7 +90,7 @@ def test_google_auth_tracks_user(mock_sql, client):
                 "email": "qais@example.com",
                 "full_name": "Qais",
                 "avatar_url": "https://example.com/avatar.png",
-                "role": "viewer",
+                "role": "pending",
                 "created_at": "2026-06-01T00:00:00+00:00",
                 "updated_at": "2026-06-01T00:00:00+00:00",
                 "last_seen_at": "2026-06-01T00:00:00+00:00",
@@ -121,7 +121,7 @@ def _app_user_row(**overrides):
         "email": "qais@example.com",
         "full_name": "Qais",
         "avatar_url": None,
-        "role": "viewer",
+        "role": "pending",
         "created_at": "2026-06-01T00:00:00+00:00",
         "updated_at": "2026-06-01T00:00:00+00:00",
         "last_seen_at": "2026-06-01T00:00:00+00:00",
@@ -156,7 +156,7 @@ def test_google_auth_non_owner_gets_no_role_override(mock_sql, client):
         )
 
     assert resp.status_code == 200
-    assert resp.json()["role"] == "viewer"
+    assert resp.json()["role"] == "pending"
     assert mock_sql.call_args.kwargs["params"]["role_override"] is None
 
 

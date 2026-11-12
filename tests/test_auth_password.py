@@ -4,7 +4,9 @@ SQL is mocked (`app.auth.execute_sql`); no test touches a database. Where a
 rule lives in SQL, the tests also assert on the statement text.
 """
 
+import time
 import uuid
+from types import SimpleNamespace
 from datetime import datetime, timezone
 from unittest.mock import patch
 
@@ -24,8 +26,10 @@ GOOD_HASH = passwords.hash_password(GOOD)
 @pytest.fixture(autouse=True)
 def _clean_rate_limit():
     auth._rate_buckets.clear()
+    auth._shadow_locks.clear()
     yield
     auth._rate_buckets.clear()
+    auth._shadow_locks.clear()
 
 
 @pytest.fixture
@@ -73,12 +77,20 @@ def test_normalize_username_rejects_email_and_spaces(bad):
         passwords.normalize_username(bad)
 
 
-def test_password_too_long_rejected_before_hashing():
-    with patch.object(passwords, "hash_password") as hp:
-        with pytest.raises(ValueError, match="128"):
-            passwords.check_password_rules("x" * 129, "guest")
-    hp.assert_not_called()
+def test_password_over_128_rejected_by_rules():
+    with pytest.raises(ValueError, match="128"):
+        passwords.check_password_rules("x" * 129, "guest")
     passwords.check_password_rules("x" * 128, "guest")
+
+
+def test_overlong_login_password_never_reaches_verify_with_a_real_hash(client):
+    with patch("app.auth.execute_sql") as ex, patch.object(passwords, "_hasher") as hasher:
+        ex.side_effect = [[_login_row()], [{"is_locked": False}]]
+        hasher.verify.return_value = True  # would sign in if it were ever asked
+        r = _login(client, password="x" * 129)
+    assert r.status_code == 401
+    assert hasher.verify.call_count == 1
+    assert hasher.verify.call_args.args[0] == passwords._DUMMY_HASH
 
 
 def test_password_of_spaces_rejected():
@@ -182,10 +194,15 @@ def test_login_bad_username_shape_gets_same_401_after_dummy_work(client):
 
 
 def test_login_overlong_password_is_401_and_never_matches_its_prefix(client):
-    with patch("app.auth.execute_sql") as ex:
-        ex.side_effect = [[_login_row()], [{"is_locked": False}]]
-        r = _login(client, password=GOOD + "x" * 200)
+    real = "p" * 128
+    real_hash = passwords.hash_password(real)
+    with patch("app.auth.execute_sql") as ex, patch(
+        "app.auth.verify_password", wraps=passwords.verify_password
+    ) as vp:
+        ex.side_effect = [[_login_row(password_hash=real_hash)], [{"is_locked": False}]]
+        r = _login(client, password=real + "x")
     assert r.status_code == 401
+    assert vp.call_count == 1 and vp.call_args.args[1] is None  # dummy, not the real hash
 
 
 def test_login_locked_after_5_failures_is_423(client):
@@ -372,3 +389,147 @@ def test_password_rate_limit_bucket_count_is_bounded():
     auth._check_auth_rate_limit("pw:fresh")
     assert len(auth._rate_buckets) == 1
     assert "pw:fresh" in auth._rate_buckets
+
+
+# -------------------------------------------------------------- shadow lock
+
+
+def _statuses(client, username, attempts, password="wrong password!!"):
+    return [_login(client, username, password).status_code for _ in range(attempts)]
+
+
+def test_unknown_username_gets_423_after_5_failures_like_a_real_one(client):
+    # Real account: four plain failures, the fifth trips the lock, then locked.
+    with patch("app.auth.execute_sql") as ex:
+        ex.side_effect = (
+            [[_login_row()], [{"is_locked": False}]] * 4
+            + [[_login_row()], [{"is_locked": True}]]
+            + [[_login_row(is_locked=True)]]
+        )
+        real = _statuses(client, "realuser", 6)
+    with patch("app.auth.execute_sql", return_value=[]):
+        unknown = _statuses(client, "ghostuser", 6)
+    assert real == [401, 401, 401, 401, 423, 423]
+    assert unknown == real
+    with patch("app.auth.execute_sql", return_value=[]):
+        r = _login(client, "ghostuser")
+    assert r.status_code == 423
+    assert r.json()["detail"] == "Too many attempts. Try again in 15 minutes"
+
+
+def test_malformed_username_shadow_locks_on_trimmed_lowercased_input(client):
+    names = ["A@B", " a@b ", "a@B", "A@b", "a@b", "a@b"]
+    with patch("app.auth.execute_sql") as ex:
+        seq = [_login(client, name, "x").status_code for name in names]
+    assert seq == [401, 401, 401, 401, 423, 423]
+    ex.assert_not_called()
+
+
+def test_shadow_lock_does_the_dummy_verify_while_locked(client):
+    with patch("app.auth.execute_sql", return_value=[]), patch(
+        "app.auth.verify_password", wraps=passwords.verify_password
+    ) as vp:
+        _statuses(client, "ghostuser", 6)
+    assert vp.call_count == 6
+    assert all(c.args[1] is None for c in vp.call_args_list)
+
+
+def test_shadow_lock_expires_after_15_minutes(client):
+    clock = [1000.0]
+    fake_time = SimpleNamespace(monotonic=lambda: clock[0])
+    with patch("app.auth.time", fake_time), patch("app.auth.execute_sql", return_value=[]):
+        assert _statuses(client, "ghostuser", 5) == [401, 401, 401, 401, 423]
+        clock[0] += 14 * 60
+        assert _login(client, "ghostuser", "x").status_code == 423
+        clock[0] += 61  # past 15 minutes from the fifth failure
+        assert _login(client, "ghostuser", "x").status_code == 401  # count restarts
+
+
+def test_shadow_lock_map_is_bounded():
+    now = time.monotonic()
+    for i in range(auth._SHADOW_MAX_NAMES):
+        auth._shadow_locks[f"live{i}"] = {"fails": [], "until": now + 900}
+    assert auth._shadow_record_failure("newcomer") is False
+    assert len(auth._shadow_locks) <= auth._SHADOW_MAX_NAMES
+    assert "newcomer" in auth._shadow_locks
+    # stale entries are swept first
+    auth._shadow_locks.clear()
+    for i in range(auth._SHADOW_MAX_NAMES):
+        auth._shadow_locks[f"old{i}"] = {"fails": [now - 5000], "until": now - 4000}
+    auth._shadow_record_failure("fresh")
+    assert list(auth._shadow_locks) == ["fresh"]
+
+
+def test_shadow_lock_never_writes_to_db(client):
+    with patch("app.auth.execute_sql", return_value=[]) as ex:
+        _statuses(client, "ghostuser", 7)
+    assert ex.call_count == 7
+    for call in ex.call_args_list:
+        sql = call.args[0].upper()
+        assert sql.lstrip().startswith("SELECT")
+        assert "INSERT" not in sql and "UPDATE" not in sql
+
+
+# ------------------------------------------------------ validation errors
+
+
+@pytest.fixture
+def main_client():
+    with patch.dict("os.environ", {"DISABLE_AUTH": "true"}):
+        from app.main import app as main_app
+
+        yield TestClient(main_app, raise_server_exceptions=False)
+
+
+def test_auth_validation_error_does_not_echo_input(main_client):
+    secret = "hunter2-very-secret"
+    r = main_client.post("/auth/password", json={"password": secret})
+    assert r.status_code == 422
+    assert r.json() == {"detail": "Invalid request"}
+    assert secret not in r.text
+    r = main_client.post(
+        "/auth/password",
+        content=('{"password": "' + secret + '"').encode(),
+        headers={"content-type": "application/json"},
+    )
+    assert r.status_code == 422 and secret not in r.text
+
+
+def test_other_routes_keep_default_validation_errors(main_client):
+    r = main_client.get("/ideas", params={"limit": "abc"})
+    assert r.status_code == 422
+    detail = r.json()["detail"]
+    assert isinstance(detail, list) and detail[0]["loc"] == ["query", "limit"]
+
+
+def test_validation_handler_matches_auth_path_on_a_boundary():
+    from fastapi.exceptions import RequestValidationError
+    from pydantic import BaseModel
+
+    class Body(BaseModel):
+        n: int
+
+    api = FastAPI()
+    api.add_exception_handler(RequestValidationError, auth.auth_validation_error_handler)
+
+    @api.post("/authors")
+    def authors(b: Body):
+        return {}
+
+    @api.post("/auth/x")
+    def auth_x(b: Body):
+        return {}
+
+    c = TestClient(api)
+    assert c.post("/authors", json={"n": "secret-not-int"}).json()["detail"][0]["type"]
+    assert c.post("/auth/x", json={"n": "secret-not-int"}).json() == {"detail": "Invalid request"}
+
+
+def test_cache_invalidation_failure_never_breaks_sign_in(client, monkeypatch):
+    monkeypatch.delenv("OWNER_EMAILS", raising=False)
+    with patch("app.auth.is_auth_disabled", return_value=True), patch(
+        "app.auth.execute_sql"
+    ) as ex, patch("app.identity.invalidate_viewer", side_effect=RuntimeError("boom")):
+        ex.return_value = [_user_row(role="pending", provider="google", inserted=True)]
+        r = _google(client)
+    assert r.status_code == 200

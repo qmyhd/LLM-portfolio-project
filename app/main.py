@@ -26,11 +26,13 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timezone
 
 from fastapi import Depends, FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.auth import assert_auth_configured, is_development, require_api_key
 from app.access import enforce_access
+from app.auth import auth_validation_error_handler
 from app.auth import router as auth_router
 from app.routes import (
     activities,
@@ -322,6 +324,10 @@ async def health_check():
         "database": "connected" if db_healthy else "disconnected",
         "version": "1.0.0",
     }
+
+
+# /auth/* validation errors must not echo request input (it may hold a password).
+app.add_exception_handler(RequestValidationError, auth_validation_error_handler)
 
 
 @app.exception_handler(Exception)
