@@ -47,7 +47,9 @@ def clean(monkeypatch):
 
 
 async def test_no_header_is_pending():
-    viewer = await resolve_viewer(make_request())
+    with patch("app.identity.execute_sql") as sql:
+        viewer = await resolve_viewer(make_request())
+    sql.assert_not_called()
     assert viewer.role == "pending"
     assert viewer.user_id is None
 
@@ -125,8 +127,10 @@ async def test_disable_auth_is_owner(monkeypatch):
 
 async def test_legacy_flag_makes_headerless_owner(monkeypatch):
     monkeypatch.setenv("APP_USER_LEGACY_OK", "1")
-    viewer = await resolve_viewer(make_request())
+    with patch("app.identity.execute_sql") as sql:
+        viewer = await resolve_viewer(make_request())
     assert viewer.role == "owner"
+    sql.assert_not_called()
 
 
 async def test_legacy_flag_does_not_cover_unknown_id(monkeypatch):
@@ -151,6 +155,61 @@ async def test_unknown_role_value_is_pending():
     with patch("app.identity.execute_sql", return_value=rows("editor")):
         viewer = await resolve_viewer(make_request(USER_ID))
     assert viewer.role == "pending"
+
+
+async def test_expired_entries_are_swept_on_write():
+    clock = [1000.0]
+    other = str(uuid.uuid4())
+    with patch.object(identity, "_now", lambda: clock[0]):
+        with patch("app.identity.execute_sql", return_value=rows("guest")):
+            await resolve_viewer(make_request(other))
+            clock[0] += VIEWER_CACHE_SECONDS + 1
+            await resolve_viewer(make_request(USER_ID))
+    assert list(identity._cache) == [USER_ID]
+
+
+async def test_cache_is_capped(monkeypatch):
+    monkeypatch.setattr(identity, "VIEWER_CACHE_MAX", 3)
+    with patch("app.identity.execute_sql", return_value=rows("guest")):
+        for _ in range(10):
+            await resolve_viewer(make_request(str(uuid.uuid4())))
+            assert len(identity._cache) <= 3
+
+
+async def test_invalidate_during_lookup_does_not_cache_stale_role():
+    def racing_query(*args, **kwargs):
+        invalidate_viewer(USER_ID)
+        return rows("guest")
+
+    with patch("app.identity.execute_sql", side_effect=racing_query) as sql:
+        assert (await resolve_viewer(make_request(USER_ID))).role == "guest"
+        sql.side_effect = None
+        sql.return_value = rows("owner")
+        assert (await resolve_viewer(make_request(USER_ID))).role == "owner"
+    assert sql.call_count == 2
+
+
+async def test_uppercase_uuid_shares_cache_entry():
+    with patch("app.identity.execute_sql", return_value=rows("guest")) as sql:
+        await resolve_viewer(make_request(USER_ID))
+        viewer = await resolve_viewer(make_request(USER_ID.upper()))
+    assert viewer.user_id == USER_ID
+    assert sql.call_count == 1
+
+
+async def test_disable_auth_wins_over_header(monkeypatch):
+    monkeypatch.setenv("DISABLE_AUTH", "true")
+    with patch("app.identity.execute_sql") as sql:
+        viewer = await resolve_viewer(make_request(USER_ID))
+    assert viewer.role == "owner"
+    sql.assert_not_called()
+
+
+async def test_unknown_id_pending_is_cached():
+    with patch("app.identity.execute_sql", return_value=[]) as sql:
+        await resolve_viewer(make_request(USER_ID))
+        await resolve_viewer(make_request(USER_ID))
+    assert sql.call_count == 1
 
 
 def test_constants():

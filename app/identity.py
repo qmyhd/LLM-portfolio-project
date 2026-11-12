@@ -24,6 +24,7 @@ logger = logging.getLogger(__name__)
 ROLES: tuple[str, ...] = ("pending", "guest", "family", "owner")
 ROLE_RANK: dict[str, int] = {"pending": 0, "guest": 1, "family": 1, "owner": 3}
 VIEWER_CACHE_SECONDS = 30
+VIEWER_CACHE_MAX = 5000
 APP_USER_HEADER = "X-App-User"
 
 
@@ -47,6 +48,7 @@ PENDING_VIEWER = Viewer(None, "pending")
 _now = time.monotonic
 _cache: dict[str, tuple[float, str]] = {}
 _cache_lock = threading.Lock()
+_invalidations = 0
 
 
 def _legacy_ok() -> bool:
@@ -62,7 +64,9 @@ if _legacy_ok():
 
 def invalidate_viewer(user_id: str | None = None) -> None:
     """Drop one cached entry, or the whole cache when no id is given."""
+    global _invalidations
     with _cache_lock:
+        _invalidations += 1
         if user_id is None:
             _cache.clear()
         else:
@@ -76,10 +80,11 @@ def _lookup_role(user_id: str) -> str | None:
         hit = _cache.get(user_id)
         if hit and now - hit[0] < VIEWER_CACHE_SECONDS:
             return hit[1]
+        seen_invalidations = _invalidations
 
     try:
         rows = execute_sql(
-            "SELECT role FROM app_users WHERE id = :id",
+            "SELECT role FROM app_users WHERE id = CAST(:id AS uuid)",
             params={"id": user_id},
             fetch_results=True,
         )
@@ -91,6 +96,12 @@ def _lookup_role(user_id: str) -> str | None:
     if role not in ROLES:
         role = "pending"
     with _cache_lock:
+        if _invalidations != seen_invalidations:
+            return role  # invalidated mid-lookup: the role may be stale, don't cache
+        for key in [k for k, (ts, _) in _cache.items() if now - ts >= VIEWER_CACHE_SECONDS]:
+            del _cache[key]
+        if len(_cache) >= VIEWER_CACHE_MAX:
+            _cache.clear()
         _cache[user_id] = (now, role)
     return role
 
