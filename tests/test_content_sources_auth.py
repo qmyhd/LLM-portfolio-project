@@ -79,7 +79,7 @@ def _idea_row(**overrides):
     return base
 
 
-@patch("src.db.execute_sql")
+@patch("app.auth.execute_sql")
 def test_google_auth_tracks_user(mock_sql, client):
     mock_sql.return_value = [
         _row(
@@ -130,7 +130,7 @@ def _app_user_row(**overrides):
     return base
 
 
-@patch("src.db.execute_sql")
+@patch("app.auth.execute_sql")
 def test_google_auth_promotes_owner_email(mock_sql, client):
     mock_sql.return_value = [_row(_app_user_row(role="owner"))]
 
@@ -145,7 +145,7 @@ def test_google_auth_promotes_owner_email(mock_sql, client):
     assert mock_sql.call_args.kwargs["params"]["role_override"] == "owner"
 
 
-@patch("src.db.execute_sql")
+@patch("app.auth.execute_sql")
 def test_google_auth_non_owner_gets_no_role_override(mock_sql, client):
     mock_sql.return_value = [_row(_app_user_row())]
 
@@ -160,7 +160,7 @@ def test_google_auth_non_owner_gets_no_role_override(mock_sql, client):
     assert mock_sql.call_args.kwargs["params"]["role_override"] is None
 
 
-@patch("src.db.execute_sql")
+@patch("app.auth.execute_sql")
 @patch("app.auth._verify_google_id_token")
 def test_google_auth_id_token_path_uses_verified_claims(mock_verify, mock_sql, client):
     mock_verify.return_value = {
@@ -233,7 +233,7 @@ def test_auth_config_status_reports_without_secrets(mock_sql, client):
     assert "abc.apps" not in resp.text
 
 
-@patch("src.db.execute_sql")
+@patch("app.auth.execute_sql")
 def test_google_auth_rate_limited(mock_sql, client, monkeypatch):
     import app.auth as auth_module
 

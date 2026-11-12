@@ -16,12 +16,16 @@ import logging
 import os
 import threading
 import time
+import uuid
 from collections import deque
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Request, Security, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
+
+from app.passwords import MAX_PASSWORD, normalize_username, verify_password
+from src.db import execute_sql
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -196,6 +200,18 @@ class GoogleAuthRequest(BaseModel):
     avatarUrl: str | None = None
 
 
+class PasswordLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class MeOut(BaseModel):
+    id: str
+    role: str
+    email: str
+    fullName: str | None = None
+
+
 class AppUserOut(BaseModel):
     id: str
     provider: str
@@ -284,8 +300,27 @@ def _verify_google_id_token(id_token: str) -> dict:
         ) from exc
 
 
+def _row_dict(row) -> dict:
+    return dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+
+
+def _invalidate_role_cache(user_id: str) -> None:
+    # Imported here: app.identity imports this module at load time.
+    from app.identity import invalidate_viewer
+
+    invalidate_viewer(user_id)
+
+
+def _notify_new_pending(full_name: str | None, email: str) -> None:
+    """Alert the owner that someone new is waiting for approval.
+
+    Filled in by the alerts task. Must never raise into the request.
+    """
+    return None
+
+
 def _row_to_app_user(row) -> AppUserOut:
-    rd = dict(row._mapping) if hasattr(row, "_mapping") else dict(row)
+    rd = _row_dict(row)
     return AppUserOut(
         id=str(rd["id"]),
         provider=rd["provider"],
@@ -310,7 +345,8 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
     fields directly when auth is disabled.
 
     Users whose email is listed in OWNER_EMAILS are promoted to the 'owner'
-    role on sign-in; everyone else keeps their existing role (default 'viewer').
+    role on sign-in; everyone else keeps their existing role. A brand-new
+    user starts as 'pending' until an owner approves them.
     """
     client_ip = request.client.host if request.client else "unknown"
     _check_auth_rate_limit(client_ip)
@@ -338,8 +374,6 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
             detail="Google user id and email are required",
         )
 
-    from src.db import execute_sql
-
     # Promote to owner when the email is allowlisted; never demote an
     # existing role automatically (manual DB edit is the only demotion path).
     role_override = "owner" if email.lower() in _owner_emails() else None
@@ -350,7 +384,7 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
             (provider, provider_user_id, email, full_name, avatar_url, role, last_seen_at)
         VALUES
             ('google', :provider_user_id, LOWER(:email), :full_name, :avatar_url,
-             COALESCE(:role_override, 'viewer'), NOW())
+             COALESCE(:role_override, 'pending'), NOW())
         ON CONFLICT (provider, provider_user_id) DO UPDATE SET
             email = EXCLUDED.email,
             full_name = EXCLUDED.full_name,
@@ -359,7 +393,8 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
             last_seen_at = NOW(),
             updated_at = NOW()
         RETURNING id, provider, provider_user_id, email, full_name, avatar_url,
-                  role, created_at, updated_at, last_seen_at
+                  role, created_at, updated_at, last_seen_at,
+                  (xmax = 0) AS inserted
         """,
         params={
             "provider_user_id": provider_user_id,
@@ -372,7 +407,147 @@ async def google_auth(request: Request, body: GoogleAuthRequest):
     )
     if not rows:
         raise HTTPException(status_code=500, detail="Failed to track signed-in user")
-    return _row_to_app_user(rows[0])
+    user = _row_to_app_user(rows[0])
+    inserted = bool(_row_dict(rows[0]).get("inserted"))
+
+    if inserted or role_override:
+        _invalidate_role_cache(user.id)
+    if inserted and user.role == "pending":
+        try:
+            _notify_new_pending(user.fullName, user.email)
+        except Exception:  # an alert must never block sign-in
+            logger.warning("New-pending alert failed", exc_info=True)
+    return user
+
+
+# ---------------------------------------------------------------------------
+# Username + password sign-in with lockout (5 failures lock for 15 minutes).
+# State lives in app_users.failed_login_count / locked_until and every change
+# is a single SQL statement, so concurrent failures can't both read the same
+# count.
+# ---------------------------------------------------------------------------
+
+_LOGIN_LOOKUP_SQL = """
+    SELECT id, password_hash,
+           (locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked
+    FROM app_users
+    WHERE provider = 'password' AND provider_user_id = :username
+"""
+
+# A lock that has expired restarts the count at 1. A live lock is never
+# touched (the WHERE guard), so it is not extended and the count stays put.
+_FAIL_SQL = """
+    UPDATE app_users SET
+        failed_login_count = CASE
+            WHEN locked_until IS NOT NULL AND locked_until <= NOW() THEN 1
+            ELSE failed_login_count + 1 END,
+        locked_until = CASE
+            WHEN (CASE WHEN locked_until IS NOT NULL AND locked_until <= NOW() THEN 1
+                       ELSE failed_login_count + 1 END) >= 5
+                THEN NOW() + INTERVAL '15 minutes'
+            WHEN locked_until IS NOT NULL AND locked_until <= NOW() THEN NULL
+            ELSE locked_until END
+    WHERE id = CAST(:id AS uuid) AND (locked_until IS NULL OR locked_until <= NOW())
+    RETURNING (locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked
+"""
+
+_SUCCESS_SQL = """
+    UPDATE app_users SET
+        failed_login_count = 0,
+        locked_until = NULL,
+        last_seen_at = NOW(),
+        updated_at = NOW()
+    WHERE id = CAST(:id AS uuid) AND (locked_until IS NULL OR locked_until <= NOW())
+    RETURNING id, provider, provider_user_id, email, full_name, avatar_url,
+              role, created_at, updated_at, last_seen_at
+"""
+
+_WRONG_LOGIN = "Wrong username or password"
+_LOCKED_LOGIN = "Too many attempts. Try again in 15 minutes"
+
+
+@router.post("/password", response_model=AppUserOut)
+async def password_login(request: Request, body: PasswordLoginRequest):
+    """
+    Sign in with a username and password. Pending users sign in too (the
+    frontend shows them the waiting page). Unknown, locked and wrong-password
+    cases each do exactly one argon2 verification so timing doesn't reveal
+    which one it was.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    _check_auth_rate_limit(client_ip)
+
+    try:
+        username = normalize_username(body.username)
+    except ValueError:
+        verify_password(body.password, None)
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN
+        ) from None
+
+    rows = execute_sql(_LOGIN_LOOKUP_SQL, params={"username": username}, fetch_results=True)
+    account = _row_dict(rows[0]) if rows else None
+    stored_hash = account["password_hash"] if account else None
+
+    # An over-long password can't be the real one: never verify a truncation.
+    if len(body.password) > MAX_PASSWORD:
+        verify_password(body.password[:MAX_PASSWORD], None)
+        password_ok = False
+    else:
+        password_ok = verify_password(body.password, stored_hash)
+
+    if account is None or stored_hash is None:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN)
+
+    locked = HTTPException(status_code=status.HTTP_423_LOCKED, detail=_LOCKED_LOGIN)
+    if account["is_locked"]:
+        raise locked
+
+    user_id = str(account["id"])
+    if not password_ok:
+        failed = execute_sql(_FAIL_SQL, params={"id": user_id}, fetch_results=True)
+        # No row means a concurrent failure locked it since the lookup. The
+        # attempt that trips the lock gets 423 too: the account is locked now.
+        if not failed or _row_dict(failed[0])["is_locked"]:
+            raise locked
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN)
+
+    updated = execute_sql(_SUCCESS_SQL, params={"id": user_id}, fetch_results=True)
+    if not updated:  # locked by a concurrent failure since the lookup
+        raise locked
+    return _row_to_app_user(updated[0])
+
+
+@router.get("/me", response_model=MeOut)
+async def auth_me(request: Request):
+    """
+    The role of the user named in X-App-User, read fresh (never cached) so the
+    waiting page notices approval. Reveals nothing beyond that one user: a
+    missing, malformed or unknown id is a plain 404.
+    """
+    client_ip = request.client.host if request.client else "unknown"
+    _check_auth_rate_limit(f"me:{client_ip}")
+
+    not_found = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown user")
+    raw = request.headers.get("X-App-User")
+    if not raw:
+        raise not_found
+    try:
+        user_id = str(uuid.UUID(raw.strip()))
+    except ValueError:
+        raise not_found from None
+
+    rows = execute_sql(
+        "SELECT id, role, email, full_name FROM app_users WHERE id = CAST(:id AS uuid)",
+        params={"id": user_id},
+        fetch_results=True,
+    )
+    if not rows:
+        raise not_found
+    rd = _row_dict(rows[0])
+    return MeOut(
+        id=str(rd["id"]), role=rd["role"], email=rd["email"], fullName=rd.get("full_name")
+    )
 
 
 class AuthConfigStatus(BaseModel):
