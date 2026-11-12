@@ -8,7 +8,7 @@ with `required_role(method, route_path, query)`.
 Policy:
 1. pending                                  -> 403 (waiting for approval)
 2. path under an OWNER_ONLY_PREFIXES entry  -> owner
-3. GET / HEAD / OPTIONS                     -> guest, but a truthy `refresh` -> owner
+3. GET / HEAD / OPTIONS                     -> guest, but a `refresh` that is not a clear no -> owner
 4. any other method                         -> owner, unless listed in GUEST_WRITES
 
 A route the policy cannot match (no route in scope) needs the owner.
@@ -30,7 +30,10 @@ OWNER_ONLY_PREFIXES: tuple[str, ...] = (
     "/portfolio/sync",
 )
 _READ_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
-_TRUTHY = frozenset({"1", "true", "yes", "on"})
+# `refresh` is parsed by pydantic as a bool, which accepts more spellings than
+# we could list (t, y, True, ...). So fail closed: only these values, or no
+# parameter at all, mean "no refresh". Anything else, garbage included, is owner.
+_FALSY = frozenset({"", "0", "false", "no", "off", "f", "n"})
 
 
 def _under_prefix(route_path: str) -> bool:
@@ -38,17 +41,24 @@ def _under_prefix(route_path: str) -> bool:
     return any(route_path == p or route_path.startswith(p + "/") for p in OWNER_ONLY_PREFIXES)
 
 
-def _truthy_refresh(query: Mapping[str, str]) -> bool:
-    return str(query.get("refresh", "")).strip().lower() in _TRUTHY
+def _requests_refresh(query: Mapping[str, str | list[str]]) -> bool:
+    """True unless `refresh` is absent or every occurrence is a clear "no"."""
+    raw = query.get("refresh")
+    if raw is None:
+        return False
+    values = [raw] if isinstance(raw, str) else list(raw)
+    return any(str(v).strip().lower() not in _FALSY for v in values)
 
 
-def required_role(method: str, route_path: str, query: Mapping[str, str]) -> str:
+def required_role(
+    method: str, route_path: str, query: Mapping[str, str | list[str]]
+) -> str:
     """Return "guest" or "owner": the lowest role allowed to call this route."""
     method = method.upper()
     if _under_prefix(route_path):
         return "owner"
     if method in _READ_METHODS:
-        return "owner" if _truthy_refresh(query) else "guest"
+        return "owner" if _requests_refresh(query) else "guest"
     return "guest" if (method, route_path) in GUEST_WRITES else "owner"
 
 
@@ -64,7 +74,9 @@ async def enforce_access(
     if route_path is None:
         needed = "owner"  # unknown route: never open
     else:
-        needed = required_role(request.method, route_path, request.query_params)
+        # getlist: a repeated ?refresh=false&refresh=true must not slip through.
+        query = {"refresh": request.query_params.getlist("refresh")}
+        needed = required_role(request.method, route_path, query)
 
     if ROLE_RANK.get(viewer.role, 0) < ROLE_RANK[needed]:
         raise HTTPException(status_code=403, detail="This action needs the owner")

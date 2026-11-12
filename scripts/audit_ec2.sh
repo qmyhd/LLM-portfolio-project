@@ -53,18 +53,22 @@ if [[ -n "${API_SECRET_KEY:-}" ]]; then echo "yes (len=${#API_SECRET_KEY})"; els
 
 banner "API_PROBES"
 # These probes send the API key but no X-App-User header, so the access policy
-# (app/access.py) resolves the caller as "pending" and every probe below now
-# returns 403 "This account is waiting for approval" instead of 200. That is
-# the expected result and proves the policy is enforced. Only a 401 (bad key)
-# or a 200 (policy bypassed) is a finding.
+# (app/access.py) resolves the caller as "pending" and every probe below returns
+# 403 "This account is waiting for approval". That is the expected result and
+# proves the policy is enforced. Exception: while APP_USER_LEGACY_OK is set on
+# the box (a short rollout window) a headerless request resolves to owner and
+# returns 200; then 200 is expected. At any other time a 200 is a finding.
 EXPECT_CODE="403"
+case "${APP_USER_LEGACY_OK:-}" in 1|true|TRUE|True|yes|YES|Yes) EXPECT_CODE="200" ;; esac
 probe() {
   local path="$1"
   local label="$2"
   local code body
   code=$(curl -sS -o /tmp/_body --max-time 15 -w "%{http_code}" -H "$AUTH_HEADER" "$API_BASE$path")
   body=$(head -c 600 /tmp/_body)
-  printf "%-45s %s\n" "[$code] $label" "${body//$'\n'/ }"
+  local verdict="ok"
+  [[ "$code" == "$EXPECT_CODE" ]] || verdict="UNEXPECTED (want $EXPECT_CODE)"
+  printf "%-45s %s %s\n" "[$code] $label" "$verdict" "${body//$'\n'/ }"
   echo ""
 }
 probe "/portfolio/positions"            "positions"

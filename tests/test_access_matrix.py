@@ -18,7 +18,15 @@ from app.identity import OWNER_VIEWER, PENDING_VIEWER, Viewer, resolve_viewer
 
 PENDING_MSG = "This account is waiting for approval"
 OWNER_MSG = "This action needs the owner"
-OPEN_PREFIXES = ("/health", "/webhook", "/auth", "/docs", "/redoc", "/openapi.json")
+OPEN_PREFIXES = ("/health", "/webhook", "/auth", "/docs", "/redoc")
+OPEN_EXACT = ("/", "/openapi.json", "/docs/oauth2-redirect")
+
+
+def is_open_path(path: str) -> bool:
+    """Same boundary rule as the policy: /auth and /auth/x, never /authors."""
+    return path in OPEN_EXACT or any(
+        path == p or path.startswith(p + "/") for p in OPEN_PREFIXES
+    )
 
 
 @pytest.fixture
@@ -48,6 +56,8 @@ def client_as(app_obj):
 
 
 def _stub_handler(monkeypatch, app_obj, method, path, result):
+    """Replace a route's handler with a stub; returns the list of its calls."""
+    calls = []
     route = next(
         r
         for r in app_obj.routes
@@ -56,14 +66,17 @@ def _stub_handler(monkeypatch, app_obj, method, path, result):
     if inspect.iscoroutinefunction(route.dependant.call):
 
         async def stub(**_):
+            calls.append(1)
             return result
 
     else:
 
         def stub(**_):
+            calls.append(1)
             return result
 
     monkeypatch.setattr(route.dependant, "call", stub)
+    return calls
 
 
 @pytest.mark.parametrize(
@@ -76,6 +89,14 @@ def _stub_handler(monkeypatch, app_obj, method, path, result):
         ("GET", "/stocks/{ticker}/analysis", {}, "guest"),
         ("GET", "/stocks/{ticker}/analysis", {"refresh": "false"}, "guest"),
         ("GET", "/stocks/{ticker}/analysis", {"refresh": "0"}, "guest"),
+        *[
+            ("GET", "/stocks/{ticker}/analysis", {"refresh": v}, "owner")
+            for v in ("t", "y", "T", "Y", "2", "maybe")
+        ],
+        *[
+            ("GET", "/stocks/{ticker}/analysis", {"refresh": v}, "guest")
+            for v in ("f", "n", "off", "no", "")
+        ],
         ("GET", "/stocks/{ticker}/analysis", {"refresh": " YES "}, "owner"),
         ("GET", "/stocks/{ticker}/analysis", {"refresh": "1"}, "owner"),
         ("GET", "/stocks/{ticker}/analysis", {"refresh": "on"}, "owner"),
@@ -87,6 +108,24 @@ def _stub_handler(monkeypatch, app_obj, method, path, result):
 )
 def test_required_role(method, path, query, expected):
     assert required_role(method, path, query) == expected
+
+
+def test_repeated_refresh_param_any_truthy_requires_owner():
+    path = "/stocks/{ticker}/analysis"
+    assert required_role("GET", path, {"refresh": ["false", "true"]}) == "owner"
+    assert required_role("GET", path, {"refresh": ["false", "0"]}) == "guest"
+
+
+def test_repeated_refresh_param_through_the_app(client_as):
+    r = client_as("guest").get("/stocks/AAPL/analysis?refresh=false&refresh=true")
+    assert (r.status_code, r.json()["detail"]) == (403, OWNER_MSG)
+
+
+def test_coverage_exemption_is_boundary_matched():
+    for open_path in ("/health", "/auth/google", "/webhook/snaptrade", "/docs", "/openapi.json"):
+        assert is_open_path(open_path), open_path
+    for closed_path in ("/authors", "/healthz", "/webhooks", "/docsx", "/openapi.json/x"):
+        assert not is_open_path(closed_path), closed_path
 
 
 def test_owner_prefix_matches_on_boundary_only():
@@ -109,14 +148,14 @@ def test_every_route_is_covered(app_obj):
     uncovered = [
         f"{sorted(r.methods)} {r.path}"
         for r in _all_routes(app_obj)
-        if r.path != "/" and not r.path.startswith(OPEN_PREFIXES) and not _enforced(r)
+        if not is_open_path(r.path) and not _enforced(r)
     ]
     assert not uncovered, uncovered
 
 
 def test_every_mutating_route_is_owner_or_listed(app_obj):
     for r in _all_routes(app_obj):
-        if r.path.startswith(OPEN_PREFIXES):
+        if is_open_path(r.path):
             continue
         for m in r.methods - {"GET", "HEAD", "OPTIONS"}:
             assert required_role(m, r.path, {}) == "owner" or (m, r.path) in GUEST_WRITES, (
@@ -192,19 +231,41 @@ def test_chat_is_allowed_through_policy(client_as, app_obj, monkeypatch, role):
 
 
 def test_family_matches_guest(client_as, app_obj, monkeypatch):
-    _stub_handler(monkeypatch, app_obj, "GET", "/watchlist", {})
-    for role in ("guest", "family"):
+    calls = _stub_handler(monkeypatch, app_obj, "GET", "/watchlist", {})
+    for n, role in enumerate(("guest", "family"), start=1):
         c = client_as(role)
-        assert c.get("/watchlist").status_code != 403
+        c.get("/watchlist")
+        assert len(calls) == n, f"{role} did not reach the handler"
         assert c.put("/stocks/AAPL/profile", json={}).status_code == 403
         assert c.get("/connections").status_code == 403
 
 
 def test_owner_passes(client_as, app_obj, monkeypatch):
-    # Stubbed handlers may fail response validation (500); the policy only
-    # has to let the owner through, so assert "not refused" for these.
-    _stub_handler(monkeypatch, app_obj, "GET", "/connections", [])
-    _stub_handler(monkeypatch, app_obj, "GET", "/stocks/{ticker}/analysis", {})
+    # The stubbed handlers may fail response validation (500); what matters is
+    # that the handler was reached, which the call record proves.
+    conn = _stub_handler(monkeypatch, app_obj, "GET", "/connections", [])
+    ana = _stub_handler(monkeypatch, app_obj, "GET", "/stocks/{ticker}/analysis", {})
     c = client_as("owner")
-    assert c.get("/connections").status_code != 403
-    assert c.get("/stocks/AAPL/analysis?refresh=true").status_code != 403
+    c.get("/connections")
+    c.get("/stocks/AAPL/analysis?refresh=true")
+    assert len(conn) == 1
+    assert len(ana) == 1
+
+
+def test_debug_router_carries_enforce_access():
+    """The debug router mounts only with DEBUG_ENDPOINTS=1 at import."""
+    import importlib
+    from unittest.mock import patch
+
+    import app.main
+
+    try:
+        with patch.dict("os.environ", {"DISABLE_AUTH": "true", "DEBUG_ENDPOINTS": "1"}):
+            importlib.reload(app.main)
+            debug = [r for r in _all_routes(app.main.app) if r.path.startswith("/debug")]
+            assert debug, "debug router did not mount"
+            assert all(_enforced(r) for r in debug)
+            assert all(required_role("GET", r.path, {}) == "owner" for r in debug)
+    finally:
+        with patch.dict("os.environ", {"DISABLE_AUTH": "true", "DEBUG_ENDPOINTS": ""}):
+            importlib.reload(app.main)
