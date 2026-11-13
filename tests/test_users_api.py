@@ -216,13 +216,28 @@ def test_patch_owner_on_google_row_is_refused(owner, sql, invalidated):
     invalidated.assert_not_called()
 
 
-def test_patch_can_promote_password_account_to_owner(owner, sql):
-    sql.side_effect = [
-        [make_row(OTHER, role="family")],
-        [make_row(OTHER, role="owner")],
-    ]
+def test_patch_cannot_promote_password_account_to_owner(owner, sql, invalidated):
+    sql.side_effect = [[make_row(OTHER, role="family")]]
     r = owner.patch(f"/users/{OTHER}", json={"role": "owner"})
-    assert r.status_code == 200 and r.json()["role"] == "owner"
+    assert r.status_code == 400
+    assert r.json()["detail"] == "Create a new password account with the Owner role instead"
+    assert sql.call_count == 1  # nothing was written
+    invalidated.assert_not_called()
+
+
+def test_patch_update_sql_can_never_set_owner(owner, sql):
+    sql.side_effect = [[make_row(OTHER, role="guest")], [make_row(OTHER, role="family")]]
+    owner.patch(f"/users/{OTHER}", json={"role": "family"})
+    assert ":role <> 'owner'" in " ".join(sql_texts(sql)[1].split())
+
+
+def test_patch_response_has_no_secrets(owner, sql):
+    sql.side_effect = [
+        [make_row(OTHER, role="guest", password_hash="$argon2id$x")],
+        [make_row(OTHER, role="family", password_hash="$argon2id$x")],
+    ]
+    r = owner.patch(f"/users/{OTHER}", json={"role": "family"})
+    assert "password_hash" not in r.text and "argon2" not in r.text
 
 
 def test_patch_google_user_can_be_set_to_pending(owner, sql):
@@ -283,20 +298,23 @@ def test_patch_without_viewer_id_still_applies_last_owner_rule(client_as, sql):
 
 
 def test_delete_removes_only_the_user_row(owner, sql, invalidated):
-    sql.return_value = [SimpleNamespace(_mapping={"id": uuid.UUID(OTHER)})]
+    sql.side_effect = [
+        [make_row(OTHER)],
+        [SimpleNamespace(_mapping={"id": uuid.UUID(OTHER)})],
+    ]
     r = owner.delete(f"/users/{OTHER}")
     assert r.status_code == 204 and r.content == b""
     invalidated.assert_called_once_with(OTHER)
-    assert sql.call_count == 1
-    text = " ".join(sql_texts(sql)[0].split())
+    assert sql.call_count == 2
+    text = " ".join(sql_texts(sql)[1].split())
     assert "DELETE FROM app_users" in text
     assert "FOR UPDATE" in text
     assert "SELECT count(*) FROM owners WHERE id <> CAST(:id AS uuid)) >= 1" in text
-    assert sql_params(sql)[0] == {"id": OTHER}
+    assert sql_params(sql)[1] == {"id": OTHER}
 
 
 def test_delete_last_owner_is_refused(owner, sql, invalidated):
-    sql.side_effect = [[], [make_row(OTHER, role="owner")]]
+    sql.side_effect = [[make_row(OTHER, role="owner")], [], [make_row(OTHER, role="owner")]]
     r = owner.delete(f"/users/{OTHER}")
     assert (r.status_code, r.json()["detail"]) == (400, "At least one owner must remain")
     invalidated.assert_not_called()
@@ -309,7 +327,7 @@ def test_delete_own_row_is_refused(owner, sql):
 
 
 def test_delete_unknown_user_is_404(owner, sql):
-    sql.side_effect = [[], []]
+    sql.side_effect = [[]]
     r = owner.delete(f"/users/{OTHER}")
     assert (r.status_code, r.json()["detail"]) == (404, "User not found")
 
@@ -458,3 +476,85 @@ def test_logs_carry_ids_and_action_only(owner, sql, caplog):
     assert len(lines) == 1
     assert CALLER in lines[0] and OTHER in lines[0] and "role guest -> family" in lines[0]
     assert "sam" not in lines[0] and "@" not in lines[0]
+
+
+# --- OWNER_EMAILS accounts -----------------------------------------------
+
+OWNER_EMAIL_MSG = "This account is an owner through OWNER_EMAILS. Remove the email there first"
+
+
+@pytest.fixture
+def owner_email(monkeypatch):
+    monkeypatch.setenv("OWNER_EMAILS", "other@example.com, G@Example.com")
+
+
+def test_patch_google_owner_email_is_refused(owner, sql, invalidated, owner_email):
+    sql.side_effect = [[make_row(OTHER, provider="google", role="owner")]]  # g@example.com
+    r = owner.patch(f"/users/{OTHER}", json={"role": "guest"})
+    assert (r.status_code, r.json()["detail"]) == (400, OWNER_EMAIL_MSG)
+    assert sql.call_count == 1
+    invalidated.assert_not_called()
+
+
+def test_delete_google_owner_email_is_refused(owner, sql, invalidated, owner_email):
+    sql.side_effect = [[make_row(OTHER, provider="google", role="owner")]]
+    r = owner.delete(f"/users/{OTHER}")
+    assert (r.status_code, r.json()["detail"]) == (400, OWNER_EMAIL_MSG)
+    assert sql.call_count == 1
+    invalidated.assert_not_called()
+
+
+def test_owner_email_rule_ignores_other_emails(owner, sql, monkeypatch):
+    monkeypatch.setenv("OWNER_EMAILS", "someone-else@example.com")
+    sql.side_effect = [
+        [make_row(OTHER, provider="google", role="family")],
+        [make_row(OTHER, provider="google", role="guest")],
+    ]
+    assert owner.patch(f"/users/{OTHER}", json={"role": "guest"}).status_code == 200
+
+
+# --- reset: owner length re-checked in SQL, response, deleted mid-request --
+
+
+def test_reset_sql_rechecks_owner_length(owner, sql):
+    sql.side_effect = [[make_row(OTHER, role="guest")], [SimpleNamespace(_mapping={"id": 1})]]
+    owner.post(f"/users/{OTHER}/password", json={"password": "a" * 12})
+    assert "AND (role <> 'owner' OR :owner_ok)" in " ".join(sql_texts(sql)[1].split())
+    assert sql_params(sql)[1]["owner_ok"] is False
+    sql.side_effect = [[make_row(OTHER, role="guest")], [SimpleNamespace(_mapping={"id": 1})]]
+    owner.post(f"/users/{OTHER}/password", json={"password": "a" * 14})
+    assert sql_params(sql)[3]["owner_ok"] is True
+
+
+def test_reset_stale_role_promoted_to_owner_is_refused(owner, sql, invalidated):
+    # Read as guest, but the row became an owner before the UPDATE ran.
+    sql.side_effect = [
+        [make_row(OTHER, role="guest")],
+        [],
+        [make_row(OTHER, role="owner")],
+    ]
+    r = owner.post(f"/users/{OTHER}/password", json={"password": "a" * 12})
+    assert (r.status_code, r.json()["detail"]) == (400, "Password must be at least 14 characters")
+    invalidated.assert_not_called()
+
+
+def test_reset_row_deleted_mid_request_is_404(owner, sql, invalidated):
+    sql.side_effect = [[make_row(OTHER, role="guest")], [], []]
+    r = owner.post(f"/users/{OTHER}/password", json={"password": GOOD_PW})
+    assert (r.status_code, r.json()["detail"]) == (404, "User not found")
+    invalidated.assert_not_called()
+
+
+def test_reset_response_has_no_secrets(owner, sql):
+    sql.side_effect = [[make_row(OTHER, role="guest")], [SimpleNamespace(_mapping={"id": 1})]]
+    r = owner.post(f"/users/{OTHER}/password", json={"password": GOOD_PW})
+    assert "password_hash" not in r.text and "argon2" not in r.text
+
+
+def test_create_and_reset_handlers_run_in_the_threadpool():
+    import inspect
+
+    from app.routes import users
+
+    assert not inspect.iscoroutinefunction(users.create_user)
+    assert not inspect.iscoroutinefunction(users.reset_password)

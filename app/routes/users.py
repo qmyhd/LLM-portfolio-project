@@ -27,6 +27,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
+from app.auth import _owner_emails
 from app.identity import invalidate_viewer
 from app.passwords import (
     check_password_rules,
@@ -47,6 +48,10 @@ NOT_FOUND_MSG = "User not found"
 USERNAME_TAKEN_MSG = "That username is taken"
 PICK_ROLE_MSG = "Pick guest, family or owner"
 GOOGLE_PASSWORD_MSG = "Google accounts sign in with Google"
+PROMOTE_MSG = "Create a new password account with the Owner role instead"
+OWNER_EMAIL_MSG = (
+    "This account is an owner through OWNER_EMAILS. Remove the email there first"
+)
 
 _COLUMNS = "id, provider, provider_user_id, email, full_name, avatar_url, role, created_at, last_seen_at"
 
@@ -116,6 +121,12 @@ def _fetch(uid: str):
     return rows[0] if rows else None
 
 
+def _refuse_owner_email(user: dict) -> None:
+    """A Google owner listed in OWNER_EMAILS is promoted again at next sign-in."""
+    if user["provider"] == "google" and user["email"].strip().lower() in _owner_emails():
+        raise HTTPException(status_code=400, detail=OWNER_EMAIL_MSG)
+
+
 def _refuse_self(request: Request, uid: str) -> None:
     if _caller_id(request) == uid:
         raise HTTPException(status_code=400, detail=SELF_MSG)
@@ -144,7 +155,7 @@ async def list_users(request: Request):
 
 
 @router.post("", status_code=201)
-async def create_user(request: Request, body: CreateUserBody):
+def create_user(request: Request, body: CreateUserBody):
     if body.role == "pending":
         raise HTTPException(status_code=400, detail=PICK_ROLE_MSG)
     try:
@@ -190,15 +201,22 @@ async def change_role(request: Request, user_id: str, body: RoleBody):
     caller = _caller_id(request)
     if before == body.role:
         return existing
-    if body.role == "owner" and existing["provider"] == "google":
-        raise HTTPException(status_code=400, detail=GOOGLE_OWNER_MSG)
+    _refuse_owner_email(existing)
+    if body.role == "owner":
+        # A password account's length can't be checked here, so owners are
+        # only created through POST /users, which enforces the owner minimum.
+        raise HTTPException(
+            status_code=400,
+            detail=GOOGLE_OWNER_MSG if existing["provider"] == "google" else PROMOTE_MSG,
+        )
 
     rows = execute_sql(
         f"""
         {_OWNERS_CTE}
         UPDATE app_users SET role = :role
         WHERE id = CAST(:id AS uuid)
-          AND (role <> 'owner' OR :role = 'owner' OR {_OTHER_OWNER_LEFT})
+          AND :role <> 'owner'
+          AND (role <> 'owner' OR {_OTHER_OWNER_LEFT})
         RETURNING {_COLUMNS}
         """,
         params={"id": uid, "role": body.role},
@@ -218,6 +236,10 @@ async def change_role(request: Request, user_id: str, body: RoleBody):
 async def delete_user(request: Request, user_id: str):
     uid = _parse_id(user_id)
     _refuse_self(request, uid)
+    current = _fetch(uid)
+    if current is None:
+        raise HTTPException(status_code=404, detail=NOT_FOUND_MSG)
+    _refuse_owner_email(_row_to_user(current, None))
     rows = execute_sql(
         f"""
         {_OWNERS_CTE}
@@ -239,7 +261,7 @@ async def delete_user(request: Request, user_id: str):
 
 
 @router.post("/{user_id}/password", status_code=204)
-async def reset_password(request: Request, user_id: str, body: PasswordBody):
+def reset_password(request: Request, user_id: str, body: PasswordBody):
     uid = _parse_id(user_id)
     current = _fetch(uid)
     if current is None:
@@ -251,18 +273,31 @@ async def reset_password(request: Request, user_id: str, body: PasswordBody):
         check_password_rules(body.password, existing["role"])
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from None
+    try:
+        check_password_rules(body.password, "owner")
+        owner_ok = True
+    except ValueError:
+        owner_ok = False
 
+    # The role is re-checked in the UPDATE: it may have changed since the read.
     rows = execute_sql(
         """
         UPDATE app_users
         SET password_hash = :hash, failed_login_count = 0, locked_until = NULL
         WHERE id = CAST(:id AS uuid) AND provider = 'password'
+          AND (role <> 'owner' OR :owner_ok)
         RETURNING id
         """,
-        params={"id": uid, "hash": hash_password(body.password)},
+        params={"id": uid, "hash": hash_password(body.password), "owner_ok": owner_ok},
         fetch_results=True,
     )
     if not rows:
+        if _fetch(uid) is None:
+            raise HTTPException(status_code=404, detail=NOT_FOUND_MSG)
+        try:
+            check_password_rules(body.password, "owner")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
         raise HTTPException(status_code=404, detail=NOT_FOUND_MSG)
     invalidate_viewer(uid)
     _log(request, uid, "password reset")
