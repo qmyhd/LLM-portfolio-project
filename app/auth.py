@@ -229,7 +229,7 @@ class AppUserOut(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Rate limiting — small in-process sliding window for the auth endpoint.
+# Rate limiting \u2014 small in-process sliding window for the auth endpoint.
 # The API runs as a single uvicorn process on EC2, so per-process state is the
 # effective global state. Defense-in-depth on top of the API-key requirement.
 # ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ def _invalidate_role_cache(user_id: str) -> None:
         logger.warning("Role cache invalidation failed", exc_info=True)
 
 
-def _run_alert_in_background(name: str, send_name: str, *args) -> None:
+def _run_alert_in_background(name: str, send_name: str, *args) -> threading.Thread | None:
     """Send a Discord alert on a daemon thread so a slow or failing call never
     delays or breaks the request. Nothing here can raise into the caller."""
 
@@ -332,9 +332,16 @@ def _run_alert_in_background(name: str, send_name: str, *args) -> None:
             logger.warning("%s alert failed: %s", name, type(exc).__name__)
 
     try:
-        threading.Thread(target=_target, name=f"alert-{name}", daemon=True).start()
+        from src import approval_alert
+
+        if approval_alert.cap_reached():
+            return None
+        thread = threading.Thread(target=_target, name=f"alert-{name}", daemon=True)
+        thread.start()
+        return thread
     except Exception as exc:
         logger.warning("%s alert failed: %s", name, type(exc).__name__)
+        return None
 
 
 def _notify_new_pending(full_name: str | None, email: str) -> None:
@@ -664,7 +671,7 @@ class AuthConfigStatus(BaseModel):
 async def auth_config_status():
     """
     Secrets-free health check for the Google sign-in flow, so config can be
-    verified without SSH. Returns booleans/counts only — never any secret
+    verified without SSH. Returns booleans/counts only \u2014 never any secret
     value. Requires the API key (the router carries require_api_key).
     """
     google_client_id_set = bool(os.getenv("GOOGLE_CLIENT_ID", "").strip())
@@ -683,7 +690,7 @@ async def auth_config_status():
         rows = execute_sql("SELECT COUNT(*) FROM app_users", fetch_results=True)
         if rows:
             app_users_count = int(rows[0][0])
-    except Exception:  # table missing / DB issue — leave as None
+    except Exception:  # table missing / DB issue \u2014 leave as None
         app_users_count = None
 
     return AuthConfigStatus(

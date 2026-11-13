@@ -329,9 +329,16 @@ def test_google_notify_failure_never_breaks_sign_in(client, _auth_off, monkeypat
     assert r.status_code == 200
 
 
-def test_notify_new_pending_returns_none_and_never_raises():
-    with patch("src.approval_alert.send_approval_alert", return_value=False):
-        assert auth._notify_new_pending("n", "e@example.com") is None
+def test_notify_new_pending_sends_in_the_background_with_name_and_email():
+    with patch("src.approval_alert.send_approval_alert", return_value=True) as send:
+        thread = auth._run_alert_in_background(
+            "approval", "send_approval_alert", "Jo", "jo@example.com"
+        )
+        assert thread is not None and thread.daemon
+        thread.join(5)
+    assert not thread.is_alive()
+    send.assert_called_once_with("Jo", "jo@example.com")
+    assert auth._notify_new_pending("n", "e@example.com") is None
 
 
 # ----------------------------------------------------------------------- me

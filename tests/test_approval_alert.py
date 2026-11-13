@@ -19,7 +19,7 @@ from src import approval_alert as aa
 
 TOKEN = "tok-SECRET-123"
 CHANNEL = "123456789012345678"
-ZW = "​"
+ZW = "\u200b"
 UID = str(uuid.uuid4())
 GOOD = "correct horse battery"
 GOOD_HASH = passwords.hash_password(GOOD)
@@ -54,7 +54,7 @@ def test_sends_the_right_url_header_and_text():
     assert post.call_args.kwargs["timeout"] == 5
     assert _body(post)["content"] == (
         "New sign-in waiting for approval\n"
-        f"Jo Smith · jo@{ZW}example.com\n"
+        "Jo Smith \xb7 `jo@example.com`\n"
         "Approve or decline: https://llmportfolio.app/settings/users"
     )
     assert _body(post)["allowed_mentions"] == {"parse": []}
@@ -63,7 +63,7 @@ def test_sends_the_right_url_header_and_text():
 def test_no_name_falls_back():
     with patch("src.approval_alert.httpx.post", return_value=_ok()) as post:
         aa.send_approval_alert(None, "jo@example.com")
-    assert f"No name · jo@{ZW}example.com" in _body(post)["content"]
+    assert "No name \xb7 `jo@example.com`" in _body(post)["content"]
 
 
 def test_any_2xx_is_success():
@@ -79,7 +79,7 @@ def test_missing_config_sends_nothing(monkeypatch, missing):
     post.assert_not_called()
 
 
-@pytest.mark.parametrize("bad", ["", "12ab", "../x", "123/456", " 123", "1.5"])
+@pytest.mark.parametrize("bad", ["", "12ab", "../x", "123/456", "1 23", "1.5"])
 def test_channel_id_must_be_digits(monkeypatch, bad):
     monkeypatch.setenv("APPROVAL_ALERT_CHANNEL_ID", bad)
     with patch("src.approval_alert.httpx.post") as post:
@@ -129,6 +129,11 @@ def test_token_never_appears_in_logs(caplog):
         ("http://example.org", "https://llmportfolio.app"),
         ("javascript:alert(1)", "https://llmportfolio.app"),
         ("", "https://llmportfolio.app"),
+        ("  https://example.org/  ", "https://example.org"),
+        ("https://exa mple.org", "https://llmportfolio.app"),
+        ("https://example.org\n/x", "https://llmportfolio.app"),
+        ("https://example.org/[a](b)", "https://llmportfolio.app"),
+        ("https://example.org/`x`", "https://llmportfolio.app"),
     ],
 )
 def test_frontend_url(monkeypatch, value, expected):
@@ -149,7 +154,8 @@ def test_21st_alert_in_a_day_makes_no_request(caplog):
     assert results[:20] == [True] * 20
     assert results[20:] == [False] * 3
     assert post.call_count == aa.MAX_ALERTS_PER_DAY == 20
-    assert sum("cap" in r.getMessage().lower() for r in caplog.records) == 1
+    msgs = [r.getMessage() for r in caplog.records]
+    assert msgs.count("Daily alert limit reached (20 attempts); no more alerts today") == 1
 
 
 def test_cap_is_shared_by_both_alert_kinds():
@@ -211,12 +217,47 @@ def test_everyone_is_neutralised():
 
 
 def test_long_name_is_truncated_to_100():
-    out = aa._clean("x" * 500)
-    assert out == "x" * 100
+    assert aa._clean("x" * 500) == "x" * 100
 
 
-def test_email_is_truncated_too():
-    assert len(aa._clean("e" * 300 + "@x.com")) <= 100
+def test_finished_field_is_at_most_100_and_never_splits_a_replacement():
+    for payload in ("@" * 500, "://" * 200, "](" * 200, "`" * 500, "a" + "@" * 99, "a" * 98 + "://"):
+        out = aa._clean(payload)
+        assert len(out) <= 100
+        assert "@" not in out.replace("@" + ZW, "")
+        assert "://" not in out and "](" not in out
+        assert not out.endswith((":/", ":/" + ZW))
+
+
+def test_email_is_code_spanned_truncated_and_has_no_backticks_or_zero_width_space():
+    out = aa._clean_email("e`" * 300 + "@x.com")
+    assert out.startswith("`") and out.endswith("`")
+    assert out[1:-1].count("`") == 0 and len(out) <= 102
+    assert aa._clean_email("jo@example.com") == "`jo@example.com`"
+
+
+@pytest.mark.parametrize(
+    "ch",
+    ["\u200b", "\u200c", "\u200d", "\u200e", "\u200f", "\u202a", "\u202b", "\u202c",
+     "\u202d", "\u202e", "\u2066", "\u2067", "\u2068", "\u2069", "\ufeff"],
+)
+def test_invisible_and_direction_characters_are_stripped(ch):
+    assert aa._clean(f"a{ch}b") == "ab"
+    assert aa._clean_email(f"a{ch}b@c.d") == "`ab@c.d`"
+    assert aa._clean(f"x{ch}@here") == f"x@{ZW}here"  # only our own space remains
+
+
+@pytest.mark.parametrize("lead", [">", "#", "-", "*"])
+def test_leading_markdown_in_a_name_is_escaped(lead):
+    assert aa._clean(f"{lead} quote", lead=True) == f"\\{lead} quote"
+    assert aa._clean(f"a{lead}b", lead=True) == f"a{lead}b"
+    assert aa._clean(f"{lead}x") == f"{lead}x"  # username and other fields untouched
+
+
+def test_name_in_the_message_gets_the_leading_escape():
+    with patch("src.approval_alert.httpx.post", return_value=_ok()) as post:
+        aa.send_approval_alert("# Big", "a@b.c")
+    assert _body(post)["content"].split("\n")[1].startswith("\\# Big")
 
 
 def test_backticks_replaced():
@@ -244,9 +285,10 @@ def test_hostile_name_cannot_forge_lines_or_links():
     text = _body(post)["content"]
     lines = text.split("\n")
     assert len(lines) == 3
-    assert "@everyone" not in text and "`" not in text and "](" not in text
+    assert "@everyone" not in text and "](" not in text
     assert "://" not in lines[1]  # the footer's own https link is ours
-    assert re.search(r"@(?!​)", lines[1]) is None
+    assert lines[1].endswith(" \u00b7 `a@b.c`")
+    assert re.search(r"@(?!\u200b)", lines[1].replace("`a@b.c`", "")) is None
 
 
 # ------------------------------------------------------------------- lockout
@@ -419,3 +461,71 @@ def test_notify_lockout_runs_in_background_and_swallows_errors(caplog):
                 break
             time.sleep(0.02)
     assert "alert failed" in caplog.text.lower()
+
+
+# ------------------------------------------------------------ misconfiguration
+
+
+@pytest.mark.parametrize(
+    "var,value",
+    [
+        ("DISCORD_BOT_TOKEN", None),
+        ("APPROVAL_ALERT_CHANNEL_ID", None),
+        ("APPROVAL_ALERT_CHANNEL_ID", "12ab34"),
+    ],
+)
+def test_misconfiguration_warns_once_naming_the_variable_not_its_value(
+    monkeypatch, caplog, var, value
+):
+    if value is None:
+        monkeypatch.delenv(var)
+    else:
+        monkeypatch.setenv(var, value)
+    with caplog.at_level(logging.WARNING), patch("src.approval_alert.httpx.post") as post:
+        for _ in range(3):
+            assert aa.send_approval_alert("a", "b@c.d") is False
+    post.assert_not_called()
+    warnings = [r.getMessage() for r in caplog.records if var in r.getMessage()]
+    assert len(warnings) == 1
+    assert "12ab34" not in caplog.text and TOKEN not in caplog.text
+
+
+def test_surrounding_whitespace_is_stripped_from_config(monkeypatch):
+    monkeypatch.setenv("APPROVAL_ALERT_CHANNEL_ID", f"  {CHANNEL}\n")
+    monkeypatch.setenv("DISCORD_BOT_TOKEN", f" {TOKEN} ")
+    with patch("src.approval_alert.httpx.post", return_value=_ok()) as post:
+        assert aa.send_approval_alert("a", "b@c.d") is True
+    assert post.call_args.args[0].endswith(f"/channels/{CHANNEL}/messages")
+    assert post.call_args.kwargs["headers"]["Authorization"] == f"Bot {TOKEN}"
+
+
+# ------------------------------------------------------------ cap before thread
+
+
+def test_cap_reached_is_false_then_true():
+    assert aa.cap_reached() is False
+    with patch("src.approval_alert.httpx.post", return_value=_ok()):
+        for _ in range(20):
+            aa.send_approval_alert("a", "b@c.d")
+    assert aa.cap_reached() is True
+
+
+def test_no_thread_is_started_once_the_cap_is_reached():
+    with patch("src.approval_alert.cap_reached", return_value=True), patch(
+        "app.auth.threading.Thread"
+    ) as thread:
+        assert auth._run_alert_in_background("approval", "send_approval_alert", "a", "b") is None
+    thread.assert_not_called()
+
+
+# ---------------------------------------------------------------- the guard
+
+
+def test_guard_blocks_a_real_send_even_with_credentials_set(discord_guard, caplog):
+    # _env (this file) set a token and channel; no test-level patch of httpx.post here.
+    with caplog.at_level(logging.WARNING):
+        assert aa.send_approval_alert("a", "b@c.d") is False
+    assert discord_guard.blocked_calls == 1  # reached the client, which refused
+    assert "AssertionError" in caplog.text  # logged by class name only
+    with pytest.raises(AssertionError, match="real Discord post blocked"):
+        discord_guard.post("https://discord.com/api/v10/channels/1/messages")
