@@ -10,8 +10,8 @@ building, in review, live.
 
 | Section | Status | Last update | Notes |
 |---|---|---|---|
-| A. Roles, privacy, options, cost | design approved | 11/12 | Spec approved by Qais 11/12: `docs/superpowers/specs/2026-11-12-roles-privacy-options-cost-design.md`. Build plan next |
-| B. Prices and numbers | not started | 11/12 | Bug list captured |
+| A. Roles, privacy, options, cost | building | 11/13 | **Plan 1 of 4** (roles, sign-in approval, password accounts, Users page, Discord alerts) is built and reviewed in both repos on `feat/roles-approval` (backend `8bf2ce9`, 976 tests; frontend `e958701`, 152 tests). Rollout with Qais is next (plan Task 12). **Plans 2 to 4** (%-only view, AI cap, options) not started. No guest or family approvals until Plans 2 and 3 are live |
+| B. Prices and numbers | not started | 11/13 | Bug list captured. Two root causes found: the stock profile refresh has written nothing since 7/22 (confirmed again after the 11/13 nightly run), and `ohlcv_daily` dates are one day early |
 | C. Ideas, tags, sentiment, analysis | not started | 11/12 | Sentiment gauge and parsing ideas added 11/12 |
 | D. Layout and performance | not started | 11/12 | |
 | E. Housekeeping | not started | 11/12 | |
@@ -201,3 +201,37 @@ Open points for the design:
 ## Inbox (new requests land here first)
 
 -
+
+## Checked 11/13 (after the first nightly run since the restart)
+
+- The 1 AM run on 11/13 worked for snapshots (11/13 saved), prices (through the row dated 11/11) and parsing.
+- **The stock profile refresh still wrote nothing:** `stock_profile_current` is unchanged since 7/22 (0 of 506 rows
+  updated). So that step is broken, not just interrupted. It is the first thing to fix in section B.
+
+## Carried out of the Plan 1 build (11/13)
+
+Found by reviewers during the roles build and deliberately left for later. Each belongs to the section named.
+
+- **Plan 2 (%-only view):**
+  - A guest whose access is revoked mid-session sees error panels instead of being sent to the waiting page. No
+    data reaches them. Fix: refresh the session (`update({})`) before navigating, and use one 403 message in
+    both places; changing the text alone causes a reload loop.
+  - The "Value $" toggle still shows for guests and returns 403.
+  - Decide per route what is safe to cache again. This build removed Vercel caching from 28 routes for safety
+    (news, filings, fundamentals, management and transcript were cached for an hour). Time the stock page first.
+- **Plan 3 (AI cap):** guests can trigger a paid analysis on a cache miss; chat has no daily allowance yet. So the
+  "no guest or family approvals" rule holds until Plan 3 as well.
+- **E (housekeeping):**
+  - Rate limiting by real visitor IP at the edge. Today a flood of the login form at 60 a minute blocks password
+    logins while it lasts, and `/auth/google` shares one bucket. Google sign-in for the owner is unaffected by the first.
+  - A password reset doesn't end that account's existing sessions (24 hours). "Revoke access" does.
+  - `callbackUrl` isn't validated after a password sign-in (predates this build).
+  - Emails are written to Vercel logs in `auth.ts` (predates this build).
+  - Real accounts lock on 5 cumulative failures with no time window; the shadow lock for unknown names needs 5
+    within 15 minutes. Align them.
+- **Small polish, any time:** a new password account shows "Last seen just now" before it has signed in; creating
+  an Owner account has no confirm step; form inputs lack `aria-invalid`; no notice when a Google sign-in is
+  bounced because the backend was down; stale "gets 503" comments in `auth.ts`.
+- The full list of deferred minor findings from every task review is in the build ledger,
+  `.superpowers/sdd/2026-11-12-roles-approval-plan/progress.md` (local, not in git). Copy what still matters
+  into this file before deleting that folder.
