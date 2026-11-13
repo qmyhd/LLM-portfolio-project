@@ -48,6 +48,7 @@ from app.routes import (
     sentiment,
     stocks,
     trades,
+    users,
     videos,
     watchlist,
     webhook,
@@ -263,6 +264,12 @@ app.include_router(
 app.include_router(
     videos.router,
     tags=["Video Research"],
+    dependencies=[Depends(require_api_key), Depends(enforce_access)],
+)
+app.include_router(
+    users.router,
+    prefix="/users",
+    tags=["Users"],
     dependencies=[Depends(require_api_key), Depends(enforce_access)],
 )
 # Auth tracking — called server-side by the Next.js frontend during sign-in,
