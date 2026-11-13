@@ -329,8 +329,9 @@ def test_google_notify_failure_never_breaks_sign_in(client, _auth_off, monkeypat
     assert r.status_code == 200
 
 
-def test_notify_new_pending_is_a_no_op():
-    assert auth._notify_new_pending("n", "e@example.com") is None
+def test_notify_new_pending_returns_none_and_never_raises():
+    with patch("src.approval_alert.send_approval_alert", return_value=False):
+        assert auth._notify_new_pending("n", "e@example.com") is None
 
 
 # ----------------------------------------------------------------------- me

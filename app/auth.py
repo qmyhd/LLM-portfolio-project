@@ -319,12 +319,32 @@ def _invalidate_role_cache(user_id: str) -> None:
         logger.warning("Role cache invalidation failed", exc_info=True)
 
 
-def _notify_new_pending(full_name: str | None, email: str) -> None:
-    """Alert the owner that someone new is waiting for approval.
+def _run_alert_in_background(name: str, send_name: str, *args) -> None:
+    """Send a Discord alert on a daemon thread so a slow or failing call never
+    delays or breaks the request. Nothing here can raise into the caller."""
 
-    Filled in by the alerts task. Must never raise into the request.
-    """
-    return None
+    def _target() -> None:
+        try:
+            from src import approval_alert
+
+            getattr(approval_alert, send_name)(*args)
+        except Exception as exc:
+            logger.warning("%s alert failed: %s", name, type(exc).__name__)
+
+    try:
+        threading.Thread(target=_target, name=f"alert-{name}", daemon=True).start()
+    except Exception as exc:
+        logger.warning("%s alert failed: %s", name, type(exc).__name__)
+
+
+def _notify_new_pending(full_name: str | None, email: str) -> None:
+    """Alert the owner that someone new is waiting for approval (background)."""
+    _run_alert_in_background("approval", "send_approval_alert", full_name, email)
+
+
+def _notify_lockout(username: str) -> None:
+    """Alert the owner that a real account was just locked (background)."""
+    _run_alert_in_background("lockout", "send_lockout_alert", username)
 
 
 def _row_to_app_user(row) -> AppUserOut:
@@ -581,7 +601,10 @@ async def password_login(request: Request, body: PasswordLoginRequest):
         failed = execute_sql(_FAIL_SQL, params={"id": user_id}, fetch_results=True)
         # No row means a concurrent failure locked it since the lookup. The
         # attempt that trips the lock gets 423 too: the account is locked now.
-        if not failed or _row_dict(failed[0])["is_locked"]:
+        if not failed:
+            raise locked
+        if _row_dict(failed[0])["is_locked"]:
+            _notify_lockout(username)  # this request tripped the lock
             raise locked
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_WRONG_LOGIN)
 
