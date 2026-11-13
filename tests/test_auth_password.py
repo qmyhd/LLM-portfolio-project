@@ -4,6 +4,8 @@ SQL is mocked (`app.auth.execute_sql`); no test touches a database. Where a
 rule lives in SQL, the tests also assert on the statement text.
 """
 
+import asyncio
+import threading
 import time
 import uuid
 from types import SimpleNamespace
@@ -27,9 +29,11 @@ GOOD_HASH = passwords.hash_password(GOOD)
 def _clean_rate_limit():
     auth._rate_buckets.clear()
     auth._shadow_locks.clear()
+    auth._global_pw_hits.clear()
     yield
     auth._rate_buckets.clear()
     auth._shadow_locks.clear()
+    auth._global_pw_hits.clear()
 
 
 @pytest.fixture
@@ -541,3 +545,80 @@ def test_cache_invalidation_failure_never_breaks_sign_in(client, monkeypatch):
         ex.return_value = [_user_row(role="pending", provider="google", inserted=True)]
         r = _google(client)
     assert r.status_code == 200
+
+
+# ------------------------------------------------- global cap and threading
+
+
+def test_password_login_global_cap(client):
+    with patch("app.auth.execute_sql", return_value=[]), patch(
+        "app.auth.verify_password", wraps=passwords.verify_password
+    ) as vp:
+        codes = [_login(client, f"user{i:03d}", "whatever-pass").status_code for i in range(61)]
+        assert vp.call_count == 60  # the 61st never reached hashing
+    assert codes[:60] == [401] * 60
+    assert codes[60] == 429
+
+
+def test_global_cap_window_slides(client):
+    clock = [1000.0]
+    fake_time = SimpleNamespace(monotonic=lambda: clock[0])
+    with patch("app.auth.time", fake_time), patch("app.auth.execute_sql", return_value=[]):
+        codes = [_login(client, f"user{i:03d}", "x").status_code for i in range(61)]
+        assert codes[-1] == 429
+        clock[0] += 61
+        assert _login(client, "someone", "x").status_code == 401
+
+
+def test_password_verification_runs_off_the_event_loop(client):
+    threads = {}
+
+    def lookup(*args, **kwargs):
+        threads["handler"] = threading.get_ident()  # execute_sql runs on the loop
+        return []
+
+    def verify(password, stored_hash):
+        threads["verify"] = threading.get_ident()
+        return False
+
+    with patch("app.auth.execute_sql", side_effect=lookup), patch(
+        "app.auth.verify_password", side_effect=verify
+    ):
+        assert _login(client, "ghostuser", "x").status_code == 401
+    assert threads["verify"] != threads["handler"]
+
+
+def test_at_most_two_verifications_run_at_once():
+    import httpx
+
+    api = FastAPI()
+    api.include_router(auth.router, prefix="/auth")
+    lock = threading.Lock()
+    state = {"now": 0, "max": 0}
+
+    def slow_verify(password, stored_hash):
+        with lock:
+            state["now"] += 1
+            state["max"] = max(state["max"], state["now"])
+        time.sleep(0.15)
+        with lock:
+            state["now"] -= 1
+        return False
+
+    async def run():
+        transport = httpx.ASGITransport(app=api)
+        async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+            rs = await asyncio.gather(
+                *[
+                    c.post("/auth/password", json={"username": f"ghost{i}", "password": "x"})
+                    for i in range(6)
+                ]
+            )
+        return [r.status_code for r in rs]
+
+    with patch("app.auth.execute_sql", return_value=[]), patch(
+        "app.auth.verify_password", side_effect=slow_verify
+    ):
+        codes = asyncio.run(run())
+    assert codes == [401] * 6
+    assert state["max"] == 2

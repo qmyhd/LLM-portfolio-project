@@ -1,8 +1,18 @@
 """
-API Key Authentication for FastAPI.
+Authentication for the API.
 
-Provides a dependency that validates Bearer tokens against API_SECRET_KEY.
-Applied to all routes except /health and /webhook/*.
+`require_api_key` validates the Bearer token against API_SECRET_KEY. It is
+applied to every route except /health and /webhook/*. On top of it, the role
+policy in app/access.py (`enforce_access`) gates every router except /auth/*
+and /webhook/*.
+
+The /auth/* endpoints are how a person becomes a known user, so they are
+callable with just the API key (only the Next.js server holds it), before the
+person has any role:
+  POST /auth/google    sign in with Google (new users start as 'pending')
+  POST /auth/password  username + password sign-in with lockout
+  GET  /auth/me        the role of the user named in X-App-User
+  GET  /auth/config    secrets-free config check
 
 Usage in routes:
     from app.auth import require_api_key
@@ -20,6 +30,8 @@ import uuid
 from collections import deque
 from typing import Optional
 
+import anyio
+import anyio.to_thread
 from fastapi import APIRouter, HTTPException, Request, Security, status
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -265,6 +277,38 @@ def _check_auth_rate_limit(key: str) -> None:
                 detail="Too many authentication attempts; try again shortly",
             )
         bucket.append(now)
+
+
+# Total cap on POST /auth/password, whatever the username: argon2 is costly
+# (about 64 MiB per verification), so the endpoint as a whole is bounded too.
+AUTH_PASSWORD_GLOBAL_LIMIT = int(os.getenv("AUTH_PASSWORD_GLOBAL_PER_MINUTE", "60"))
+_global_pw_hits: deque[float] = deque()
+
+
+def _check_password_global_cap() -> None:
+    """Raise 429 when the endpoint has served AUTH_PASSWORD_GLOBAL_LIMIT
+    requests in the last minute."""
+    now = time.monotonic()
+    with _rate_lock:
+        while _global_pw_hits and now - _global_pw_hits[0] > _RATE_WINDOW_SECONDS:
+            _global_pw_hits.popleft()
+        if len(_global_pw_hits) >= AUTH_PASSWORD_GLOBAL_LIMIT:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail="Too many authentication attempts; try again shortly",
+            )
+        _global_pw_hits.append(now)
+
+
+# At most two argon2 verifications at once (each uses about 64 MiB), run in
+# worker threads so they never block the event loop.
+_VERIFY_LIMITER = anyio.CapacityLimiter(2)
+
+
+async def _verify_off_loop(password: str, stored_hash: str | None) -> bool:
+    return await anyio.to_thread.run_sync(
+        lambda: verify_password(password, stored_hash), limiter=_VERIFY_LIMITER
+    )
 
 
 def _owner_emails() -> set[str]:
@@ -555,10 +599,10 @@ def _shadow_record_failure(key: str) -> bool:
         return False
 
 
-def _unknown_login(raw_username: str, password: str) -> HTTPException:
+async def _unknown_login(raw_username: str, password: str) -> HTTPException:
     """The response for a name with no usable account: one dummy verification,
     then 401, or 423 once the name's shadow lock is on."""
-    verify_password(password, None)
+    await _verify_off_loop(password, None)
     key = _shadow_key(raw_username)
     if _shadow_is_locked(key) or _shadow_record_failure(key):
         return HTTPException(status_code=status.HTTP_423_LOCKED, detail=_LOCKED_LOGIN)
@@ -573,6 +617,7 @@ async def password_login(request: Request, body: PasswordLoginRequest):
     cases each do exactly one argon2 verification so timing doesn't reveal
     which one it was.
     """
+    _check_password_global_cap()  # before any hashing or database work
     client_ip = request.client.host if request.client else "unknown"
     # Limit per username so one person hammering a name can't use up everyone
     # else's logins; fall back to the client IP when no username can be derived.
@@ -583,21 +628,21 @@ async def password_login(request: Request, body: PasswordLoginRequest):
     _check_auth_rate_limit(f"pw:{username}" if username else client_ip)
 
     if username is None:
-        raise _unknown_login(body.username, body.password)
+        raise await _unknown_login(body.username, body.password)
 
     rows = execute_sql(_LOGIN_LOOKUP_SQL, params={"username": username}, fetch_results=True)
     account = _row_dict(rows[0]) if rows else None
     stored_hash = account["password_hash"] if account else None
 
     if account is None or stored_hash is None:
-        raise _unknown_login(username, body.password)
+        raise await _unknown_login(username, body.password)
 
     # An over-long password can't be the real one: never verify a truncation.
     if len(body.password) > MAX_PASSWORD:
-        verify_password(body.password[:MAX_PASSWORD], None)
+        await _verify_off_loop(body.password[:MAX_PASSWORD], None)
         password_ok = False
     else:
-        password_ok = verify_password(body.password, stored_hash)
+        password_ok = await _verify_off_loop(body.password, stored_hash)
 
     locked = HTTPException(status_code=status.HTTP_423_LOCKED, detail=_LOCKED_LOGIN)
     if account["is_locked"]:

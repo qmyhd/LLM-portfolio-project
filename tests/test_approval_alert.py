@@ -387,10 +387,12 @@ def client():
 def lock_alert():
     auth._rate_buckets.clear()
     auth._shadow_locks.clear()
+    auth._global_pw_hits.clear()
     with patch("app.auth._notify_lockout") as notify:
         yield notify
     auth._rate_buckets.clear()
     auth._shadow_locks.clear()
+    auth._global_pw_hits.clear()
 
 
 def _login(client, username="dev"):
