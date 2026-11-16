@@ -315,3 +315,12 @@ Found by reviewers during the roles build and deliberately left for later. Each 
 2. Plan 2: %-only guest view. 3. Plan 3: AI cap and guest chat allowance. 4. Plan 4: options.
 5. Then by Qais's priority answer: B prices and numbers, H history, C ideas, tags and sentiment, D layout and
    UI, G trade story charts; E and F slotted in.
+
+## Qais's answers, 11/16 (don't re-ask)
+
+- **Priority after Plans 2 to 4:** correct numbers first (B, with H), then the rest: C ideas and sentiment, D look
+  and feel, G trade charts.
+- **Guest view shows every position** (all 223), each with its real % of the portfolio. No grouping, no top-N cut.
+- **History (H):** (1) every trade is shown: the Activity page must browse and search the full history since
+  2020, checked against Robinhood for gaps; (2) bring in older Discord notes (before 10/2025, and channels the
+  bot doesn't watch live) and parse them, with a cost estimate to him before parsing.
