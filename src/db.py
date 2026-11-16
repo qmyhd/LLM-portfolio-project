@@ -5,6 +5,7 @@ Handles connection pooling, health checks, prepared statement optimization.
 
 import asyncio
 import logging
+import re
 import time
 from functools import wraps
 from pathlib import Path
@@ -466,6 +467,33 @@ def ensure_tz_aware(dt):
     return dt
 
 
+_WRITE_STARTS = ("CREATE", "DROP", "ALTER", "INSERT", "UPDATE", "DELETE", "MERGE")
+_SQL_STRING = re.compile(r"'(?:[^']|'')*'")
+_ROW_LOCK = re.compile(r"\bFOR\s+(?:NO\s+KEY\s+)?UPDATE\b")
+_CTE_WRITE = re.compile(r"\b(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM|MERGE\s+INTO)\b")
+
+
+def _needs_commit(query_str: str) -> bool:
+    """
+    True when a statement changes data or schema and so must be committed.
+
+    A statement that starts with a write keyword is a write. A statement that
+    starts with WITH is a write when its body contains INSERT INTO, UPDATE,
+    DELETE FROM or MERGE INTO (a data-modifying CTE, or a CTE in front of a
+    write). Text inside quoted strings and `FOR UPDATE` row locks are ignored.
+
+    Before 11/16/2026 only the first keyword was checked, so
+    `WITH ... UPDATE ... RETURNING` ran, returned its row, and was rolled back.
+    """
+    sql = query_str.upper().strip()
+    if sql.startswith(_WRITE_STARTS):
+        return True
+    if not sql.startswith("WITH"):
+        return False
+    body = _ROW_LOCK.sub(" ", _SQL_STRING.sub("''", sql))
+    return bool(_CTE_WRITE.search(body))
+
+
 @retry_on_connection_error(max_retries=3, delay=1)
 def _execute_query(query, params=None):
     """
@@ -481,14 +509,7 @@ def _execute_query(query, params=None):
     """
     engine = get_sync_engine()
 
-    # Check if this is a statement that needs transaction commit (DDL + DML writes)
-    query_str = str(query).upper().strip()
-    is_ddl = any(query_str.startswith(ddl) for ddl in ["CREATE", "DROP", "ALTER"])
-    is_dml_write = any(
-        query_str.startswith(dml) for dml in ["INSERT", "UPDATE", "DELETE", "MERGE"]
-    )
-
-    if is_ddl or is_dml_write:
+    if _needs_commit(str(query)):
         # Use begin() for DDL statements and DML writes to ensure they are committed
         with engine.begin() as conn:
             if isinstance(query, str):
