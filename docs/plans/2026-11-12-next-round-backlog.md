@@ -260,3 +260,15 @@ Found by reviewers during the roles build and deliberately left for later. Each 
   design pass as a priority within D, not polish: a distinctive visual identity across the whole site, not only
   the home page.
 - The server shows "System restart required" (pending OS updates). Reboot in a quiet window with the E updates.
+- 11/16: flag removed and API restarted (four settings left, healthy, no legacy warning after restart).
+- **11/16, seen right after the API restart (to fix early, before Plan 2):** the first dashboard load took a long
+  time, `/api/portfolio` logged one 504 from the backend (21:07 UTC), and the Users page showed "Couldn't load
+  users". Minutes later the API answered `/health` in under 0.2 s.
+  - Likely cause: after a restart the first `/portfolio` request is slow (cold price lookups) and runs blocking
+    work inside an `async` handler, which freezes the server's single worker. While it is frozen the role check
+    every request now depends on (`/auth/me`, 5-second timeout in the frontend) fails, so unrelated pages error.
+  - Fixes to weigh: move the blocking portfolio work off the event loop (same pattern as chat); let the frontend
+    reuse the last confirmed role for a short time when the lookup fails (for example 2 minutes), instead of
+    failing at once; a second API worker; warm the portfolio cache at startup.
+  - This also bears on Qais's "slow loading" complaint in D: with caching removed from 28 routes, every page
+    view now reaches the single-worker backend.
