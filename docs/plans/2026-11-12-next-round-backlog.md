@@ -272,3 +272,19 @@ Found by reviewers during the roles build and deliberately left for later. Each 
     failing at once; a second API worker; warm the portfolio cache at startup.
   - This also bears on Qais's "slow loading" complaint in D: with caching removed from 28 routes, every page
     view now reaches the single-worker backend.
+- **11/16, fixed:** Approve, Revoke and Decline on the Users page answered 200 but changed nothing.
+  `src/db.py` only committed statements whose first word was a write keyword, and those statements start with
+  `WITH` (to lock the owner rows), so they were rolled back. Fixed on branch `fix/commit-cte-writes`.
+- **Found by the review of that fix (pre-existing, for E):**
+  - `SELECT pg_advisory_xact_lock(...)` is sent through `execute_sql` in `src/channel_processor.py:313` and
+    `scripts/nlp/ingest_batch.py:343`. Each call runs on its own throwaway connection, so the lock is released at
+    once and **protects nothing**. Use the `transaction()` context manager in `src/db.py` so the lock and the work
+    share one transaction.
+  - The per-connection `SET statement_timeout` / `SET lock_timeout` in `get_sync_engine` may be lost on a
+    connection whose first use is a rolled-back read (psycopg2 runs the SET inside that first transaction).
+    Verify on Postgres; the role-change statement relies on `lock_timeout`.
+  - `retry_on_connection_error` retries on any SQLAlchemy error, including integrity errors. Narrow it to
+    connection errors.
+- **Lesson for every later plan:** route tests that mock `execute_sql` can't catch a statement that never commits.
+  Add an `integration`-marked test per write path that runs against a throwaway Postgres (a Supabase branch) and
+  checks the change is visible from a fresh connection.

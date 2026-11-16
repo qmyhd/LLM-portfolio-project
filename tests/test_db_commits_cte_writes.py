@@ -44,13 +44,37 @@ def test_reads_do_not_need_commit(sql):
     assert db._needs_commit(sql) is False
 
 
+class _SpyEngine:
+    """Wraps a real engine and records which path `_execute_query` took.
+
+    SQLite (pysqlite) runs a statement that starts with WITH in autocommit, so
+    a change would survive even on the non-committing `connect()` path. The
+    persistence tests therefore also assert the path: on Postgres only
+    `begin()` commits.
+    """
+
+    def __init__(self, engine):
+        self._engine = engine
+        self.calls: list[str] = []
+
+    def begin(self):
+        self.calls.append("begin")
+        return self._engine.begin()
+
+    def connect(self):
+        self.calls.append("connect")
+        return self._engine.connect()
+
+
 @pytest.fixture
 def sqlite_engine(tmp_path, monkeypatch):
     engine = create_engine(f"sqlite:///{tmp_path / 't.db'}")
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE users (id INTEGER PRIMARY KEY, role TEXT)"))
         conn.execute(text("INSERT INTO users VALUES (1, 'owner'), (2, 'pending')"))
-    monkeypatch.setattr(db, "get_sync_engine", lambda: engine)
+    spy = _SpyEngine(engine)
+    monkeypatch.setattr(db, "get_sync_engine", lambda: spy)
+    engine.spy = spy
     yield engine
     engine.dispose()
 
@@ -74,7 +98,9 @@ def test_cte_update_with_returning_is_persisted(sqlite_engine):
         fetch_results=True,
     )
     assert [tuple(r) for r in rows] == [(2, "guest")]
-    # A fresh connection must see the change: it was committed, not rolled back.
+    # It must take the committing path; on Postgres `connect()` rolls back.
+    assert sqlite_engine.spy.calls == ["begin"]
+    # A fresh connection must see the change.
     assert _role(sqlite_engine, 2) == "guest"
 
 
@@ -90,7 +116,13 @@ def test_cte_delete_with_returning_is_persisted(sqlite_engine):
         fetch_results=True,
     )
     assert [tuple(r) for r in rows] == [(2,)]
+    assert sqlite_engine.spy.calls == ["begin"]
     assert _role(sqlite_engine, 2) is None
+
+
+def test_plain_read_uses_the_read_path(sqlite_engine):
+    db.execute_sql("SELECT role FROM users WHERE id = :id", params={"id": 1}, fetch_results=True)
+    assert sqlite_engine.spy.calls == ["connect"]
 
 
 def test_users_api_statements_are_classified_as_writes():
