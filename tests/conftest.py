@@ -5,15 +5,134 @@ Provides:
 - Mocked OpenAI client fixtures for regression tests
 - Pytest markers for test categorization
 - Shared database mock fixtures
+
+DATABASE GUARD: no test may reach a real database (a developer's .env holds the production URL).
+- The URL variables are replaced with an unusable sentinel before src.config loads, and
+  get_database_url() returns it; every engine/connection path raises DatabaseAccessBlocked.
+- Tests marked @pytest.mark.integration skip the per-test guard, but still see only the
+  sentinel unless ALLOW_REAL_DB_IN_TESTS=1 is set in the environment (then nothing is replaced).
+- A test that needs a database supplies its own (monkeypatch db.get_sync_engine to SQLite).
 """
 
 import json
+import os
+
+DB_GUARD_SENTINEL_URL = "postgresql://test-guard:blocked@127.0.0.1:1/blocked"
+_ALLOW_REAL_DB = os.environ.get("ALLOW_REAL_DB_IN_TESTS") == "1"
+
+# Replaced before src.config is imported (it calls load_dotenv, which never overrides
+# variables already set, and pydantic settings prefer the environment to .env).
+if not _ALLOW_REAL_DB:
+    for _name in ("DATABASE_URL", "DATABASE_DIRECT_URL", "SUPABASE_URL"):
+        os.environ[_name] = DB_GUARD_SENTINEL_URL
+    for _name in (
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
+        "Supabase_ID",
+        "anon_public",
+        "service_role",
+    ):
+        os.environ[_name] = "blocked-by-test-guard"
+
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
 
 from typing import Optional
+
+
+# =============================================================================
+# DATABASE GUARD
+# =============================================================================
+
+
+class DatabaseAccessBlocked(AssertionError):
+    """Raised when a test tries to open a real database connection."""
+
+
+_current_test = {"name": "<no test running>", "exempt": False}
+
+
+def _blocked(what: str):
+    raise DatabaseAccessBlocked(
+        f"{_current_test['name']}: real database access blocked ({what}). "
+        "Mock the call at the name the code under test imported (e.g. patch "
+        "'app.auth.execute_sql', not 'src.db.execute_sql'), or monkeypatch "
+        "src.db.get_sync_engine to a SQLite engine. Integration tests: "
+        "@pytest.mark.integration plus ALLOW_REAL_DB_IN_TESTS=1."
+    )
+
+
+def _install_session_guard():
+    """Last line of defence: any Postgres connection attempt through SQLAlchemy fails."""
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    @event.listens_for(Engine, "do_connect")
+    def _no_postgres(dialect, conn_rec, cargs, cparams):
+        if not _current_test["exempt"] and dialect.name != "sqlite":
+            _blocked(f"{dialect.name} connect")
+
+
+def _patch_set(monkeypatch):
+    import src.db as db
+
+    def _no_engine(*_a, **_k):
+        _blocked("create_engine")
+
+    def _no_async_engine(*_a, **_k):
+        _blocked("create_async_engine")
+
+    def _no_connect(*_a, **_k):
+        _blocked("driver connect")
+
+    monkeypatch.setattr(db, "_sync_engine", None)
+    monkeypatch.setattr(db, "_async_engine", None)
+    monkeypatch.setattr(db, "create_engine", _no_engine)
+    monkeypatch.setattr(db, "create_async_engine", _no_async_engine)
+    try:
+        import psycopg2
+
+        monkeypatch.setattr(psycopg2, "connect", _no_connect)
+    except ImportError:
+        pass
+    try:
+        import asyncpg
+
+        monkeypatch.setattr(asyncpg, "connect", _no_connect)
+        monkeypatch.setattr(asyncpg, "create_pool", _no_connect)
+    except ImportError:
+        pass
+
+
+def _force_sentinel_settings():
+    import src.config as config
+
+    config.settings.cache_clear()
+    s = config.settings()
+    s.DATABASE_URL = DB_GUARD_SENTINEL_URL
+    s.DATABASE_DIRECT_URL = DB_GUARD_SENTINEL_URL
+    s.SUPABASE_URL = DB_GUARD_SENTINEL_URL
+    s.SUPABASE_SERVICE_ROLE_KEY = "blocked-by-test-guard"
+    s.SUPABASE_ANON_KEY = "blocked-by-test-guard"
+
+
+if not _ALLOW_REAL_DB:
+    _force_sentinel_settings()
+    _install_session_guard()
+
+
+@pytest.fixture(autouse=True)
+def database_guard(request, monkeypatch):
+    """Fail loudly, naming the test, on any attempt to reach a real database."""
+    exempt = request.node.get_closest_marker("integration") is not None
+    _current_test["name"] = request.node.nodeid
+    _current_test["exempt"] = exempt
+    if not exempt:
+        _patch_set(monkeypatch)
+    yield
+    _current_test["exempt"] = False
 
 
 # =============================================================================

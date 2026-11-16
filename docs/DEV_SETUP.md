@@ -55,6 +55,10 @@ ruff check src/ app/ tests/
 
 If tests fail with missing environment variables, copy or restore the project `.env` file and rerun the same commands.
 
+### Tests never reach a real database
+
+`tests/conftest.py` replaces `DATABASE_URL`, `DATABASE_DIRECT_URL` and the `SUPABASE_*` variables with an unusable sentinel before `src.config` loads, and every engine, connection and driver path raises an error naming the test. Your `.env` database is never touched. A test that needs a database supplies its own (monkeypatch `src.db.get_sync_engine` to a SQLite engine), and mocks must patch the name the code under test imported (`app.auth.execute_sql`, not `src.db.execute_sql`). Tests marked `@pytest.mark.integration` skip the per-test guard but still see only the sentinel unless `ALLOW_REAL_DB_IN_TESTS=1` is set.
+
 ## Frontend setup on Windows PowerShell
 
 The frontend is a separate repository. It uses Next.js and npm scripts for development, linting, and production builds.
