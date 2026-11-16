@@ -249,3 +249,42 @@ Found by reviewers during the roles build and deliberately left for later. Each 
 - **Before any further build (Plan 2 onward): make it impossible for tests to reach the real database.** Add an
   autouse guard in `tests/conftest.py`, like the Discord one: fail any test that calls the real `execute_sql` or
   opens a real connection, unless it is marked `integration`. Check the two fixtures added in this build too.
+
+## Rollout log, Plan 1 (11/16)
+
+- Stray test row deleted; flag `APP_USER_LEGACY_OK=1` added on the server (backup `llm.env.bak-20261116`);
+  migration 080 applied and verified; backend merged (PR #80) and deployed; frontend merged and live.
+- Qais signed in with Google on the new build: dashboard loads, Users and access shows him as Owner and the two
+  old accounts waiting. He confirmed the pages look right.
+- **Qais, 11/16, for section D:** "I really want to juice up and make our UI more special and unique." Treat the
+  design pass as a priority within D, not polish: a distinctive visual identity across the whole site, not only
+  the home page.
+- The server shows "System restart required" (pending OS updates). Reboot in a quiet window with the E updates.
+- 11/16: flag removed and API restarted (four settings left, healthy, no legacy warning after restart).
+- **11/16, seen right after the API restart (to fix early, before Plan 2):** the first dashboard load took a long
+  time, `/api/portfolio` logged one 504 from the backend (21:07 UTC), and the Users page showed "Couldn't load
+  users". Minutes later the API answered `/health` in under 0.2 s.
+  - Likely cause: after a restart the first `/portfolio` request is slow (cold price lookups) and runs blocking
+    work inside an `async` handler, which freezes the server's single worker. While it is frozen the role check
+    every request now depends on (`/auth/me`, 5-second timeout in the frontend) fails, so unrelated pages error.
+  - Fixes to weigh: move the blocking portfolio work off the event loop (same pattern as chat); let the frontend
+    reuse the last confirmed role for a short time when the lookup fails (for example 2 minutes), instead of
+    failing at once; a second API worker; warm the portfolio cache at startup.
+  - This also bears on Qais's "slow loading" complaint in D: with caching removed from 28 routes, every page
+    view now reaches the single-worker backend.
+- **11/16, fixed:** Approve, Revoke and Decline on the Users page answered 200 but changed nothing.
+  `src/db.py` only committed statements whose first word was a write keyword, and those statements start with
+  `WITH` (to lock the owner rows), so they were rolled back. Fixed on branch `fix/commit-cte-writes`.
+- **Found by the review of that fix (pre-existing, for E):**
+  - `SELECT pg_advisory_xact_lock(...)` is sent through `execute_sql` in `src/channel_processor.py:313` and
+    `scripts/nlp/ingest_batch.py:343`. Each call runs on its own throwaway connection, so the lock is released at
+    once and **protects nothing**. Use the `transaction()` context manager in `src/db.py` so the lock and the work
+    share one transaction.
+  - The per-connection `SET statement_timeout` / `SET lock_timeout` in `get_sync_engine` may be lost on a
+    connection whose first use is a rolled-back read (psycopg2 runs the SET inside that first transaction).
+    Verify on Postgres; the role-change statement relies on `lock_timeout`.
+  - `retry_on_connection_error` retries on any SQLAlchemy error, including integrity errors. Narrow it to
+    connection errors.
+- **Lesson for every later plan:** route tests that mock `execute_sql` can't catch a statement that never commits.
+  Add an `integration`-marked test per write path that runs against a throwaway Postgres (a Supabase branch) and
+  checks the change is visible from a fresh connection.
