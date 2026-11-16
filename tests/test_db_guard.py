@@ -106,8 +106,13 @@ def test_wrong_patch_target_hits_the_guard_not_a_database(monkeypatch):
 def test_auth_me_with_wrong_patch_target_is_blocked(monkeypatch):
     from fastapi.testclient import TestClient
 
+    from app.auth import require_api_key
     from app.main import app
 
+    # Pass the API-key check whatever the environment says. Without this the
+    # request stops at 401 wherever DISABLE_AUTH is unset (CI, a clean
+    # checkout) and never reaches the database call this test is about.
+    monkeypatch.setitem(app.dependency_overrides, require_api_key, lambda: None)
     monkeypatch.setattr("src.db.execute_sql", lambda *a, **k: [])
     client = TestClient(app, raise_server_exceptions=True)
     with pytest.raises(AssertionError, match=BLOCKED):
