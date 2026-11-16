@@ -151,6 +151,7 @@ markers = [
     "openai: marks tests that require OpenAI API (deselect with '-m \"not openai\"')",
     "slow: marks tests as slow running (deselect with '-m \"not slow\"')",
     "integration: marks integration tests that may require external services",
+    "expects_db_guard: the test trips the database guard on purpose (tests of the guard)",
 ]
 
 # ============================================

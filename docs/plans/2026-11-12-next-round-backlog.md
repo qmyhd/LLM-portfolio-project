@@ -288,3 +288,39 @@ Found by reviewers during the roles build and deliberately left for later. Each 
 - **Lesson for every later plan:** route tests that mock `execute_sql` can't catch a statement that never commits.
   Add an `integration`-marked test per write path that runs against a throwaway Postgres (a Supabase branch) and
   checks the change is visible from a fresh connection.
+
+## Plan 1 is live (11/16/2026)
+
+- Backend `bc11f6c` (PR #80 roles, PR #81 commit fix), frontend `a70df5a` (PR #22). Flag removed. Migration 080 applied.
+- Proven on the live site by Qais: a second Google account landed on the waiting page, the Discord alert arrived
+  in `#site-alerts`, approve as guest let it in, revoke and decline worked. The test account is deleted.
+- Users now: Qais (Google, owner), `qaisdev` (password, owner), Deep Patel and Yahya Ahmad (Google, pending).
+- `AUTH_USERS` and `ALLOWED_EMAILS` are deleted from Vercel. The old password logins (qaisme, Alex, jack,
+  jackhalliwill, thelaxgoat, MVP) no longer exist; those people need new accounts once the guest view is live.
+- Qais pasted the `qaisdev` password into a chat on 11/16; he was told to change it (Users page, Reset password).
+
+## Added by Qais 11/16
+
+- **H. History is complete.** "Making sure that all my history is captured and in there." What the database holds
+  on 11/16: activities 8,918 rows from 12/5/2020 to 11/13/2026; orders 3,666 rows from 3/5/2025; daily snapshots
+  199 days from 3/4/2026 (gap 10/30 to 11/9 is permanent); Discord 2,196 messages in 13 channels from 10/15/2025;
+  2,665 parsed ideas from 832 messages. To check: what "all" means to him (see his answer), whether the Activity
+  page shows more than 100 rows, whether orders before 3/2025 exist at the broker, and Discord from before 10/2025.
+- **Guest view must be accurate:** real holdings only, nothing made up, percentages that add up.
+- **UI:** again asked for style, formatting and UI improvements across the site (see the D note above).
+
+## Order from here (11/16)
+
+1. Test-database safeguard (small; before any other build).
+2. Plan 2: %-only guest view. 3. Plan 3: AI cap and guest chat allowance. 4. Plan 4: options.
+5. Then by Qais's priority answer: B prices and numbers, H history, C ideas, tags and sentiment, D layout and
+   UI, G trade story charts; E and F slotted in.
+
+## Qais's answers, 11/16 (don't re-ask)
+
+- **Priority after Plans 2 to 4:** correct numbers first (B, with H), then the rest: C ideas and sentiment, D look
+  and feel, G trade charts.
+- **Guest view shows every position** (all 223), each with its real % of the portfolio. No grouping, no top-N cut.
+- **History (H):** (1) every trade is shown: the Activity page must browse and search the full history since
+  2020, checked against Robinhood for gaps; (2) bring in older Discord notes (before 10/2025, and channels the
+  bot doesn't watch live) and parse them, with a cost estimate to him before parsing.

@@ -55,6 +55,12 @@ ruff check src/ app/ tests/
 
 If tests fail with missing environment variables, copy or restore the project `.env` file and rerun the same commands.
 
+### Tests never reach a real database
+
+`tests/conftest.py` replaces `DATABASE_URL`, `DATABASE_DIRECT_URL` and the `SUPABASE_*` variables with an unusable sentinel before `src.config` loads, and every engine, connection and driver path raises an error naming the test. Your `.env` database is never touched. Every trip is recorded, and a test that tripped the guard fails at teardown even if app code swallowed the error with `except Exception`. A test that needs a database supplies its own (monkeypatch `src.db.get_sync_engine` to a SQLite engine), and mocks must patch the name the code under test imported (`app.auth.execute_sql`, not `src.db.execute_sql`). Tests of the guard itself are marked `expects_db_guard`.
+
+Tests marked `@pytest.mark.integration` skip the per-test guard but still see only the sentinel. `ALLOW_REAL_DB_IN_TESTS=1` turns the sentinel off for the whole session (the real URL is never held in memory during ordinary tests), so with it set the session refuses to start unless every selected test is marked `integration`: run `ALLOW_REAL_DB_IN_TESTS=1 pytest -m integration`.
+
 ## Frontend setup on Windows PowerShell
 
 The frontend is a separate repository. It uses Next.js and npm scripts for development, linting, and production builds.
@@ -66,7 +72,7 @@ node -v
 npm -v
 
 # Go to the frontend app directory
-cd "C:\Users\qaism\OneDrive\Documents\Github\LLM-portfolio-frontend\frontend"
+cd "C:\github\dev\LLM-portfolio-frontend\frontend"
 
 # Refresh dependencies
 npm install
@@ -99,7 +105,7 @@ npm run build
 Backend:
 
 ```powershell
-cd "C:\Users\qaism\OneDrive\Documents\Github\LLM-portfolio-project"
+cd "C:\github\dev\LLM-portfolio-project"
 .\.venv\Scripts\Activate.ps1
 $env:PYTHONPATH = (Get-Location).Path
 # Start the backend using the project command you normally use, for example:
@@ -109,7 +115,7 @@ $env:PYTHONPATH = (Get-Location).Path
 Frontend:
 
 ```powershell
-cd "C:\Users\qaism\OneDrive\Documents\Github\LLM-portfolio-frontend\frontend"
+cd "C:\github\dev\LLM-portfolio-frontend\frontend"
 npm run dev
 ```
 

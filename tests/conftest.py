@@ -5,15 +5,176 @@ Provides:
 - Mocked OpenAI client fixtures for regression tests
 - Pytest markers for test categorization
 - Shared database mock fixtures
+
+DATABASE GUARD: no test may reach a real database (a developer's .env holds the production URL).
+- The URL variables are replaced with an unusable sentinel before src.config loads, and
+  get_database_url() returns it; every engine/connection path raises DatabaseAccessBlocked.
+- Every trip is recorded; a test that trips it fails at teardown even if app code swallowed the
+  error, unless it is marked integration or expects_db_guard (tests of the guard itself).
+- Tests marked @pytest.mark.integration skip the per-test guard, but still see only the
+  sentinel unless ALLOW_REAL_DB_IN_TESTS=1 is set. That flag is all-or-nothing (the real URL is
+  never held in memory during ordinary tests): with it set, the session refuses to start if any
+  selected test is not marked integration.
+- A test that needs a database supplies its own (monkeypatch db.get_sync_engine to SQLite).
 """
 
 import json
+import os
+
+from tests._db_guard_const import DB_GUARD_SENTINEL_URL
+
+_ALLOW_REAL_DB = os.environ.get("ALLOW_REAL_DB_IN_TESTS") == "1"
+
+# Replaced before src.config is imported (it calls load_dotenv, which never overrides
+# variables already set, and pydantic settings prefer the environment to .env).
+if not _ALLOW_REAL_DB:
+    for _name in ("DATABASE_URL", "DATABASE_DIRECT_URL", "SUPABASE_URL"):
+        os.environ[_name] = DB_GUARD_SENTINEL_URL
+    for _name in (
+        "SUPABASE_SERVICE_ROLE_KEY",
+        "SUPABASE_ANON_KEY",
+        "Supabase_ID",
+        "anon_public",
+        "service_role",
+    ):
+        os.environ[_name] = "blocked-by-test-guard"
+
 import pytest
 from pathlib import Path
 from unittest.mock import Mock, MagicMock, patch
 
 
 from typing import Optional
+
+
+# =============================================================================
+# DATABASE GUARD
+# =============================================================================
+
+
+class DatabaseAccessBlocked(AssertionError):
+    """Raised when a test tries to open a real database connection."""
+
+
+_current_test = {"name": "<no test running>", "exempt": False}
+
+# Session-level record of every trip: (test node id, entry point hit).
+_trips: list[tuple[str, str]] = []
+
+
+def _blocked(what: str):
+    _trips.append((_current_test["name"], what))
+    raise DatabaseAccessBlocked(
+        f"{_current_test['name']}: real database access blocked ({what}). "
+        "Mock the call at the name the code under test imported (e.g. patch "
+        "'app.auth.execute_sql', not 'src.db.execute_sql'), or monkeypatch "
+        "src.db.get_sync_engine to a SQLite engine. Integration tests: "
+        "@pytest.mark.integration plus ALLOW_REAL_DB_IN_TESTS=1."
+    )
+
+
+def _install_session_guard():
+    """Last line of defence: any Postgres connection attempt through SQLAlchemy fails."""
+    from sqlalchemy import event
+    from sqlalchemy.engine import Engine
+
+    @event.listens_for(Engine, "do_connect")
+    def _no_postgres(dialect, conn_rec, cargs, cparams):
+        if not _current_test["exempt"] and dialect.name != "sqlite":
+            _blocked(f"{dialect.name} connect")
+
+
+def _patch_set(monkeypatch):
+    import src.db as db
+
+    def _no_engine(*_a, **_k):
+        _blocked("create_engine")
+
+    def _no_async_engine(*_a, **_k):
+        _blocked("create_async_engine")
+
+    def _no_connect(*_a, **_k):
+        _blocked("driver connect")
+
+    monkeypatch.setattr(db, "_sync_engine", None)
+    monkeypatch.setattr(db, "_async_engine", None)
+    # app.main's lifespan runs db.healthcheck() (a real SELECT 1) on every
+    # `with TestClient(app)`, and swallows the error. Tests get a no-op instead.
+    monkeypatch.setattr(db, "healthcheck", lambda: True)
+    monkeypatch.setattr(db, "create_engine", _no_engine)
+    monkeypatch.setattr(db, "create_async_engine", _no_async_engine)
+    try:
+        import psycopg2
+
+        monkeypatch.setattr(psycopg2, "connect", _no_connect)
+    except ImportError:
+        pass
+    try:
+        import asyncpg
+
+        monkeypatch.setattr(asyncpg, "connect", _no_connect)
+        monkeypatch.setattr(asyncpg, "create_pool", _no_connect)
+    except ImportError:
+        pass
+
+
+def _force_sentinel_settings():
+    import src.config as config
+
+    config.settings.cache_clear()
+    s = config.settings()
+    s.DATABASE_URL = DB_GUARD_SENTINEL_URL
+    s.DATABASE_DIRECT_URL = DB_GUARD_SENTINEL_URL
+    s.SUPABASE_URL = DB_GUARD_SENTINEL_URL
+    s.SUPABASE_SERVICE_ROLE_KEY = "blocked-by-test-guard"
+    s.SUPABASE_ANON_KEY = "blocked-by-test-guard"
+
+
+if not _ALLOW_REAL_DB:
+    _force_sentinel_settings()
+    _install_session_guard()
+
+
+def _unexpected_trips(node) -> list:
+    """Trips recorded for this test that it did not declare (integration / expects_db_guard)."""
+    if node.get_closest_marker("integration") or node.get_closest_marker("expects_db_guard"):
+        return []
+    return [t for t in _trips if t[0] == node.nodeid]
+
+
+@pytest.fixture(autouse=True)
+def database_guard(request, monkeypatch):
+    """Fail loudly, naming the test, on any attempt to reach a real database.
+
+    The error can be swallowed by `except Exception` in app code, so teardown also
+    fails the test if the guard was tripped during it.
+    """
+    exempt = request.node.get_closest_marker("integration") is not None
+    _current_test["name"] = request.node.nodeid
+    _current_test["exempt"] = exempt
+    if not exempt:
+        _patch_set(monkeypatch)
+    yield
+    _current_test["exempt"] = False
+    bad = _unexpected_trips(request.node)
+    if bad:
+        pytest.fail(
+            f"{request.node.nodeid}: the database guard was tripped ({', '.join(w for _, w in bad)}); "
+            "app code may have swallowed the error. Mock the database call properly.",
+            pytrace=False,
+        )
+
+
+@pytest.fixture
+def db_guard_api():
+    """For tests of the guard itself: its trip record and helpers."""
+    import types
+
+    return types.SimpleNamespace(
+        trips=lambda node_id: [w for n, w in _trips if n == node_id],
+        unexpected_trips=_unexpected_trips,
+        reset_engines=_patch_set,
+    )
 
 
 # =============================================================================
@@ -45,6 +206,26 @@ def pytest_configure(config):
         "markers",
         "integration: marks integration tests that may require external services",
     )
+    config.addinivalue_line(
+        "markers",
+        "expects_db_guard: the test trips the database guard on purpose (tests of the guard)",
+    )
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_collection_modifyitems(config, items):
+    """ALLOW_REAL_DB_IN_TESTS=1 turns the sentinel off for the whole session, so only
+    integration tests may be selected with it."""
+    if not _ALLOW_REAL_DB:
+        return
+    offenders = [i.nodeid for i in items if i.get_closest_marker("integration") is None]
+    if offenders:
+        pytest.exit(
+            "ALLOW_REAL_DB_IN_TESTS=1 disables the database guard for the whole session, "
+            f"but {len(offenders)} selected test(s) are not marked integration "
+            f"(first: {offenders[0]}). Run with -m integration, or unset the flag.",
+            returncode=4,
+        )
 
 
 # =============================================================================
