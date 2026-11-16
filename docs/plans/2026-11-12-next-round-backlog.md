@@ -235,3 +235,17 @@ Found by reviewers during the roles build and deliberately left for later. Each 
 - The full list of deferred minor findings from every task review is in the build ledger,
   `.superpowers/sdd/2026-11-12-roles-approval-plan/progress.md` (local, not in git). Copy what still matters
   into this file before deleting that folder.
+
+## Found 11/16 while verifying state before the rollout
+
+- **A test wrote one row to the live database.** `app_users` has a row `qais@example.com`, provider `google`,
+  `provider_user_id` `google-123`, role `owner`, created 11/12 22:35 UTC, id `750c6a5f-a585-4313-ac2a-59ad4edc1069`.
+  - Cause: during the build, `app/auth.py` started importing `execute_sql` at module level, so five tests in
+    `tests/test_content_sources_auth.py` that patched `src.db.execute_sql` stopped intercepting it and ran against
+    the real database (the local `.env` holds the real database URL and `DISABLE_AUTH=true`). The tests were
+    repointed in the same task, so it happened once.
+  - Nobody can sign in as it (that would need a Google token for a made-up account id), but it is a bogus owner.
+    **Delete it before migration 080** (waiting for Qais's okay on 11/16). Checked: no other table got rows from tests.
+- **Before any further build (Plan 2 onward): make it impossible for tests to reach the real database.** Add an
+  autouse guard in `tests/conftest.py`, like the Discord one: fail any test that calls the real `execute_sql` or
+  opens a real connection, unless it is marked `integration`. Check the two fixtures added in this build too.
