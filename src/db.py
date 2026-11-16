@@ -62,6 +62,7 @@ def get_sync_engine():
                 pool_recycle=3600,  # Recycle connections after 1 hour
                 pool_timeout=30,  # Timeout for getting connection from pool
                 echo=getattr(settings(), "DEBUG", False),
+                hide_parameters=True,  # keep bound values (e.g. password hashes) out of error text
                 future=True,  # Use SQLAlchemy 2.0 style
                 connect_args=connect_args,
             )
@@ -127,6 +128,7 @@ async def get_async_engine() -> AsyncEngine:
                 pool_pre_ping=True,
                 pool_recycle=3600,
                 echo=getattr(settings(), "DEBUG", False),
+                hide_parameters=True,
                 future=True,
                 connect_args=connect_args,
             )

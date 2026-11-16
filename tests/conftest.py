@@ -336,3 +336,62 @@ def parser_regression_fixture(fixtures_dir):
 def triage_regression_fixture(fixtures_dir):
     """Return the path to triage regression fixture file."""
     return fixtures_dir / "triage_regression.jsonl"
+
+
+# =============================================================================
+# ACCESS POLICY
+# =============================================================================
+
+
+@pytest.fixture(autouse=True)
+def _owner_viewer_for_route_tests():
+    """Resolve every API caller as the owner so route tests pass the access policy.
+
+    tests/test_access_matrix.py overrides this per test; tests/test_identity.py
+    calls resolve_viewer directly and is unaffected. The app is imported here
+    (not skipped when absent from sys.modules) because many tests import it
+    inside their own body after this fixture has run and still need the override.
+    """
+    from app.identity import OWNER_VIEWER, resolve_viewer
+    from app.main import app
+
+    saved = dict(app.dependency_overrides)
+    app.dependency_overrides[resolve_viewer] = lambda: OWNER_VIEWER
+    yield
+    app.dependency_overrides.clear()
+    app.dependency_overrides.update(saved)
+
+
+# =============================================================================
+# NO REAL DISCORD
+# =============================================================================
+
+
+class _BlockedDiscordHttp:
+    """Stands in for httpx inside src.approval_alert: a real post is impossible."""
+
+    def __init__(self, test_name: str):
+        self.test_name = test_name
+        self.blocked_calls = 0
+
+    def post(self, *args, **kwargs):
+        self.blocked_calls += 1
+        raise AssertionError(f"{self.test_name}: real Discord post blocked (patch httpx.post)")
+
+
+@pytest.fixture(autouse=True)
+def discord_guard(request, monkeypatch):
+    """No test may post to Discord, whatever a developer's .env holds.
+
+    The Discord settings are removed from the environment and the module's
+    http client is swapped for one that raises. tests/test_approval_alert.py
+    sets its own env values and patches `src.approval_alert.httpx.post`.
+    """
+    monkeypatch.delenv("DISCORD_BOT_TOKEN", raising=False)
+    monkeypatch.delenv("APPROVAL_ALERT_CHANNEL_ID", raising=False)
+    import src.approval_alert as approval_alert
+
+    guard = _BlockedDiscordHttp(request.node.name)
+    monkeypatch.setattr(approval_alert, "httpx", guard)
+    approval_alert._reset_counter()
+    yield guard
